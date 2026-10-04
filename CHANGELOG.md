@@ -2,6 +2,13 @@
 
 ## 0.3.1 (unreleased)
 
+- **Closing closes.** Closing a runtime closes the meaning index's own
+  connection too, so the store's writes are folded back into its file.
+- **A restore holds, or says it didn't.** `mnemos backup restore` writes
+  into a store that exists through SQLite's backup, so a session holding it
+  open can't silently undo it, and it reports success only after reading the
+  restored memory back.
+
 ### Lived time
 
 Memories fade with the time the agent lived, not the calendar. A day counts

@@ -11,6 +11,8 @@ it. Common words are now left out of the search, unless a cue has nothing else.
 
 from __future__ import annotations
 
+import pytest
+
 from mnemos.core.engram import Engram
 from mnemos.retrieval.reactive import ReactiveRetriever, _to_fts_query
 from mnemos.simple_runtime import MnemosRuntime
@@ -48,7 +50,15 @@ def test_a_memory_sharing_only_for_or_her_is_not_recalled(store):
     assert not set(returned) & set(_FILLER), f"filler matches came back: {returned}"
 
 
-def test_the_answer_leads_recall_through_the_runtime(tmp_path):
+@pytest.fixture
+def words_only(monkeypatch):
+    # This is about how words rank, so meaning search is off.
+    from mnemos.store import embedding_index as ei
+
+    monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
+
+
+def test_the_answer_leads_recall_through_the_runtime(tmp_path, words_only):
     """The path an agent calls: captured with the defaults, recalled by mnemos_recall."""
     rt = MnemosRuntime(db_path=str(tmp_path / "reading.db"), agent_id="t", person_id="p",
                        project_scope="g")

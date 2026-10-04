@@ -15,6 +15,8 @@ as new continuity instead of overwriting an unrelated note.
 
 from __future__ import annotations
 
+import pytest
+
 from mnemos.core.belief import Belief
 from mnemos.core.engram import Engram
 from mnemos.simple_runtime import MnemosRuntime
@@ -106,7 +108,15 @@ def test_a_belief_is_not_retired_over_what_and_she(tmp_path):
     assert rt._store.get_beliefs("t", active_only=True)
 
 
-def test_recall_shows_the_notes_the_question_is_about(tmp_path):
+@pytest.fixture
+def words_only(monkeypatch):
+    # This is about which notes the question's words name, so meaning search is off.
+    from mnemos.store import embedding_index as ei
+
+    monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
+
+
+def test_recall_shows_the_notes_the_question_is_about(tmp_path, words_only):
     about_the_reading = [
         "She asked me to keep every morning clear this week, until the reading.",
         "The writing group will meet at the bookshop next Thursday, as a public reading.",

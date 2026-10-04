@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -9,6 +10,16 @@ from pathlib import Path
 from typing import Any
 
 from .file_security import secure_directory, secure_file
+
+
+class RestoreDidNotHold(RuntimeError):
+    """A restore whose result, read back through a fresh connection, is not
+    the backup's memory."""
+
+    def __init__(self, differs: str, safety_backup: str | None) -> None:
+        super().__init__(f"The restore didn't hold: {differs}")
+        self.differs = differs
+        self.safety_backup = safety_backup
 
 
 def _stamp() -> str:
@@ -132,27 +143,86 @@ def restore_backup(
     if destination_path.exists():
         safety_backup = create_backup(destination_path)
 
-    secure_directory(destination_path.parent)
-    temp_path = destination_path.with_name(
-        f".{destination_path.name}.{os.getpid()}.restore.tmp"
-    )
-    source_conn = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
-    destination_conn = sqlite3.connect(str(temp_path))
-    try:
-        source_conn.backup(destination_conn)
-        destination_conn.commit()
-    finally:
-        source_conn.close()
-        destination_conn.close()
-    secure_file(temp_path)
-    try:
-        check_database(temp_path)
-        os.replace(temp_path, destination_path)
+    if destination_path.exists():
+        # Into the live file through SQLite's backup, not a file swap: a swapped
+        # file under an open connection is overruled by that connection's old WAL,
+        # and the restore is silently undone.
+        source_conn = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+        destination_conn = sqlite3.connect(str(destination_path))
+        try:
+            destination_conn.execute("PRAGMA busy_timeout = 5000")
+            source_conn.backup(destination_conn)
+            destination_conn.commit()
+        finally:
+            source_conn.close()
+            destination_conn.close()
         secure_file(destination_path)
-    except Exception:
-        temp_path.unlink(missing_ok=True)
-        raise
+    else:
+        secure_directory(destination_path.parent)
+        temp_path = destination_path.with_name(
+            f".{destination_path.name}.{os.getpid()}.restore.tmp"
+        )
+        source_conn = sqlite3.connect(f"file:{backup_path}?mode=ro", uri=True)
+        destination_conn = sqlite3.connect(str(temp_path))
+        try:
+            source_conn.backup(destination_conn)
+            destination_conn.commit()
+        finally:
+            source_conn.close()
+            destination_conn.close()
+        secure_file(temp_path)
+        try:
+            check_database(temp_path)
+            os.replace(temp_path, destination_path)
+            secure_file(destination_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
 
+    safety_path = safety_backup["path"] if safety_backup else None
     result = check_database(destination_path)
-    result["safety_backup"] = safety_backup["path"] if safety_backup else None
+    expected = _restore_marks(backup_path)
+    found = _restore_marks(destination_path)
+    differs = [
+        f"{name} is {found[name]!r}, the backup has {expected[name]!r}"
+        for name in expected
+        if found[name] != expected[name]
+    ]
+    if differs:
+        raise RestoreDidNotHold("; ".join(differs), safety_path)
+    result["safety_backup"] = safety_path
     return result
+
+
+# The tables that hold the agent's memory: a restore must carry each exactly.
+_RESTORE_TABLES = (
+    "engrams", "hypomnema_entries", "beliefs", "reflection_queue",
+    "journal_entries", "notes", "lived_days",
+)
+
+
+def _restore_marks(path: Path) -> dict[str, Any]:
+    """What a restore must carry, read through a fresh read-only connection:
+    for each table that holds the agent's memory, its row count and a digest of
+    every row, so a restore that undid even one change (a forget that only
+    archived a row) is caught, not just one that lost rows."""
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        marks: dict[str, Any] = {}
+        for table in _RESTORE_TABLES:
+            if table not in tables:
+                marks[table] = None
+                continue
+            rows = sorted(
+                repr(tuple(row))
+                for row in conn.execute(f"SELECT * FROM {table}")  # nosec B608
+            )
+            digest = hashlib.sha256("\n".join(rows).encode()).hexdigest()[:16]
+            marks[table] = f"{len(rows)} rows, {digest}"
+        return marks
+    finally:
+        conn.close()

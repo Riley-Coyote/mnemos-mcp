@@ -397,9 +397,17 @@ def _has_vector_table(db) -> bool:
     ) is not None
 
 
+@pytest.fixture
+def words_only(monkeypatch):
+    # The store is seeded with no backend, so it has no vectors yet.
+    from mnemos.store import embedding_index as ei
+
+    monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
+
+
 @pytest.mark.parametrize("vectors_stored", [False, True], ids=["no-vectors-yet", "vectors-stored"])
 def test_doctor_stays_read_only_with_semantic_recall_on(
-    tmp_path, capsys, monkeypatch, vectors_stored
+    tmp_path, capsys, monkeypatch, vectors_stored, words_only
 ):
     """With a working backend, opening the embedding index creates its table.
     On a store written without one, a doctor that opened the index that way

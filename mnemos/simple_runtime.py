@@ -2231,6 +2231,14 @@ class MnemosRuntime:
         self._store = None
         self._encoder = None
         self._retriever = None
+        # The meaning index holds its own connection to the store. Left open, the
+        # store's last close isn't the last: its writes stay in the WAL, and a copy
+        # of the database file alone holds none of them.
+        if self._embedding_index is not None:
+            try:
+                self._embedding_index.close()
+            except Exception:
+                pass
         self._embedding_index = None
         self._llm_client = None
 

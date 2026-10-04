@@ -1561,7 +1561,7 @@ def _embeddings_index(args: argparse.Namespace) -> int:
 
 def _cmd_backup(args: argparse.Namespace) -> int:
     """Create, inspect, or atomically restore a verified SQLite backup."""
-    from .backup import check_database, create_backup, restore_backup
+    from .backup import RestoreDidNotHold, check_database, create_backup, restore_backup
 
     command = getattr(args, "backup_command", None)
     try:
@@ -1583,6 +1583,17 @@ def _cmd_backup(args: argparse.Namespace) -> int:
                 print(f"  Previous database preserved: {result['safety_backup']}")
             return 0
         print("Usage: mnemos backup {create|inspect|restore}", file=sys.stderr)
+        return 1
+    except RestoreDidNotHold as exc:
+        if exc.safety_backup is None:
+            print(f"Backup failed: {exc}", file=sys.stderr)
+            return 1
+        print(
+            f"The restore didn't hold: {exc.differs}. Your current memory is "
+            f"unchanged in {exc.safety_backup}. Close every session using this "
+            "memory and run the restore again.",
+            file=sys.stderr,
+        )
         return 1
     except (FileNotFoundError, FileExistsError, RuntimeError, sqlite3.DatabaseError) as exc:
         print(f"Backup failed: {exc}", file=sys.stderr)
