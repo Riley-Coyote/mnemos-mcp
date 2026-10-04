@@ -90,8 +90,12 @@ BELIEFS = [
 ]
 QUESTION_ON = "Riley plans every trip around the ferry timetable."
 QUESTION = (
-    'You keep returning to "ferry" (5 memories). Is that a belief you now hold? '
-    "[theme:ferry]"
+    "On 3 different days you wrote something like this:\n"
+    '- "Riley plans every trip around the ferry timetable." (September 20)\n'
+    '- "Riley plans every trip around the ferry timetable." (September 22)\n'
+    '- "Riley plans every trip around the ferry timetable." (September 24)\n'
+    "Is there something you believe here? If there is, say it in one line with verdict hold; "
+    "if not, decline. Or leave it. [evidence:{target}]"
 )
 REPORT = "Mnemos connected 4 memories that belong together."
 NO_CHANGE = "Mnemos checked the stored continuity; no mechanical changes were needed."
@@ -203,7 +207,9 @@ def _briefing_store(tmp_path: Path) -> tuple[Path, dict[str, str]]:
                 domain="craft", source="agent",
             ))
         ids["question_on"] = _engram(store, QUESTION_ON)
-        store.enqueue_reflection("belief", ids["question_on"], QUESTION, **SCOPE)
+        store.enqueue_reflection(
+            "belief", ids["question_on"], QUESTION.format(target=ids["question_on"]), **SCOPE,
+        )
         ids["report"] = write_dream_entry(
             store, MnemosScope(db_path=str(db), **SCOPE), REPORT,
         )
@@ -320,7 +326,7 @@ also from the last three days:
 - me, 5 hours ago, in another session: Release check for the ferry app. \
 The staging deploy passed on the second try after the cache fix. Production waits for \
 Riley's go-ahead in the morning. I left the rollback script in scripts/rollback.sh and \
-tested it twice against staging. Nothing else is pending on this thread. […]
+tested it twice against staging. […]
 - Fable 5, a colleague, 26 hours ago: Fable here: the timetable scraper now runs \
 nightly at 02:00 and writes to data/timetable.json.
 A colleague's note is theirs: I take what's useful and don't claim the work.
@@ -337,8 +343,11 @@ changes. […]
 ferry/parse.py; the three failing tests pass now.
 
 ### a question waiting for me
-about "Riley plans every trip around the ferry timetable.":
-You keep returning to "ferry" (5 memories). Is that a belief you now hold?
+On 3 different days you wrote something like this:
+- "Riley plans every trip around the ferry timetable." (September 20)
+- "Riley plans every trip around the ferry timetable." (September 22)
+- "Riley plans every trip around the ferry timetable." (September 24)
+Is there something you believe here?
 If something true comes, I'll answer it in my own words; if not, I'll leave it, and it \
 fades on its own.
 
@@ -671,7 +680,7 @@ def test_older_code_shows_no_question_and_spends_no_showing(tmp_path):
     packet = _hook(db, tmp_path)
     assert OWN_NOTE in packet, "premise: older code still gets the packet"
     assert "### a question waiting for me" not in packet
-    assert 'You keep returning to "ferry"' not in packet
+    assert "On 3 different days you wrote something like this:" not in packet
     assert "mnemos_reflect(" not in packet, "the call to answer it was shown without it"
     assert _read(db, "SELECT id, surfaced_count, answered_at FROM reflection_queue ORDER BY id") == asks
 

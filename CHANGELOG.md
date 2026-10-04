@@ -2,6 +2,23 @@
 
 ## 0.3.1 (unreleased)
 
+### Edges
+
+- **The faded first.** Softening reads the least accessible memories first:
+  on a store with more active memories than its limit, the faded were the
+  ones it never reached. The voice exemplars are read apart.
+- **Early lessons stay recallable.** What `repair early-lessons` archives is
+  reached by recall by id and with `include_archived`, as its help says.
+- **A standing memory is never taught**, nor asked what it taught.
+- **Caps hold their marker.** A note cut at a cap ends with " […]" within the
+  cap, not four characters past it.
+- **Any wake value wakes.** `--wake` takes any value; an unknown one wakes in
+  full with a note, as `MNEMOS_WAKE` does. A name is kept on one line.
+- **Old word questions are inert.** A store that never ran
+  `repair word-questions` no longer shows them, and they no longer stand in
+  the way of a belief's reaffirmation.
+- Code version 15.
+
 ### Beliefs from meaning
 
 - **An idea that returns, not a word that recurs.** Once a day at most,

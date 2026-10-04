@@ -26,6 +26,15 @@ def _runtime(db):
     return MnemosRuntime(db_path=db, agent_id="t", person_id="p", project_scope="g")
 
 
+def _evidence_ask(target):
+    return ('On 3 different days you wrote something like this:\n'
+            '- "The vektor project needs another perf pass" (October 1)\n'
+            '- "The vektor project needs another perf pass" (October 2)\n'
+            '- "The vektor project needs another perf pass" (October 3)\n'
+            'Is there something you believe here? If there is, say it in one line with verdict hold; '
+            f'if not, decline. Or leave it. [evidence:{target}]')
+
+
 def _pending(rt, kind):
     return [
         i for i in rt.pending_reflections(limit=10) if i["kind"] == kind
@@ -33,21 +42,22 @@ def _pending(rt, kind):
 
 
 class TestBeliefFormation:
-    def test_a_recurring_theme_is_offered_as_a_belief(self, db):
+    def test_a_legacy_word_question_is_never_offered(self, db):
         rt = _runtime(db)
         # Five captures sharing a real (non-structural) theme tag.
         for i in range(5):
             captured = rt.capture(content=f"The vektor project needs another perf pass, note {i}",
                        importance="high")
         target = re.search(r"Memory ID: (engram_\w+)", captured).group(1)
-        rt._store.enqueue_reflection(
+        assert rt._store.enqueue_reflection(
             "belief", target,
             'You keep returning to "vektor" (5 memories). Is that a belief you now hold? If it is, state it in one line with verdict hold; if it is not, decline. Or leave it. [theme:vektor]',
             agent_id="t", person_id="p", project_scope="g",
         )
-        beliefs = _pending(rt, "belief")
-        assert beliefs, "no belief candidate surfaced for a strongly recurring theme"
-        assert "belief you now hold" in beliefs[0]["prompt"].lower()
+        assert not any(
+            i["prompt"].startswith('You keep returning to "') for i in rt.pending_reflections(limit=10)
+        )
+        assert "You keep returning to" not in rt.context()
 
     def test_answering_forms_an_agent_belief(self, db):
         rt = _runtime(db)
@@ -55,8 +65,7 @@ class TestBeliefFormation:
             captured = rt.capture(content=f"The vektor project needs another perf pass, note {i}")
         target = re.search(r"Memory ID: (engram_\w+)", captured).group(1)
         rt._store.enqueue_reflection(
-            "belief", target,
-            'You keep returning to "vektor" (5 memories). Is that a belief you now hold? If it is, state it in one line with verdict hold; if it is not, decline. Or leave it. [theme:vektor]',
+            "belief", target, _evidence_ask(target),
             agent_id="t", person_id="p", project_scope="g",
         )
         item = _pending(rt, "belief")[0]
@@ -74,8 +83,7 @@ class TestBeliefFormation:
             captured = rt.capture(content=f"The vektor project needs another perf pass, note {i}")
         target = re.search(r"Memory ID: (engram_\w+)", captured).group(1)
         rt._store.enqueue_reflection(
-            "belief", target,
-            'You keep returning to "vektor" (5 memories). Is that a belief you now hold? If it is, state it in one line with verdict hold; if it is not, decline. Or leave it. [theme:vektor]',
+            "belief", target, _evidence_ask(target),
             agent_id="t", person_id="p", project_scope="g",
         )
         item = _pending(rt, "belief")[0]

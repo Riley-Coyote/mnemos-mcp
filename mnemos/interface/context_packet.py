@@ -202,6 +202,7 @@ def build_context_packet(
     functional-memory section and fixed section sizes.
     """
     del session_id, max_functional, max_hypomnema  # accepted, not used
+    wake = wake.lower() if isinstance(wake, str) else wake
     wake = wake if wake in ("full", "light") else "full"
     scope = {"agent_id": agent_id, "person_id": person_id, "project_scope": project_scope}
     reader_model = clean_model_id(reader_model)
@@ -1392,6 +1393,7 @@ def _graph_line(item: dict[str, Any]) -> str:
 # ── Cutting a note ──
 
 _SENTENCE_END = re.compile(r"[.!?…][\"'”’)\]]*(?=\s)")
+_CUT_MARK = " […]"
 
 
 def cut_at_sentence(text: str, limit: int) -> tuple[str, bool]:
@@ -1400,20 +1402,22 @@ def cut_at_sentence(text: str, limit: int) -> tuple[str, bool]:
 
     When the last sentence that fits would leave less than half the room (a
     short first sentence before a long one), the cut falls on a word boundary
-    instead. A note never ends mid-word.
+    instead. A note never ends mid-word. The mark a cut text ends with is
+    within ``limit``: a cut text is never longer than it.
     """
     collapsed = " ".join((text or "").split())
     if len(collapsed) <= limit:
         return collapsed, False
+    room = max(1, limit - len(_CUT_MARK))
     ends = [
-        match.end() for match in _SENTENCE_END.finditer(collapsed[: limit + 1])
-        if match.end() <= limit
+        match.end() for match in _SENTENCE_END.finditer(collapsed[: room + 1])
+        if match.end() <= room
     ]
-    if ends and ends[-1] >= limit // 2:
+    if ends and ends[-1] >= (limit - len(_CUT_MARK)) // 2:
         head = collapsed[: ends[-1]]
     else:
-        head = collapsed[:limit].rsplit(" ", 1)[0]
-    return f"{head.rstrip()} […]", True
+        head = collapsed[:room].rsplit(" ", 1)[0]
+    return f"{head.rstrip()}{_CUT_MARK}", True
 
 
 # ── Small helpers ──

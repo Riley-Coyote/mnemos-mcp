@@ -472,7 +472,7 @@ def line_parts(text: str, created_at: str | None) -> tuple[str, str]:
         date, words = match.group(1), words[match.end():]
     else:
         date = (created_at or "")[:10] or "undated"
-    cut, _ = cut_at_sentence(words, CUE_LINE_CHARS - len(" […]"))
+    cut, _ = cut_at_sentence(words, CUE_LINE_CHARS)
     return date, cut
 
 

@@ -45,6 +45,18 @@ THEME_ASK = (
 )
 
 
+
+def _evidence_ask(target: str) -> str:
+    return (
+        "On 3 different days you wrote something like this:\n"
+        '- "Riley plans every trip around the ferry timetable." (October 1)\n'
+        '- "Riley plans every trip around the ferry timetable." (October 2)\n'
+        '- "Riley plans every trip around the ferry timetable." (October 3)\n'
+        "Is there something you believe here? If there is, say it in one line with verdict hold; "
+        f"if not, decline. Or leave it. [evidence:{target}]"
+    )
+
+
 # ── Helpers ──
 
 
@@ -336,7 +348,7 @@ def test_the_packet_shows_the_verdict_a_question_takes(tmp_path, builder, kind, 
         belief_id = _belief(rt, target, "Riley's trips bend to the ferry.")
         _clear_asks(rt)
         _ask(rt, kind, target, {
-            "belief": THEME_ASK,
+            "belief": _evidence_ask(target),
             "reaffirm": f"Still true? [belief:{belief_id}]",
             "contradiction": f"Do these contradict? [ref:{other}]",
             "impact": "What did this change in how you understand things? One sentence.",

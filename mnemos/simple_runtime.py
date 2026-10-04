@@ -67,7 +67,8 @@ from .core.placeholders import TEMPLATED_IMPACTS, is_templated
 from .store.archive import resharpen
 from .store.fts import distinctive_terms, fts_words, meaningful_words, or_query
 from .store.sqlite_store import (
-    FADED_ARCHIVE_REASONS,
+    EARLY_LESSON_ARCHIVE_REASON,
+    RECALLABLE_ARCHIVE_REASONS,
     EngramStore,
     ReadOnlyEngramStore,
     handoff_retirement,
@@ -2120,7 +2121,7 @@ class MnemosRuntime:
                     (row["source_id"], lesson_id, "distilled_into") for row in sources
                 ])
                 store.archive_engram(
-                    store.get_engram(lesson_id), reason="drawn before its memory faded",
+                    store.get_engram(lesson_id), reason=EARLY_LESSON_ARCHIVE_REASON,
                 )
                 archived += 1
             cursor = conn.executemany(
@@ -2676,7 +2677,9 @@ class MnemosRuntime:
         thing again. (Answered in words, it carries them, and the softening
         pass never names it.) The skip holds until a correction writes the
         memory's words anew, as a new memory. The impact pass keeps the same
-        rule the other way round.
+        rule the other way round. A standing memory, how the person wants the
+        agent to work, is set aside the same way: it is never asked what it
+        taught.
         """
         self._ensure_init()
         assert self._store is not None
@@ -2687,8 +2690,12 @@ class MnemosRuntime:
                 SELECT target_id FROM reflection_queue
                 WHERE (kind = 'lesson' OR (kind = 'impact' AND answered_at IS NOT NULL))
                   AND agent_id = ? AND person_id = ? AND project_scope = ?
+                UNION
+                SELECT id FROM engrams
+                WHERE standing = 1
+                  AND owner_agent_id = ? AND person_id = ? AND project_scope = ?
                 """,
-                (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
+                (self.scope.agent_id, self.scope.person_id, self.scope.project_scope) * 2,
             ).fetchall()
         }
         waiting = [
@@ -2754,7 +2761,12 @@ class MnemosRuntime:
             "AND person_id = ? AND project_scope = ? AND answered_at IS NULL",
             (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
         ).fetchall()
-        already = {r["target_id"] for r in unanswered}
+        # The word questions older code made are noise (see _WORD_QUESTION): never
+        # shown, and never standing in the way of a question that means something.
+        already = {
+            r["target_id"] for r in unanswered
+            if not (r["prompt"] or "").startswith('You keep returning to "')
+        }
         return self._enqueue_belief_reaffirmation(already)
 
     def _enqueue_returning_idea(self) -> int:
@@ -2944,7 +2956,8 @@ class MnemosRuntime:
                 others = conn.execute(
                     "SELECT COUNT(*) FROM reflection_queue WHERE agent_id = ? "
                     "AND person_id = ? AND project_scope = ? AND target_id = ? "
-                    "AND answered_at IS NULL AND id != ?",
+                    "AND answered_at IS NULL AND id != ? "
+                    "AND prompt NOT LIKE 'You keep returning to \"%'",
                     (*scope, target, waiting["id"]),
                 ).fetchone()[0]
                 if others:
@@ -3880,7 +3893,7 @@ class MnemosRuntime:
 
         self._set_meta("agent_model", model)
         self._session_author = clean_model_id(model)
-        name = agent_name.strip()
+        name = " ".join(agent_name.split())
         self._session_name = name
         session = harness_session()
         if session:
@@ -4390,7 +4403,7 @@ class MnemosRuntime:
                 # Only decay's door opens back. What the agent forgot, or
                 # replaced with a correction, it closed on purpose; a
                 # replaced one names what replaced it.
-                if self._store.archive_reason(note_id) not in FADED_ARCHIVE_REASONS:
+                if self._store.archive_reason(note_id) not in RECALLABLE_ARCHIVE_REASONS:
                     return self._replaced_by(note_id, "Memory")
                 engram = self._restore_faded(engram)
             quiet = engram.state == "dormant"
@@ -4471,7 +4484,7 @@ class MnemosRuntime:
             return ""
         faded = engram.state == "archived"
         if faded:
-            if self._store.archive_reason(engram.id) not in FADED_ARCHIVE_REASONS:
+            if self._store.archive_reason(engram.id) not in RECALLABLE_ARCHIVE_REASONS:
                 return None
             engram = self._restore_faded(engram)
         if engram.state in ("active", "dormant"):
@@ -5155,7 +5168,7 @@ class MnemosRuntime:
         assert self._store is not None
         return (
             engram.state != "archived"
-            or self._store.archive_reason(engram.id) in FADED_ARCHIVE_REASONS
+            or self._store.archive_reason(engram.id) in RECALLABLE_ARCHIVE_REASONS
         )
 
     def _retire(
@@ -5494,7 +5507,7 @@ class MnemosRuntime:
             if current != target else ""
         )
         if mark and engram.state == "archived":
-            if self._store.archive_reason(engram.id) in FADED_ARCHIVE_REASONS:
+            if self._store.archive_reason(engram.id) in RECALLABLE_ARCHIVE_REASONS:
                 return said(
                     f"Nothing was marked: memory {engram.id} has faded into the archive. "
                     "Recall it by its id to bring it back, then mark it.",

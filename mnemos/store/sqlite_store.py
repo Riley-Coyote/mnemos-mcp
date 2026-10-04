@@ -130,6 +130,11 @@ LIVE_HANDOFF_HOURS = 72
 # stays until someone who can see it decides otherwise.
 FADED_ARCHIVE_REASONS = ("decay_below_threshold", "low_accessibility")
 
+# What repair early-lessons archives: a lesson copied too soon from a memory
+# that kept its meaning. Recall still reaches it, as it reaches the faded.
+EARLY_LESSON_ARCHIVE_REASON = "drawn before its memory faded"
+RECALLABLE_ARCHIVE_REASONS = FADED_ARCHIVE_REASONS + (EARLY_LESSON_ARCHIVE_REASON,)
+
 # The agent's journal and the notes between the agent and the person (v16).
 # Both are kept the way a handoff is kept: exactly as written, in the scope
 # that wrote them, and never summarized, rewritten, decayed, softened,
@@ -2024,6 +2029,7 @@ class EngramStore:
         person_id: str | None = None,
         project_scope: str | None = None,
         author_kind: str | None = None,
+        least_accessible_first: bool = False,
     ) -> list[Engram]:
         """Get all active engrams for an agent, sorted by accessibility.
 
@@ -2035,6 +2041,8 @@ class EngramStore:
                 (e.g., decay pass only needs accessibility/strength fields).
             author_kind: Only engrams whose words this kind of writer wrote
                 ('agent' for the passes that make the agent who it is).
+            least_accessible_first: The least accessible first instead, so a
+                limit cuts the most accessible, not the faded.
         """
         return self.get_engrams_in_states(
             ("active",),
@@ -2044,6 +2052,7 @@ class EngramStore:
             person_id=person_id,
             project_scope=project_scope,
             author_kind=author_kind,
+            least_accessible_first=least_accessible_first,
         )
 
     def get_engrams_in_states(
@@ -2058,9 +2067,11 @@ class EngramStore:
         after_id: str | None = None,
         author_kind: str | None = None,
         standing: bool | None = None,
+        least_accessible_first: bool = False,
     ) -> list[Engram]:
         """Engrams in any of ``states`` for an agent, the most accessible
-        first, as ``get_active_engrams`` returns active ones.
+        first, as ``get_active_engrams`` returns active ones; with
+        ``least_accessible_first``, the least accessible first.
 
         With ``after_id``, the ``limit`` engrams after that id in id order
         instead: one page of a walk through every one of them (start it with
@@ -2090,7 +2101,7 @@ class EngramStore:
         if standing is not None:
             where.append("standing = ?")
             params.append(1 if standing else 0)
-        order = "accessibility DESC"
+        order = "accessibility ASC" if least_accessible_first else "accessibility DESC"
         if after_id is not None:
             where.append("id > ?")
             params.append(after_id)
@@ -2627,7 +2638,7 @@ class EngramStore:
         limit: int = 500,
         before_id: str | None = None,
     ) -> list[Engram]:
-        """Archived engrams in one scope that faded there (FADED_ARCHIVE_REASONS),
+        """Archived engrams in one scope that faded there (RECALLABLE_ARCHIVE_REASONS),
         ``limit`` at a time, newest first by id (a ULID, so by when each was
         written, to the millisecond); with ``before_id``, the page after that
         id. Walking the pages
@@ -2636,14 +2647,14 @@ class EngramStore:
         memory forgotten or replaced by a correction is never among them.
         Which of them a query names is the caller's to judge, word by word:
         SQLite's LIKE folds the case of ASCII letters only."""
-        reasons = ", ".join("?" * len(FADED_ARCHIVE_REASONS))
+        reasons = ", ".join("?" * len(RECALLABLE_ARCHIVE_REASONS))
         sql = (
             "SELECT e.* FROM engrams e JOIN archive a ON a.id = e.id "
             "WHERE e.state = 'archived' AND e.owner_agent_id = ? "
             "AND e.person_id = ? AND e.project_scope = ? "
             f"AND a.archive_reason IN ({reasons})"
         )
-        params: list[Any] = [agent_id, person_id, project_scope, *FADED_ARCHIVE_REASONS]
+        params: list[Any] = [agent_id, person_id, project_scope, *RECALLABLE_ARCHIVE_REASONS]
         if before_id is not None:
             sql += " AND e.id < ?"
             params.append(before_id)
@@ -2655,13 +2666,13 @@ class EngramStore:
     def count_faded(self, *, agent_id: str, person_id: str, project_scope: str) -> int:
         """How many archived engrams in one scope faded there: stored, and out of
         reach of an ordinary recall (see ``faded_engrams``)."""
-        reasons = ", ".join("?" * len(FADED_ARCHIVE_REASONS))
+        reasons = ", ".join("?" * len(RECALLABLE_ARCHIVE_REASONS))
         row = self._get_conn().execute(
             "SELECT COUNT(*) FROM engrams e JOIN archive a ON a.id = e.id "
             "WHERE e.state = 'archived' AND e.owner_agent_id = ? "
             "AND e.person_id = ? AND e.project_scope = ? "
             f"AND a.archive_reason IN ({reasons})",
-            (agent_id, person_id, project_scope, *FADED_ARCHIVE_REASONS),
+            (agent_id, person_id, project_scope, *RECALLABLE_ARCHIVE_REASONS),
         ).fetchone()
         return int(row[0]) if row else 0
 
@@ -4090,10 +4101,11 @@ class EngramStore:
 
         Its words stay, in the memory and the archive: nothing is deleted.
         One already archived for a reason like this stays exactly as it is.
-        One that had only faded there is archived again with ``reason``, so
-        recall no longer brings it back: it has been replaced or forgotten.
+        One that had only faded there, or was set aside as an early lesson, is
+        archived again with ``reason``, so recall no longer brings it back: it
+        has been replaced or forgotten.
         """
-        if engram.state == "archived" and self.archive_reason(engram.id) not in FADED_ARCHIVE_REASONS:
+        if engram.state == "archived" and self.archive_reason(engram.id) not in RECALLABLE_ARCHIVE_REASONS:
             return False
         self.archive_engram(engram, reason=reason)
         return True
@@ -4508,6 +4520,8 @@ class EngramStore:
         model_params = (model_line(reader_model),) if reader_model else ()
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
+        # The word questions older code made are noise (see _WORD_QUESTION): never
+        # shown, and never standing in the way of a question that means something.
         rows = conn.execute(
             f"""
             SELECT q.*, e.content AS live_content
@@ -4518,6 +4532,7 @@ class EngramStore:
               AND q.surfaced_count < ?
               AND (q.expires_at IS NULL OR q.expires_at > ?)
               AND e.state != 'archived'
+              AND q.prompt NOT LIKE 'You keep returning to "%'
               {model_clause}
             ORDER BY q.surfaced_count ASC, q.created_at ASC
             LIMIT ?

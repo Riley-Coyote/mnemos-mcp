@@ -21,7 +21,14 @@ FOUNDATIONAL = "Riley works best after midnight."
 HANDOFF = "Where I stopped: the harbour ledger balances. Next: the spring timetable. " + "The harbour ledger lists every crossing, one line each. " * 30
 JOURNAL = "The harbour ledger balances."
 REPLY = "The spring timetable is ready."
-PROMPT = 'You keep returning to "vektor" (5 memories). Is that a belief you now hold? If it is, state it in one line with verdict hold; if it is not, decline. Or leave it. [theme:vektor]'
+PROMPT = (
+    "On 3 different days you wrote something like this:\n"
+    '- "The vektor project needs another perf pass." (October 1)\n'
+    '- "The vektor project needs another perf pass." (October 2)\n'
+    '- "The vektor project needs another perf pass." (October 3)\n'
+    "Is there something you believe here? If there is, say it in one line with verdict hold; "
+    "if not, decline. Or leave it. [evidence:{target}]"
+)
 
 
 def _store(tmp_path: Path):
@@ -39,7 +46,9 @@ def _store(tmp_path: Path):
         )
         handoff = store.write_handoff(HANDOFF, **SCOPE, author_model=OPUS, author_session=EARLIER)
         store.write_journal_entry(JOURNAL, **SCOPE, model_id=OPUS, session_id=EARLIER)
-        question = store.enqueue_reflection("belief", standing_id, PROMPT, **SCOPE)
+        question = store.enqueue_reflection(
+            "belief", standing_id, PROMPT.format(target=standing_id), **SCOPE,
+        )
         note = store.write_note(JOURNAL, author="agent", kind="noticed", model_id=OPUS, **SCOPE)
         reply = store.write_note(REPLY, author="person", in_reply_to=note, **SCOPE)
     finally:

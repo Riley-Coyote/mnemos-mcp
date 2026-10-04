@@ -30,6 +30,9 @@ from ..store.fts import distinctive_terms, fts_words, or_query, overlap
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
 
+# How many active memories one softening pass reads, the least accessible first.
+SOFTENING_LIMIT = 5000
+
 
 # ── LLM Prompts (softener lineage: Anima; conservator invariants added) ──
 
@@ -200,16 +203,21 @@ def run_softening_pass(
         "dry_run": dry_run,
     }
 
-    # Get all engrams that could need softening (active or dormant, resolution > minimum)
+    # Faded first: what this pass teaches and blurs is what has faded, and on a
+    # store with more active memories than the limit, the faded were the ones cut.
+    # The voice exemplars are the most vivid, read apart.
     all_engrams = store.get_active_engrams(
         agent_id=agent_id, person_id=person_id, project_scope=project_scope,
-        limit=5000,
+        limit=SOFTENING_LIMIT, least_accessible_first=True,
     )
 
     # Conservator: the softener should preserve the agent's register, not
     # normalize it into the substrate model's voice. The most vivid
     # memories of the SAME agent serve as style exemplars.
-    exemplar_pool = _select_voice_exemplars(all_engrams)
+    exemplar_pool = _select_voice_exemplars(store.get_active_engrams(
+        agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+        limit=200,
+    ))
 
     total_res_before = 0.0
     total_res_after = 0.0
@@ -239,8 +247,12 @@ def run_softening_pass(
         if engram.accessibility >= softening_threshold:
             stats["not_faded"] = stats.get("not_faded", 0) + 1
         elif not dry_run:
-            _teach(engram, store, stats, llm_client=llm_client,
-                   max_llm_calls=max_llm_calls, invent_impact=invent_impact)
+            if store.standing_mark(engram.id) is not None:
+                # How the person wants the agent to work is never taught.
+                stats["standing"] = stats.get("standing", 0) + 1
+            else:
+                _teach(engram, store, stats, llm_client=llm_client,
+                       max_llm_calls=max_llm_calls, invent_impact=invent_impact)
 
         if engram.resolution <= minimum_resolution:
             continue  # Already at minimum resolution

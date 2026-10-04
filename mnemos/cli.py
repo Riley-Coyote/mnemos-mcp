@@ -533,7 +533,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     _scope_options(p_hook_start)
     p_hook_start.add_argument(
-        "--wake", choices=["full", "light", "off"], default=None,
+        "--wake", default=None,
         help="How much of memory to wake with: full (default), light (who you're with, how they work, where you left off; spends nothing), or off (nothing). Also read from MNEMOS_WAKE.",
     )
     p_hook_start.add_argument(
