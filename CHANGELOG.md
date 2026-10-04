@@ -2,6 +2,18 @@
 
 ## 0.3.1 (unreleased)
 
+### A newcomer's first hour
+
+From a Claude agent that set Mnemos up with only the README: `mnemos mcp
+install claude-code` (Claude Code's own `claude mcp add` line), a README that
+installs with embeddings and says what is lost without them, the hooks
+installer honouring CLAUDE_CONFIG_DIR, eleven tools named everywhere, full
+ids from `search`, `export` making its folder, `doctor` without jargon, the
+server reporting its own version, a correction naming the other notes it also
+matches, and `remember` warning about a near duplicate.
+
+### Closing and restoring
+
 - **Closing closes.** Closing a runtime closes the meaning index's own
   connection too, so the store's writes are folded back into its file.
 - **A restore holds, or says it didn't.** `mnemos backup restore` writes

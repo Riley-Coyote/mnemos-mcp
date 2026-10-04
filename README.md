@@ -9,14 +9,27 @@ decided together, what it got wrong last time — before you say anything.
 
 That is the whole product. Everything else in here serves it.
 
+For Claude Code:
+
 ```bash
-pip install mnemos-continuity
-mnemos mcp install claude --write     # or cursor / codex / generic
+pip install "mnemos-continuity[mcp,embeddings]"
+mnemos embeddings download
+mnemos mcp install claude-code --write
 mnemos hooks install claude-code --write
-# or: mnemos hooks install codex --write
 ```
 
-Nine tools. Local SQLite. No account, no API key, no external service. Nothing
+Then start Claude Code: it wakes with its memory, and the memory tools are there.
+
+For Claude Desktop: `mnemos mcp install claude --write`. For Codex, Cursor or
+another client, see [Choose A Setup](#choose-a-setup).
+
+Without the `embeddings` extra, Mnemos still works, but recall matches words
+only, and an idea the agent keeps returning to can't be noticed, so no new
+belief is ever proposed. To add it later, run
+`pip install "mnemos-continuity[embeddings]"` in the same environment, then
+`mnemos embeddings download` once to fetch the model.
+
+Eleven tools. Local SQLite. No account, no API key, no external service. Nothing
 leaves your machine unless you configure a provider yourself.
 
 ## What Mnemos is not
@@ -43,6 +56,7 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Use case | Recommended path | Command |
 |---|---|---|
 | Normal agent continuity | Simple MCP Mode | `mnemos serve` |
+| Claude Code | Simple MCP Mode, plus the SessionStart hook | `mnemos mcp install claude-code --write` then `mnemos hooks install claude-code --write` |
 | Claude Desktop | Simple MCP Mode, written config | `mnemos mcp install claude --write` |
 | Codex | Simple MCP Mode, printed add command | `mnemos mcp install codex` |
 | Cursor or another MCP client | Simple MCP Mode, printed JSON | `mnemos mcp install cursor` or `mnemos mcp install generic` |
@@ -70,14 +84,14 @@ want Mnemos to occupy Hermes' single external `memory.provider` slot.
 ```bash
 git clone https://github.com/Riley-Coyote/mnemos.git
 cd mnemos
-python -m pip install -e ".[mcp]"
+python -m pip install -e ".[mcp,embeddings]"
 mnemos doctor
 ```
 
 If you prefer `uv` while working inside the repository:
 
 ```bash
-uv run --extra mcp mnemos doctor
+uv run --extra mcp --extra embeddings mnemos doctor
 ```
 
 The MCP and Hermes install helpers should be run from an environment where
@@ -90,7 +104,7 @@ you plan to keep.
 When the package is published:
 
 ```bash
-pipx install "mnemos-continuity[mcp]"
+pipx install "mnemos-continuity[mcp,embeddings]"
 mnemos doctor
 ```
 
@@ -154,6 +168,12 @@ kind of model's name (Sonnet's, read by Opus) is a colleague's, not its own;
 an earlier version's notes are the reader's own. Nothing unsigned is guessed.
 
 ### Install Simple MCP Into Clients
+
+Claude Code (runs `claude mcp add` for you; without `--write` it prints the line):
+
+```bash
+mnemos mcp install claude-code --write
+```
 
 Claude Desktop:
 
@@ -491,6 +511,7 @@ mnemos doctor                         # Verify simple-mode readiness
 mnemos serve                          # Start simple MCP server
 MNEMOS_ENABLE_EXPERIMENTAL=1 mnemos serve --mode advanced  # unsupported research mode
 mnemos mcp install generic            # Print MCP config
+mnemos mcp install claude-code --write  # Register with Claude Code
 mnemos mcp install claude --write     # Merge Claude Desktop config
 mnemos hooks install claude-code      # Preview Claude Code SessionStart hook
 mnemos hooks install claude-code --write
@@ -623,6 +644,7 @@ Mnemos operates in layered form:
 ```text
 Simple MCP Surface      context | handoff | capture | recall | correct
                         reflect | maintain | introduce | health
+                        journal | note
 Continuity Layer        scoped notes | revisions | supersession | promotion
 Mnemos Core             engrams | connections | beliefs | reconsolidation
 Substrate               decay | softening | reflection | modulators | events

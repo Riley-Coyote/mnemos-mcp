@@ -508,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     p_mcp_install = mcp_sub.add_parser("install", help="Print or write MCP client config")
     p_mcp_install.add_argument(
         "client",
-        choices=("claude", "cursor", "codex", "generic"),
+        choices=("claude", "claude-code", "cursor", "codex", "generic"),
         help="Client config style",
     )
     p_mcp_install.add_argument("--name", default="mnemos", help="MCP server name")
@@ -1239,6 +1239,11 @@ def _systemctl(*args: str) -> None:
 
 
 def _claude_code_settings_path() -> Path:
+    """Claude Code's settings file: ``$CLAUDE_CONFIG_DIR/settings.json`` when
+    that variable is set and not empty, else ``~/.claude/settings.json``."""
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if config_dir:
+        return Path(config_dir).expanduser() / "settings.json"
     return Path.home() / ".claude" / "settings.json"
 
 
@@ -1750,7 +1755,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
         if len(content) > 80:
             content = content[:77] + "..."
         print(f"[{r.score:.3f}] {content}")
-        print(f"         id={r.engram.id[:25]}... kind={r.engram.kind} path={r.retrieval_path}")
+        print(f"         id={r.engram.id} kind={r.engram.kind} path={r.retrieval_path}")
 
     store.close()
     return 0
@@ -1886,6 +1891,7 @@ def _cmd_export(args: argparse.Namespace) -> int:
     store = _get_store(args)
     from .interface.openclaw_export import OpenClawExporter
 
+    Path(args.workspace).expanduser().mkdir(parents=True, exist_ok=True)
     exporter = OpenClawExporter(store, args.workspace)
     result = exporter.export_all(_resolve_agent_id(args))
 
@@ -2028,6 +2034,10 @@ def _cmd_remember(args: argparse.Namespace) -> int:
         marks_lived=False,  # a person at the command line, not the agent living
     )
     try:
+        close = _close_note(runtime, args.content)
+        if close is not None:
+            words = " ".join(str(close.get("content") or "").split())[:80]
+            print(f'A memory already says something close: "{words}" ({close["id"]}). Saved yours too.')
         print(
             runtime.capture(
                 args.content, context=args.context, importance=args.importance,
@@ -2037,6 +2047,24 @@ def _cmd_remember(args: argparse.Namespace) -> int:
         return 0
     finally:
         runtime.close()
+
+
+def _close_note(runtime, content: str) -> dict | None:
+    """The active note that ``content`` names, searched the way
+    ``correct(query=...)`` searches, or None."""
+    from .simple_runtime import _named_matches
+
+    if not content.strip():
+        return None
+    runtime._ensure_init()
+    matches = _named_matches(content, runtime._store.search_hypomnema(
+        content,
+        **runtime._scope_args(),
+        limit=10,
+        exclude_kinds=("handoff",),
+        live_only=False,
+    ), lambda note: note.get("content") or "")
+    return matches[0] if matches else None
 
 
 def _cmd_life(args: argparse.Namespace) -> int:
@@ -3156,6 +3184,12 @@ def _print_judge_status(watched=None) -> None:
     except Exception as exc:
         print(f"Cue judge:    unknown ({type(exc).__name__}: {exc})")
         return
+    # Without a key file there, one named, or the judge switched on, Jev means
+    # nothing to the person reading: no line. Switched on without a key, the
+    # line below says what's missing.
+    if (status["key_state"] == "missing" and not (os.environ.get(jev.KEY_FILE_ENV) or "").strip()
+            and not status["switched_on"]):
+        return
     key = f"key file {status['key_file']}: {status['key_state']}"
     if status["in_use"]:
         print(f"Cue judge:    on: Jev decides which memories the cue shows (switch: {status['source']}; {key})")
@@ -3252,13 +3286,20 @@ def _print_semantic_status(runtime, watched=None) -> None:
     from .simple_runtime import describe_semantic
 
     try:
-        headline, details, attention = describe_semantic(
-            runtime.semantic_status(verify=True)
-        )
+        semantic = runtime.semantic_status(verify=True)
+        headline, details, attention = describe_semantic(semantic)
     except Exception as exc:
         print(f"Semantic:     unknown ({type(exc).__name__}: {exc})")
         return
     print(f"Semantic:     {headline}")
+    # Only when the extra is missing: a package installed and failing is not
+    # fixed by installing it (the "why" line names the root cause then).
+    if semantic and not semantic.get("active") and "is not installed" in str(semantic.get("reason") or ""):
+        print(
+            "              Without it, recall matches words only, and ideas you keep "
+            "returning to can't be noticed. Add it with: "
+            'pip install "mnemos-continuity[embeddings]", then: mnemos embeddings download'
+        )
     for detail in details:
         print(f"              {detail}")
     from .simple_runtime import describe_recall_index
@@ -3387,7 +3428,7 @@ def _cmd_identity(args: argparse.Namespace) -> int:
 def _cmd_mcp(args: argparse.Namespace) -> int:
     """MCP client helper commands."""
     if args.mcp_command != "install":
-        print("Usage: mnemos mcp install {claude|cursor|codex|generic}", file=sys.stderr)
+        print("Usage: mnemos mcp install {claude|claude-code|cursor|codex|generic}", file=sys.stderr)
         return 1
     if args.mode == "advanced" and os.environ.get("MNEMOS_ENABLE_EXPERIMENTAL") != "1":
         print(
@@ -3426,6 +3467,36 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
         print(f"Installed Mnemos MCP config at {path}")
         print("Restart Claude Desktop to expose the new tools.")
         return 0
+
+    if args.client == "claude-code":
+        # Claude Code keeps its MCP servers in its own config, which its own
+        # `claude mcp add` writes (and which honours CLAUDE_CONFIG_DIR); the
+        # Claude Desktop file is not read by it.
+        parts = [
+            "claude", "mcp", "add", "--scope", "user", args.name, "--",
+            _mnemos_command(), "serve", "--mode", args.mode,
+        ]
+        if args.agent_id:
+            parts.extend(["--agent-id", args.agent_id])
+        if args.db_path:
+            parts.extend(["--db-path", args.db_path])
+        line = shlex.join(parts)
+        if not args.write:
+            print(line)
+            return 0
+        claude = shutil.which("claude")
+        if not claude:
+            print("Claude Code isn't on your PATH. Run this yourself once it is:")
+            print(line)
+            return 1
+        result = subprocess.run(
+            [claude, *parts[1:]], capture_output=True, text=True, check=False
+        )
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        return result.returncode
 
     if args.write:
         print(

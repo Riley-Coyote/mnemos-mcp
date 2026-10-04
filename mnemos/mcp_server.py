@@ -84,6 +84,7 @@ ADVANCED_INSTRUCTIONS = (
 )
 
 mcp = FastMCP("mnemos", instructions=ADVANCED_INSTRUCTIONS)
+mcp._mcp_server.version = _simple_mcp.mnemos_version()
 register_simple_tools(mcp, include_recall=False)
 
 

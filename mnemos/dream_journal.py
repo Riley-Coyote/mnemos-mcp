@@ -79,7 +79,8 @@ def compose_dream_narrative(
     if connections_created > 0:
         sentences.append(
             f"Mnemos connected {connections_created} "
-            f"{_plural(connections_created, 'memory', 'memories')} that belong together."
+            f"{_plural(connections_created, 'memory', 'memories')} that "
+            f"{_plural(connections_created, 'belongs', 'belong')} together."
         )
     if engrams_softened > 0:
         kept = "their lessons" if (lessons_created + lessons_reinforced) > 0 else "what mattered"

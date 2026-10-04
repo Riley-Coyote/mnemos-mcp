@@ -5796,13 +5796,29 @@ class MnemosRuntime:
             ), lambda note: note.get("content") or "")
             if matches:
                 match = matches[0]
+                # What else the query names: the agent decides whether those
+                # say the same old thing.
+                others = [
+                    other for other in matches[1:]
+                    if other.get("id") != match["id"]
+                    and other.get("active", 1)
+                    and other.get("entry_kind") != "handoff"
+                ][:3]
+                also = [
+                    "Other notes this also names: if they say the same old thing, "
+                    "correct them too (target_id).",
+                    *(
+                        f'- {other["id"]}: "{" ".join(str(other.get("content") or "").split())[:80]}"'
+                        for other in others
+                    ),
+                ] if others and not forget else []
                 note, engram = self._store.capture_pair(match["id"], **self._scope_args())
                 if note is not None and note.get("entry_kind") != "continuity":
                     said = self._correct_other_note(
                         note, correction, action, impact, query=query_text, **signing,
                     )
                     maintenance = self.maintain(auto=True)
-                    return f"{said}\nMaintenance:\n{_indent(maintenance)}"
+                    return "\n".join([said, "Maintenance:", _indent(maintenance), *also])
                 if forget:
                     _retired_notes, retired_memories = self._forget_pair(
                         note, engram, action=action, query=query_text, **signing,
@@ -5828,6 +5844,7 @@ class MnemosRuntime:
                     *result["lines"],
                     "Maintenance:",
                     _indent(maintenance),
+                    *also,
                 ])
 
         if forget:
