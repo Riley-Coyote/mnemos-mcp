@@ -6580,9 +6580,12 @@ def _index_lines(indexed: Mapping[str, Any]) -> list[str]:
     written, waiting = indexed.get("items", 0), indexed.get("waiting", 0)
     if not written and not waiting:
         return []
+    passages = indexed.get("passages", 0)
     line = (
-        f"Recall index: {written} memories or handoffs made findable by meaning "
-        f"({indexed.get('passages', 0)} passages)"
+        f"Recall index: {written} "
+        f"{'memory or handoff' if written == 1 else 'memories or handoffs'} "
+        f"made findable by meaning "
+        f"({passages} {'passage' if passages == 1 else 'passages'})"
     )
     return [f"{line}; {waiting} still waiting" if waiting else line]
 

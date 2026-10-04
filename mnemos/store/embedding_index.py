@@ -605,16 +605,30 @@ def _load_local_model(model_name: str) -> Any:
     """
     from sentence_transformers import SentenceTransformer
 
+    # transformers' "Loading weights" bar would print into doctor, search and
+    # remember: off while loading, and back as it was after.
     try:
-        return SentenceTransformer(model_name, local_files_only=True)
-    except TypeError:
-        # sentence-transformers before local_files_only: load the cached copy
-        # by its path, which never asks the Hub.
-        from huggingface_hub import snapshot_download
+        from transformers.utils import logging as hf_logging
 
-        return SentenceTransformer(
-            snapshot_download(repo_id=_hub_repo(model_name), local_files_only=True)
-        )
+        was_enabled = hf_logging.is_progress_bar_enabled()
+        enable = hf_logging.enable_progress_bar
+        hf_logging.disable_progress_bar()
+    except (ImportError, AttributeError):
+        was_enabled, enable = False, None
+    try:
+        try:
+            return SentenceTransformer(model_name, local_files_only=True)
+        except TypeError:
+            # sentence-transformers before local_files_only: load the cached
+            # copy by its path, which never asks the Hub.
+            from huggingface_hub import snapshot_download
+
+            return SentenceTransformer(
+                snapshot_download(repo_id=_hub_repo(model_name), local_files_only=True)
+            )
+    finally:
+        if was_enabled and enable is not None:
+            enable()
 
 
 def download_local_model(model_name: str = "all-MiniLM-L6-v2") -> str:

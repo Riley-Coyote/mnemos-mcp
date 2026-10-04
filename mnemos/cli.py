@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any
 
 from .config.loader import load_config
+from .package_version import mnemos_version
 
 
 def _resolve_default_mode() -> str:
@@ -96,6 +97,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="mnemos",
         description="Mnemos: Living Memory Architecture for Autonomous AI Agents",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"mnemos {mnemos_version()}"
     )
     _scope_options(parser, top_level=True, helps={
         "--db-path": "Path to the SQLite database (default: ~/.mnemos/<agent>.db)",

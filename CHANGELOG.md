@@ -2,6 +2,14 @@
 
 ## 0.3.1 (unreleased)
 
+### A clean install
+
+From a fresh install of the built wheel: `mnemos --version`; loading the
+local model no longer prints transformers' progress bar into doctor, search
+and the rest; the identity templates install inside the package
+(mnemos/setup/templates), not as a loose folder in site-packages; and "1
+memory or handoff made findable (1 passage)" agrees in number.
+
 ### A newcomer's first hour
 
 From a Claude agent that set Mnemos up with only the README: `mnemos mcp

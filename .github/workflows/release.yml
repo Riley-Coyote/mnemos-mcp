@@ -80,14 +80,18 @@ jobs:
               "mnemos/simple_runtime.py",
               "mnemos/simple_mcp.py",
               "mnemos/setup/scheduler.py",
-              "templates/SOUL.md",
-              "templates/IDENTITY.md",
+              "mnemos/setup/templates/SOUL.md",
+              "mnemos/setup/templates/IDENTITY.md",
           }
           with zipfile.ZipFile(wheel) as archive:
               names = set(archive.namelist())
           missing = sorted(required - names)
           if missing:
               raise SystemExit(f"Missing from wheel: {missing}")
+          # The templates ship inside the package; nothing lands loose in site-packages.
+          stray = sorted(n for n in names if n.split('/')[0] == 'templates')
+          if stray:
+              raise SystemExit(f"Loose top-level files in wheel: {stray}")
           print(f"Wheel OK: {wheel}")
           PY
 

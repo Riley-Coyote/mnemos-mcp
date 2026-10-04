@@ -25,13 +25,10 @@ Core features (always active):
 # said 0.2.0, and nothing failed — a released package can misreport its own
 # version to every user and to every bug report, and PyPI versions cannot be
 # replaced once uploaded. The fallback covers running from a source tree
-# that was never installed.
-try:  # pragma: no cover - trivial branch
-    from importlib.metadata import PackageNotFoundError, version as _pkg_version
+# that was never installed: pyproject.toml's version, then "0.0.0+unknown".
+from .package_version import mnemos_version
 
-    __version__ = _pkg_version("mnemos-continuity")
-except (ImportError, PackageNotFoundError):  # pragma: no cover
-    __version__ = "0.0.0+unknown"
+__version__ = mnemos_version()
 
 # Public API
 from .store.sqlite_store import EngramStore

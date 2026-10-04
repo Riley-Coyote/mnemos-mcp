@@ -101,7 +101,7 @@ Issues = "https://github.com/Riley-Coyote/mnemos/issues"
 packages = ["mnemos"]
 
 [tool.hatch.build.targets.wheel.force-include]
-"templates" = "templates"
+"templates" = "mnemos/setup/templates"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
