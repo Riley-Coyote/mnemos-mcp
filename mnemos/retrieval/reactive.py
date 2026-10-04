@@ -67,6 +67,7 @@ from .reconsolidation import reconsolidate
 from ..store.fts import (
     COMMON_SHARE,
     common_words,
+    fts_words,
     or_query,
     rank_by_words,
     search_among,
@@ -109,6 +110,8 @@ MEANING_SEEDS = 30
 MEANING_FLOOR = 0.35
 # Resonance reaches at most this many links from a seed.
 SPREAD_HOPS = 2
+# A result names at most this many of the words it was found by.
+MATCHED_WORDS = 3
 
 
 def fuse(lists: Iterable[tuple[Sequence[str], float]], k: int = FUSION_K) -> dict[str, float]:
@@ -160,8 +163,10 @@ class RetrievalResult:
     (whether or not its meaning matched too), "embedding" for one found by
     meaning alone, "resonance" for a memory reached only through connections.
     ``score_breakdown`` holds its ranks in the lists it was fused from
-    (``words_rank``, ``meaning_rank``), its ``similarity`` and its ``fused``
-    score.
+    (``words_rank``, ``meaning_rank``), its ``similarity``, its ``fused``
+    score, and ``matched_words``: the words searched for that its own text
+    holds (a memory's words and its lesson, a note's words), in the cue's
+    order, at most ``MATCHED_WORDS``.
     """
 
     engram: Engram | None
@@ -559,15 +564,25 @@ class ReactiveRetriever:
                 words_rank.setdefault(item_id, rank)
         meaning_rank = {item_id: rank for rank, item_id in enumerate(meaning, start=1)}
 
-        def breakdown(item_id: str, level: float) -> tuple[dict[str, Any], str]:
+        # The words a result found by words names: the cue's own (common ones
+        # too: what meaning can't find is searched by every word), the ones its
+        # text holds. One found by meaning or through a link names none.
+        cue_words = search_words(cue)
+
+        def breakdown(item_id: str, level: float, text: str) -> tuple[dict[str, Any], str]:
             detail: dict[str, Any] = {
                 "activation": round(level, 4),
                 "is_seed": item_id in seed_activation,
+                "matched_words": [],
             }
             if item_id in fused:
                 detail["fused"] = round(fused[item_id], 6)
             if item_id in words_rank:
                 detail["words_rank"] = words_rank[item_id]
+                held = {word.lower() for word in fts_words(text, min_len=1)}
+                detail["matched_words"] = [
+                    word for word in cue_words if word.lower() in held
+                ][:MATCHED_WORDS]
             if item_id in meaning_rank:
                 detail["meaning_rank"] = meaning_rank[item_id]
                 detail["similarity"] = similarity[item_id]
@@ -598,7 +613,7 @@ class ReactiveRetriever:
                 continue
             if engram.source.confidence < self._confidence_floor:
                 continue
-            detail, path = breakdown(eid, level)
+            detail, path = breakdown(eid, level, f"{engram.content or ''} {lessons.get(eid, '')}")
             results.append(RetrievalResult(
                 engram=engram, score=round(level, 4), score_breakdown=detail, retrieval_path=path,
             ))
@@ -606,7 +621,7 @@ class ReactiveRetriever:
             note = note_by_id.get(item_id)
             if note is None or level < self._threshold:
                 continue
-            detail, path = breakdown(item_id, level)
+            detail, path = breakdown(item_id, level, note_texts[item_id])
             results.append(RetrievalResult(
                 engram=None, note=note, score=round(level, 4), score_breakdown=detail,
                 retrieval_path=path,

@@ -399,7 +399,9 @@ def register_simple_tools(server: FastMCP, *, include_recall: bool = True) -> No
         ) -> str:
             """Recall what memory holds for a question: memories, lessons,
             handoffs and journal entries, found by their words and by their
-            meaning, best first.
+            meaning, best first. Each result says how it was found: by
+            meaning (with how close), by the query's words (which ones), or
+            through a link.
 
             Each row carries up to 300 characters of its own words, usually
             enough to use it. To read one whole, pass its id as the query:

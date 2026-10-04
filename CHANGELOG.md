@@ -2,6 +2,16 @@
 
 ## 0.3.1 (unreleased)
 
+### Recall says how it found something
+
+A recalled memory's bracket used to be its score relative to the best match,
+so the top result always read 1.00, even on one shared word ("what is my dog
+called" found "The human wants to be called Sam." at 1.00). It now says how
+the memory was found: by meaning and how close, by which of the query's
+words, or through a link. What recall finds, and its order, are unchanged.
+The advanced server's recall prints whole ids, and `mnemos search` the
+same brackets.
+
 ### A clean install
 
 From a fresh install of the built wheel: `mnemos --version`; loading the

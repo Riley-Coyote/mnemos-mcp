@@ -1738,6 +1738,7 @@ def _cmd_search(args: argparse.Namespace) -> int:
     """Search memories."""
     store = _get_store(args)
     from .retrieval.reactive import ReactiveRetriever
+    from .simple_runtime import how_found
 
     retriever = ReactiveRetriever(store)
     scope = _cli_scope(args)
@@ -1758,8 +1759,8 @@ def _cmd_search(args: argparse.Namespace) -> int:
         content = r.engram.content
         if len(content) > 80:
             content = content[:77] + "..."
-        print(f"[{r.score:.3f}] {content}")
-        print(f"         id={r.engram.id} kind={r.engram.kind} path={r.retrieval_path}")
+        print(f"{how_found(r)} {content}")
+        print(f"         id={r.engram.id} kind={r.engram.kind}")
 
     store.close()
     return 0

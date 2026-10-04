@@ -58,7 +58,7 @@ from .interface.context_packet import (
     standing_words,
     whose_handoff,
 )
-from .retrieval.reactive import ReactiveRetriever, RetrievalResult
+from .retrieval.reactive import MATCHED_WORDS, ReactiveRetriever, RetrievalResult
 # Re-exported: MnemosScope and resolve_scope moved to simple_scope but
 # remain importable from here for existing consumers.
 from .simple_scope import MnemosScope, resolve_scope  # noqa: F401
@@ -66,7 +66,7 @@ from .store.embedding_index import WRITE_EMBED_SECONDS, EmbeddingIndex
 from .core.engram import Engram
 from .core.placeholders import TEMPLATED_IMPACTS, is_templated
 from .store.archive import resharpen
-from .store.fts import distinctive_terms, fts_words, meaningful_words, or_query
+from .store.fts import distinctive_terms, fts_words, meaningful_words, or_query, search_words
 from .store.sqlite_store import (
     EARLY_LESSON_ARCHIVE_REASON,
     RECALLABLE_ARCHIVE_REASONS,
@@ -4105,7 +4105,7 @@ class MnemosRuntime:
         section, kept = fit_section(
             heading,
             [
-                ("Continuity notes:", [(("note", entry["id"]), _format_continuity(entry)) for entry in continuity]),
+                ("Continuity notes:", [(("note", entry["id"]), _format_continuity(entry, query)) for entry in continuity]),
                 ("Relevant memories:", [(("memory", index), _format_memory(result)) for index, result in enumerate(memories)]),
             ],
             room,
@@ -6530,24 +6530,46 @@ def _own_words(text: str, limit: int = ROW_CHARS) -> str:
     return words[:cut].rstrip(" ,;:") + "…"
 
 
-def _format_continuity(entry: dict[str, Any]) -> str:
-    score = entry.get("score", 0.0)
+def _format_continuity(entry: dict[str, Any], query: str) -> str:
+    """A note the query's words found, after the packet: which of them it
+    holds (up to three), as recall's rows say it, not a relative score."""
+    held = {word.lower() for word in fts_words(entry["content"] or "", min_len=1)}
+    words = [word for word in search_words(query) if word.lower() in held][:MATCHED_WORDS]
     return (
-        f"- [{score:.2f}] {_own_words(entry['content'])}\n"
+        f"- [{'words: ' + ', '.join(words) if words else 'words'}] {_own_words(entry['content'])}\n"
         f"  id={entry['id']} domain={entry['domain']} confidence={entry['confidence']:.2f} "
         f"{note_signature(entry)}"
     )
+
+
+def how_found(result: Any) -> str:
+    """The bracket in front of a recalled row: how recall found it, by meaning
+    and how close, by which of the query's words, or through a link.
+
+    It used to be the result's score, which is relative to the best seed, so
+    the top row always read 1.00, on one shared word or on everything ("what
+    is my dog called" found "The human wants to be called Sam." at 1.00)."""
+    detail = result.score_breakdown or {}
+    found = []
+    if "similarity" in detail:
+        found.append(f"meaning {detail['similarity']:.2f}")
+    if "words_rank" in detail:
+        # A word the lesson held in a form fts_words splits differently
+        # matched by rank and names none.
+        words = detail.get("matched_words") or []
+        found.append(f"words: {', '.join(words)}" if words else "words")
+    return f"[{'; '.join(found) or 'linked'}]"
 
 
 def _format_memory(result: Any) -> str:
     """A memory in a list: its own words (not the impact, which a lesson
     already is and which is fetched by id), enough to use without fetching."""
     engram = result.engram
-    # A dormant memory the cue matched starts at half the score, which the
-    # reader would otherwise have no way to read.
+    # A dormant memory the cue matched comes back marked as one: recall wakes
+    # it, and the reader should know it had gone quiet.
     quiet = " (it had gone quiet)" if engram.state == "dormant" else ""
     return (
-        f"- [{result.score:.2f}] {_own_words(engram.content or engram.impact or '')}\n"
+        f"- {how_found(result)} {_own_words(engram.content or engram.impact or '')}\n"
         f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}"
     )
 
@@ -6567,7 +6589,7 @@ def _format_handoff(result: Any, reader: str, session: str) -> str:
         kind = "handoff"
     left = (note.get("created_at") or "")[:10]
     return (
-        f"- [{result.score:.2f}] {_own_words(note.get('content') or '')}\n"
+        f"- {how_found(result)} {_own_words(note.get('content') or '')}\n"
         f"  id={note.get('id')} kind={kind}; left {left}: {label}"
     )
 
@@ -6596,7 +6618,7 @@ def _format_note(result: Any) -> str:
     note = result.note or {}
     kind = "report" if note.get("entry_kind") == "maintenance_report" else "note"
     return (
-        f"- [{result.score:.2f}] {_own_words(note.get('content') or '')}\n"
+        f"- {how_found(result)} {_own_words(note.get('content') or '')}\n"
         f"  id={note.get('id')} kind={kind} {note_signature(note)}, "
         f"{_age_text(note.get('created_at') or '')}"
     )
@@ -6662,7 +6684,7 @@ def _format_journal(result: Any, reader: str, session: str) -> str:
     entry = result.note or {}
     label, _whose = whose_handoff(_signed_row(entry), reader, session)
     return (
-        f"- [{result.score:.2f}] {_own_words(entry.get('content') or '')}\n"
+        f"- {how_found(result)} {_own_words(entry.get('content') or '')}\n"
         f"  id={entry.get('id')} kind=journal; written {(entry.get('created_at') or '')[:10]} "
         f"({entry.get('written') or 'in_conversation'}): {label}"
     )

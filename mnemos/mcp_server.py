@@ -60,6 +60,7 @@ from .simple_mcp import (
     configure_runtime,
     register_simple_tools,
 )
+from .simple_runtime import how_found
 from .simple_scope import MnemosScope, resolve_tool_scope
 
 logger = logging.getLogger("mnemos.mcp")
@@ -822,8 +823,8 @@ def mnemos_recall(
             display = display[:147] + "..."
         pct = int(r.engram.source.confidence * 100)
         lines.append(
-            f"[{r.score:.2f}] {display}\n"
-            f"       id={r.engram.id[:25]}... kind={r.engram.kind} confidence={pct}%"
+            f"{how_found(r)} {display}\n"
+            f"       id={r.engram.id} kind={r.engram.kind} confidence={pct}%"
         )
 
     return f"Found {len(results)} memories:\n\n" + "\n\n".join(lines)
