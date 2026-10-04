@@ -94,10 +94,10 @@ def test_a_memory_reinforces_its_lesson_once_not_every_cycle(runtime):
     runtime.capture("Spent three hours on a misplaced guard clause in the handler",
                     impact="Small guard clauses deserve the same care as big designs.")
     engram = runtime._store.get_active_engrams(agent_id="demo", limit=5)[0]
-    engram.accessibility, engram.resolution = 0.02, 1.0
+    engram.accessibility, engram.resolution = 0.1, 1.0
     runtime._store.save_engram(engram)
     conn = runtime._store._get_conn()
-    conn.execute("UPDATE engrams SET created_at = ? WHERE id = ?", ("2020-01-01T00:00:00+00:00", engram.id))
+    conn.execute("UPDATE engrams SET created_at = ?, last_accessed = ? WHERE id = ?", ("2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00", engram.id))
     conn.commit()
 
     def lesson_strength():

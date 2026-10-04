@@ -62,6 +62,7 @@ def _hook(db: Path, tmp_path: Path, *, env: dict[str, str] | None = None,
     (home / ".mnemos").mkdir(parents=True, exist_ok=True)
     folder = tmp_path / "work" / "harbour-app"
     folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".git").mkdir(exist_ok=True)
     payload = {
         "hook_event_name": "SessionStart", "source": "startup", "session_id": FRESH,
         "cwd": str(folder),

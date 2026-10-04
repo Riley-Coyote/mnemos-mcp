@@ -541,40 +541,6 @@ def test_the_agents_evidence_never_strengthens_a_tools_lesson(tmp_path):
     assert [(row["content"], row.get("author_kind")) for row in mine] == [(words, "agent")]
 
 
-def test_themes_are_mined_only_from_what_the_agent_wrote(tmp_path):
-    db = tmp_path / "m.db"
-    runtime = _runtime(db)
-    try:
-        runtime._ensure_init()
-        store = runtime._store
-        assert store is not None
-        for text in (
-            "The harbour ledger moved into a spreadsheet.",
-            "Harbour cranes were repaired over the weekend.",
-            "Tides at the harbour were charted again.",
-            "The harbour office opens early on market days.",
-        ):
-            _memory(store, text, "agent")
-        for text in (
-            "The zeppelin hangar reopened in spring.",
-            "Zeppelin tours sold out quickly.",
-            "A zeppelin mooring mast was painted.",
-            "Zeppelin pilots trained over the bay.",
-            "The zeppelin museum added a wing.",
-            "Zeppelin flights paused for storms.",
-        ):
-            _memory(store, text, "tool")
-        for _ in range(3):  # one theme is asked per cycle
-            runtime._enqueue_belief_reflections(limit=1)
-        asked = [row["prompt"] for row in _rows(
-            db, "SELECT prompt FROM reflection_queue WHERE kind = 'belief'")]
-    finally:
-        runtime.close()
-
-    themes = {re.search(r"\[theme:([^\]]+)\]", prompt).group(1) for prompt in asked}
-    assert themes == {"harbour"}, (
-        f"the agent was asked whether a tool's words are its belief: {asked}"
-    )
 
 
 def test_identity_is_measured_only_from_what_the_agent_wrote(tmp_path):

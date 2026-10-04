@@ -42,6 +42,10 @@ if TYPE_CHECKING:
 # At most this many active memories are decayed in one pass, the most
 # accessible first.
 ACTIVE_LIMIT = 10000
+# For this many hours after its last use, an active memory is held at no less
+# than this accessibility: just used, it can't be fading.
+RECENCY_FLOOR = 0.4
+RECENCY_FLOOR_HOURS = 72
 # Dormant memories are read this many at a time, and all of them are decayed.
 DORMANT_PAGE = 500
 
@@ -215,8 +219,8 @@ def _decay_engram(
         if "active_project" in engram.tags:
             new_accessibility = max(0.6, new_accessibility)
 
-        if age_hours < 72:
-            new_accessibility = max(0.4, new_accessibility)
+        if age_hours < RECENCY_FLOOR_HOURS:
+            new_accessibility = max(RECENCY_FLOOR, new_accessibility)
 
     # Track if anything changed
     changed = (

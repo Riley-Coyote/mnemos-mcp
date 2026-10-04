@@ -612,7 +612,7 @@ def test_reaffirm_can_be_asked(tmp_path):
     assert "Still true?" in packet and "Riley's trips bend to the ferry." in packet
 
 
-def test_new_themes_do_not_crowd_out_a_reaffirmation(tmp_path):
+def test_a_due_reaffirmation_is_asked_and_no_word_is(tmp_path):
     """On a real store every maintenance cycle found a new theme to ask about
     (14 cycles, 14 theme questions in a day). A reaffirmation that waited for a
     cycle with none was never asked."""
@@ -634,8 +634,7 @@ def test_new_themes_do_not_crowd_out_a_reaffirmation(tmp_path):
     finally:
         rt.close()
 
-    assert sorted(i["kind"] for i in waiting) == ["belief", "reaffirm"], waiting
-    assert "[theme:vektor]" in next(i for i in waiting if i["kind"] == "belief")["prompt"]
+    assert [i["kind"] for i in waiting] == ["reaffirm"], waiting
     assert next(i for i in waiting if i["kind"] == "reaffirm")["target_id"] == target
 
 
@@ -798,33 +797,6 @@ def test_reaffirmations_share_the_one_question_cap(tmp_path):
     assert block.count("mnemos_reflect(") == 1
 
 
-def test_a_declined_theme_is_not_asked_again(tmp_path):
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        notes = iter([
-            "vektor render queue stalled overnight",
-            "vektor shader cache rebuilt following a crash",
-            "vektor timeline scrubbing feels sluggish",
-            "vektor export finally matches preview",
-            "vektor audio drifted during playback",
-            "vektor autosave corrupted twice",
-            "vektor installer signed properly",
-        ])
-        for _ in range(4):
-            _memory(rt, next(notes))
-        rt.maintain()
-        [ask] = rt.pending_reflections(limit=5)
-        rt.reflect(ask["target_id"], "It is a project, not a belief.", verdict="decline")
-        for _ in range(3):
-            _memory(rt, next(notes))
-            rt.maintain()
-    finally:
-        rt.close()
-
-    themes = [p for (p,) in _all(db, "SELECT prompt FROM reflection_queue WHERE kind = 'belief'")]
-    assert len(themes) == 1 and "[theme:vektor]" in themes[0], themes
-    assert _beliefs(db) == []
 
 
 # ── Older code: every verdict waits, and no reaffirmation is asked ──

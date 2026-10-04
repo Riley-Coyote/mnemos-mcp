@@ -31,13 +31,13 @@ def _fade(runtime, content):
     """Capture something and let it drop out of easy reach."""
     runtime.capture(content, importance="high")
     engram = runtime._store.get_active_engrams(agent_id="demo", limit=5)[0]
-    engram.accessibility = 0.02
+    engram.accessibility = 0.1
     engram.resolution = 1.0
     runtime._store.save_engram(engram)
     # Forgetting takes time; a memory from this session is not fading.
     conn = runtime._store._get_conn()
-    conn.execute("UPDATE engrams SET created_at = ? WHERE id = ?",
-                 ("2020-01-01T00:00:00+00:00", engram.id))
+    conn.execute("UPDATE engrams SET created_at = ?, last_accessed = ? WHERE id = ?",
+                 ("2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00", engram.id))
     conn.commit()
     return engram.id
 

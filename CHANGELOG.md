@@ -2,6 +2,31 @@
 
 ## 0.3.1 (unreleased)
 
+### Quiet the noise
+
+- **No more questions about words.** Maintenance no longer asks whether a
+  word that recurs across memories is a belief ("You keep returning to
+  ..."). A word that recurs is not an idea that returns: on a real store it
+  asked 248 times, about words like "need" and "branch", and every belief
+  held had been formed in answer to one. Beliefs held are still put to the
+  agent again when due. `mnemos repair word-questions` removes the unanswered
+  ones that hold no words of the agent's.
+- **Forgetting teaches only what was forgotten.** A memory's meaning becomes a
+  lesson, and a memory without one is asked what it taught, only once its
+  accessibility is below `softening_threshold` (0.15), which was read and
+  never used. Before, every memory a day old counted as fading: on a real
+  store 216 of 285 lessons repeated, word for word, the meaning of a memory
+  that had not faded. `mnemos repair early-lessons` folds those back and
+  removes the early questions; each memory keeps its meaning.
+- **Light and off wake-ups.** `mnemos hook session-start --wake light` (or
+  `MNEMOS_WAKE=light`) wakes with who you're with, how they work, the
+  beliefs held and where you left off, and spends nothing: no question is
+  shown, no reply delivered, no delivery recorded. `--wake off` wakes with
+  nothing. For quick sessions, such as a helper that answers one question.
+- **A name belongs to the model that gave it.** Another model introducing
+  itself without a name no longer inherits the last one given.
+- Code version 13.
+
 ### A journal that is the agent's
 
 Simple mode had no journal of the mind's own (the only one was upkeep's dream

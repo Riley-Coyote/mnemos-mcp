@@ -43,6 +43,11 @@ SCHEMA_VERSION = 16
 # raised by each newer version that opens it (see mnemos/code_version.py).
 MIN_CODE_VERSION_KEY = "min_code_version"
 
+
+def code_version_first_opened_key(version: int) -> str:
+    """The meta key holding when code at ``version`` first opened a store."""
+    return f"code_version_{int(version)}_first_opened_at"
+
 # Who wrote each memory's words (schema v12; see mnemos/authorship.py). Set
 # once, when the memory is first stored: a later save never changes it.
 VALID_AUTHOR_KINDS = frozenset(AUTHOR_KINDS)
@@ -5121,6 +5126,10 @@ class EngramStore:
         it alone. Both statements run in one immediate transaction, so two
         servers starting together cannot interleave a read and a write and
         lower what the newer one set. Returns the minimum now stored.
+
+        The first time code at a version opens the store is kept too
+        (``code_version_first_opened_key``), once: what that version's rules
+        made can be told from what older rules made.
         """
         conn = self._get_conn()
         self._begin_immediate()
@@ -5128,6 +5137,10 @@ class EngramStore:
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                 (MIN_CODE_VERSION_KEY, str(int(version))),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
+                (code_version_first_opened_key(version), datetime.now(timezone.utc).isoformat()),
             )
             conn.execute(
                 "UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS INTEGER) < ?",

@@ -87,6 +87,63 @@ def _hours_since(timestamp: str) -> float:
     return (datetime.now(timezone.utc) - then).total_seconds() / 3600.0
 
 
+def _teach(
+    engram: Any,
+    store: EngramStore,
+    stats: dict,
+    *,
+    llm_client: Any | None,
+    max_llm_calls: int,
+    invent_impact: bool,
+) -> None:
+    """Settle what a memory that has faded taught, once.
+
+    Shift 1: before its detail goes, what it meant is kept as its impact.
+    With no provider and no licence to invent one, the agent is asked
+    (``awaiting_impact``); the server never guesses. Shift 2: an impact the
+    agent wrote becomes a lesson, linked back by ``distilled_into``. Which
+    lesson is the helper's to judge (``_create_or_reinforce_lesson`` reuses a
+    linked lesson only when it says the same thing), so a stale or misfiled
+    link never stands in for the memory's own; once linked to the lesson it
+    names, the memory is left as it is.
+    """
+    changed = False
+    if not engram.impact:
+        if llm_client and stats["llm_calls"] < max_llm_calls:
+            engram.impact = _extract_impact(engram.content, llm_client)
+            engram.impact_source = "model"
+            stats["llm_calls"] += 1
+            changed = True
+        elif invent_impact:
+            engram.impact = _rule_based_impact(engram.content)
+            engram.impact_source = "template"
+            changed = True
+        elif getattr(engram, "author_kind", "unknown") == "agent":
+            # Shift 2 says the lesson is what survives the forgetting, so a
+            # lesson the server guessed at from keywords is the one thing that
+            # must not be written here. The meaning is recorded for the agent to
+            # supply through mnemos_reflect. Only about its own memories: a
+            # lesson is drawn only from the agent's words, so asking what a
+            # tool's memory taught leads nowhere.
+            stats.setdefault("awaiting_impact", []).append(engram.id)
+    if engram.impact:
+        lesson_id = _create_or_reinforce_lesson(engram, store, stats)
+        linked = any(
+            conn.relation == ConnectionRelation.DISTILLED_INTO and conn.target_id == lesson_id
+            for conn in engram.connections
+        )
+        if lesson_id and not linked:
+            engram.add_connection(
+                target_id=lesson_id,
+                relation=ConnectionRelation.DISTILLED_INTO,
+                strength=0.8,
+                formed_by="consolidation",
+            )
+            changed = True
+    if changed:
+        store.save_engram(engram)
+
+
 def run_softening_pass(
     store: EngramStore,
     config: dict[str, Any],
@@ -167,12 +224,26 @@ def run_softening_pass(
     min_age_hours = float(config.get("softening_min_age_hours", 24))
 
     for engram in all_engrams:
-        if engram.resolution <= minimum_resolution:
-            continue  # Already at minimum resolution
-
         if _hours_since(engram.created_at) < min_age_hours:
             stats["too_recent"] = stats.get("too_recent", 0) + 1
             continue
+
+        # Forgetting teaches only what was forgotten. A new memory starts at 0.5
+        # accessibility and the target resolution starts falling below 0.7, so
+        # without this a day-old memory "faded": its meaning was copied into a
+        # lesson and it was asked what it taught. softening_threshold was read and
+        # never used. What a memory taught is settled here, before the exits
+        # below, which are about its wording: with a model (or
+        # soften_without_model) a memory is blurred step by step as it fades,
+        # and one already blurred near its floor must still teach when it fades.
+        if engram.accessibility >= softening_threshold:
+            stats["not_faded"] = stats.get("not_faded", 0) + 1
+        elif not dry_run:
+            _teach(engram, store, stats, llm_client=llm_client,
+                   max_llm_calls=max_llm_calls, invent_impact=invent_impact)
+
+        if engram.resolution <= minimum_resolution:
+            continue  # Already at minimum resolution
 
         stats["engrams_evaluated"] += 1
         total_res_before += engram.resolution
@@ -218,33 +289,6 @@ def run_softening_pass(
             total_res_after += engram.resolution
             continue
 
-        # EXTRACT IMPACT before softening (if not already set)
-        # This is the key Shift 1 behavior: before content gets compressed,
-        # extract the lasting insight. Impact survives even when content fades.
-        if not engram.impact:
-            if llm_client and stats["llm_calls"] < max_llm_calls:
-                engram.impact = _extract_impact(engram.content, llm_client)
-                engram.impact_source = "model"
-                stats["llm_calls"] += 1
-            elif invent_impact:
-                engram.impact = _rule_based_impact(engram.content)
-                engram.impact_source = "template"
-            elif getattr(engram, "author_kind", "unknown") == "agent":
-                # Shift 2 says the lesson is what survives the forgetting, so
-                # a lesson the server guessed at from keywords is the one
-                # thing that must not be written here. The compression is
-                # deterministic and happens anyway; the meaning is recorded
-                # for the agent to supply through mnemos_reflect. Only about
-                # its own memories: a lesson is drawn only from the agent's
-                # words, so asking what a tool's memory taught leads nowhere.
-                stats.setdefault("awaiting_impact", []).append(engram.id)
-
-        # SHIFT 2: Create or reinforce a lesson engram from the impact.
-        # Forgetting feeds forward — the distilled insight becomes persistent wisdom.
-        lesson_id = None
-        if engram.impact:
-            lesson_id = _create_or_reinforce_lesson(engram, store, stats)
-
         # SOFTEN content (impact is preserved separately)
         candidate = None
         if llm_client and stats["llm_calls"] < max_llm_calls:
@@ -262,11 +306,6 @@ def run_softening_pass(
             # the wording is still owed — the memory keeps fading through
             # accessibility either way, and the lesson request that goes to the
             # agent now shows text the agent can actually read.
-            #
-            # Everything below this point still runs. Skipping the whole engram
-            # here would leave a lesson created above without its
-            # DISTILLED_INTO edge, which is the absence Shift 2 was repaired
-            # to fix.
             stats["awaiting_compression"] = stats.get("awaiting_compression", 0) + 1
 
         if candidate is not None:
@@ -281,15 +320,6 @@ def run_softening_pass(
             # Update content (impact is already set and untouched)
             engram.content = softened_content
             engram.resolution = round(target, 2)
-
-        # Connect source to its lesson via DISTILLED_INTO
-        if lesson_id:
-            engram.add_connection(
-                target_id=lesson_id,
-                relation=ConnectionRelation.DISTILLED_INTO,
-                strength=0.8,
-                formed_by="consolidation",
-            )
 
         store.save_engram(engram)
 

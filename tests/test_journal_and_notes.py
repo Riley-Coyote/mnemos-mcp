@@ -974,7 +974,7 @@ def test_a_v15_store_gains_the_journal_tables_after_one_verified_backup(tmp_path
 
 
 def test_the_code_version_is_raised_so_older_servers_stand_down(tmp_path):
-    assert MAINTENANCE_CODE_VERSION >= 12, "what the store holds changed, and the code version was not raised"
+    assert MAINTENANCE_CODE_VERSION >= 13, "what the store holds changed, and the code version was not raised"
     db = tmp_path / "memory.db"
     rt = _runtime(db)
     try:

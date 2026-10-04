@@ -234,6 +234,7 @@ def _home(tmp_path: Path) -> Path:
 def _folder(tmp_path: Path, name: str) -> Path:
     folder = tmp_path / "work" / name
     folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".git").mkdir(exist_ok=True)
     return folder
 
 

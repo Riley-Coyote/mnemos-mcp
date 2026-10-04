@@ -195,7 +195,7 @@ def meaning(monkeypatch):
 HARBOUR = "The harbour pilot boards every ship at the outer buoy, whatever the weather."
 
 
-def _fade(db: Path, memory: str, accessibility: float = 0.2) -> None:
+def _fade(db: Path, memory: str, accessibility: float = 0.1) -> None:
     """Leave a memory old and faint enough for the softening pass to name it."""
     _write(db, "UPDATE engrams SET created_at = ?, last_accessed = ?, accessibility = ? WHERE id = ?",
            (LONG_AGO, LONG_AGO, accessibility, memory))

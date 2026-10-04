@@ -390,6 +390,16 @@ def main(argv: list[str] | None = None) -> int:
             "Empty them",
         ),
         (
+            "word-questions",
+            "Remove the unanswered 'you keep returning to <word>' questions that hold no words of yours; questions you answered or wrote on stay (dry run unless --write)",
+            "Remove them",
+        ),
+        (
+            "early-lessons",
+            "Fold back the lessons drawn before their memory faded, which repeat its meaning word for word, and the 'this is fading' questions about memories that have not faded (dry run unless --write)",
+            "Fold them back",
+        ),
+        (
             "faded-words",
             "Bring back, from the words they were encoded with, the words of live "
             "memories an earlier softening cut to '... [details faded]' "
@@ -522,6 +532,10 @@ def main(argv: list[str] | None = None) -> int:
         "session-start", help="Print the SessionStart continuity payload as JSON"
     )
     _scope_options(p_hook_start)
+    p_hook_start.add_argument(
+        "--wake", choices=["full", "light", "off"], default=None,
+        help="How much of memory to wake with: full (default), light (who you're with, how they work, where you left off; spends nothing), or off (nothing). Also read from MNEMOS_WAKE.",
+    )
     p_hook_start.add_argument(
         "--query",
         default="what should I know to continue our work?",
@@ -726,6 +740,12 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 received.extend(chunk)
     except Exception:
         pass
+    wake = (getattr(args, "wake", None) or os.environ.get("MNEMOS_WAKE", "") or "full").strip().lower()
+    if wake not in ("full", "light", "off"):
+        print(f"[mnemos hook] unknown wake mode {wake!r}; using full", file=sys.stderr)
+        wake = "full"
+    if wake == "off":
+        return 0
     reader_model = ""
     reader_session = ""
     workdir = ""
@@ -797,6 +817,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 reader_session=reader_session,
                 workdir=workdir,
                 person_name=person_name,
+                wake=wake,
             )
         finally:
             store.close()
@@ -2306,6 +2327,8 @@ def _cmd_repair(args: argparse.Namespace) -> int:
         "dead-embeddings": _cmd_repair_dead_embeddings,
         "placeholder-impacts": _cmd_repair_placeholder_impacts,
         "faded-words": _cmd_repair_faded_words,
+        "word-questions": _cmd_repair_word_questions,
+        "early-lessons": _cmd_repair_early_lessons,
     }
     if getattr(args, "repair_command", None) in clean_ups:
         return clean_ups[args.repair_command](args)
@@ -2317,7 +2340,9 @@ def _cmd_repair(args: argparse.Namespace) -> int:
         "       mnemos repair archive-rows [--write]\n"
         "       mnemos repair dead-embeddings [--write]\n"
         "       mnemos repair placeholder-impacts [--write]\n"
-        "       mnemos repair faded-words [--write]",
+        "       mnemos repair faded-words [--write]\n"
+        "       mnemos repair word-questions [--write]\n"
+        "       mnemos repair early-lessons [--write]",
         file=sys.stderr,
     )
     return 1
@@ -2570,6 +2595,56 @@ def _cmd_repair_placeholder_impacts(args: argparse.Namespace) -> int:
             "left to the agent."
         ),
         verb="empty them",
+    )
+
+
+def _cmd_repair_word_questions(args: argparse.Namespace) -> int:
+    """Remove the word-count belief asks that hold no words of the agent's.
+
+    A human runs this: a dry run unless --write, and a verified backup first.
+    """
+    runtime = _repair_runtime(args)
+    try:
+        plan = runtime.repair_word_questions(write=args.write)
+    finally:
+        runtime.close()
+    if not plan["exists"]:
+        print(f"No store at {runtime.db_path}; nothing to repair.")
+        return 0
+    found = plan["found"]
+    empty, worded = found["empty"], found["worded"]
+    _repair_row(len(empty), "word questions with no words of yours", "removed")
+    _repair_row(len(worded), "word questions you wrote on", "stay")
+    done = plan["done"] or {"removed": 0}
+    return _repair_ending(
+        plan, args, todo=bool(empty),
+        done=f"Removed {_repair_count(done['removed'], 'word question')}; nothing you wrote was touched.",
+        verb="remove them",
+    )
+
+
+def _cmd_repair_early_lessons(args: argparse.Namespace) -> int:
+    """Fold back the lessons and fading questions drawn before a memory faded.
+
+    A human runs this: a dry run unless --write, and a verified backup first.
+    """
+    runtime = _repair_runtime(args)
+    try:
+        plan = runtime.repair_early_lessons(write=args.write)
+    finally:
+        runtime.close()
+    if not plan["exists"]:
+        print(f"No store at {runtime.db_path}; nothing to repair.")
+        return 0
+    found = plan["found"]
+    lessons, questions = found["lessons"], found["questions"]
+    _repair_row(len(lessons), "lessons that repeat a memory's meaning before it faded", "archived (recallable)")
+    _repair_row(len(questions), "'this is fading' questions about memories in reach", "removed")
+    done = plan["done"] or {"lessons": 0, "questions": 0}
+    return _repair_ending(
+        plan, args, todo=bool(lessons or questions),
+        done=f"Folded back {_repair_count(done['lessons'], 'lesson')} and removed {_repair_count(done['questions'], 'question')}. Each memory keeps its meaning, and is asked again when it really fades.",
+        verb="fold them back",
     )
 
 

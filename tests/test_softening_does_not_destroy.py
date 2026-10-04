@@ -59,7 +59,7 @@ def db(tmp_path):
     return str(tmp_path / "soften.db")
 
 
-def _aged_store(db, *, accessibility=0.2):
+def _aged_store(db, *, accessibility=0.1):
     """A store holding one memory old enough and faint enough to soften."""
     rt = MnemosRuntime(db_path=db, agent_id="t", person_id="p", project_scope="g")
     rt.capture(content=SHARP, importance="high")

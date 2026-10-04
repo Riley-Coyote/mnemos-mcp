@@ -110,6 +110,9 @@ _NOTE_CHARS = (420, 320, 240, 160, 100)
 # it is and who left it. Shown whole, three handoffs would fill most of the
 # packet (a typical one is about 2,000 characters).
 _OTHER_HANDOFF_CHARS = 280
+# A light wake (``wake="light"``) cuts the reader's handoff here: a quick
+# session needs where things stand, and the id reads the rest whole.
+LIGHT_HANDOFF_CHARS = 700
 
 _HEADER = "## waking up"
 # For the tools that list handoffs on request (``simple_runtime``), which speak
@@ -172,6 +175,7 @@ def build_context_packet(
     older_than_store: bool | None = None,
     person_name: str = "",
     now: datetime | None = None,
+    wake: str = "full",
 ) -> dict[str, Any]:
     """Build the packet an agent reads before its first turn.
 
@@ -196,6 +200,7 @@ def build_context_packet(
     functional-memory section and fixed section sizes.
     """
     del session_id, max_functional, max_hypomnema  # accepted, not used
+    wake = wake if wake in ("full", "light") else "full"
     scope = {"agent_id": agent_id, "person_id": person_id, "project_scope": project_scope}
     reader_model = clean_model_id(reader_model)
     reader_session = clean_session_id(reader_session)
@@ -230,7 +235,7 @@ def build_context_packet(
     )[:_FOUNDATIONAL_SHOWN]
     shown_ids = {entry["id"] for entry in foundational}
     place = place_words(workdir)
-    carrying = _carrying(
+    carrying = [] if wake == "light" else _carrying(
         [_note_item(entry, place) for entry in notes if entry["id"] not in shown_ids]
         + [
             _lesson_item(row, place) for row in _lessons(store, **scope)
@@ -242,27 +247,27 @@ def build_context_packet(
     beliefs = beliefs[:_BELIEFS_SHOWN]
 
     questions: list[dict[str, Any]] = []
-    if include_reflections and not older_than_store:
+    if wake != "light" and include_reflections and not older_than_store:
         try:
             questions = store.pending_reflections(**scope, limit=PACKET_QUESTIONS)
         except Exception:
             # A packet must never fail because of the reflection queue.
             questions = []
 
-    report = latest_dream_entry(store, **scope)
+    report = None if wake == "light" else latest_dream_entry(store, **scope)
     if report is not None and not changed_something(report):
         report = None
 
     found: list[RetrievalResult] = []
-    if include_engrams and query.strip():
+    if wake != "light" and include_engrams and query.strip():
         found = _graph_recall(store, query, scope, max_engrams)
 
     resident = resident_model(store, scope)
     woke = now or datetime.now().astimezone()
     if woke.tzinfo is None:
         woke = woke.astimezone()
-    journal = _latest_journal(store, scope, woke)
-    replies = _waiting_replies(store, scope)
+    journal = None if wake == "light" else _latest_journal(store, scope, woke)
+    replies = [] if wake == "light" else _waiting_replies(store, scope)
 
     packet: dict[str, Any] = {
         "include_engrams": include_engrams,
@@ -272,6 +277,7 @@ def build_context_packet(
         "voice": reader_voice(reader_model, resident),
         "person_name": " ".join((person_name or "").split())[:80],
         "woke_at": woke.isoformat(),
+        "wake": wake,
         "place": place_name(workdir),
         "workdir": workdir,
         "place_words": sorted(place),
@@ -279,7 +285,7 @@ def build_context_packet(
         "scope": dict(scope),
         "query": query,
         "handoff": handoff,
-        "other_handoffs": handoffs[1:],
+        "other_handoffs": [] if wake == "light" else handoffs[1:],
         "standing": standing,
         "standing_notes": standing_notes,
         "foundational": foundational,
@@ -301,7 +307,7 @@ def build_context_packet(
     # must not repeat, and nothing it selected but cut for room.
     text, kept = _append_graph(packet, text, max_chars)
     packet["mnemos_engrams"] = kept
-    if mark_surfaced:
+    if mark_surfaced and wake != "light":
         _record_delivery(store, scope, shown, deliver_replies=not older_than_store)
     if kept:
         # Recall for a cue is a use, and only what the reader was shown is
@@ -808,18 +814,25 @@ def _compose(
     # more like a briefing". So how I see comes first, then who I'm with,
     # then where I left off. What leaves first under the budget is unchanged
     # (``_drop_order``).
-    sections = [
-        _format_beliefs(packet, dropped, tools),
-        _format_who(packet, chars, dropped, shown, tools),
-        _format_where_left(packet, chars, dropped, shown, tools),
-        _format_replies(packet, shown, tools),
-        _format_notes(
-            "what i'm carrying" if packet.get("voice") == SELF else "what this memory is carrying",
-            packet, packet.get("carrying") or [], "carrying", chars, dropped, shown, tools,
-        ),
-        _format_question(packet, dropped, shown, tools),
-        _format_away(packet, dropped, shown),
-    ]
+    if packet.get("wake") == "light":
+        sections = [
+            _format_beliefs(packet, dropped, tools),
+            _format_who(packet, chars, dropped, shown, tools),
+            _format_left_off(packet, chars, dropped, shown, tools),
+        ]
+    else:
+        sections = [
+            _format_beliefs(packet, dropped, tools),
+            _format_who(packet, chars, dropped, shown, tools),
+            _format_where_left(packet, chars, dropped, shown, tools),
+            _format_replies(packet, shown, tools),
+            _format_notes(
+                "what i'm carrying" if packet.get("voice") == SELF else "what this memory is carrying",
+                packet, packet.get("carrying") or [], "carrying", chars, dropped, shown, tools,
+            ),
+            _format_question(packet, dropped, shown, tools),
+            _format_away(packet, dropped, shown),
+        ]
     body = "\n\n".join(section for section in sections if section)
     if not body:
         return "", shown
@@ -895,7 +908,12 @@ def _format_left_off(
     label, whose = when_left(handoff, reader_model, reader_session)
     relations = {whose}
     heading = "### where i left off" if whose == _OWN else "### where things were left"
-    lines = [heading, f"{label}:", handoff["content"]]
+    text = handoff["content"]
+    if packet.get("wake") == "light":
+        text, cut = cut_at_sentence(handoff["content"], LIGHT_HANDOFF_CHARS)
+        if cut:
+            tools["cut"].append(handoff["id"])
+    lines = [heading, f"{label}:", text]
     shown["handoffs"].append(handoff["id"])
     others = [
         entry for entry in packet.get("other_handoffs") or []

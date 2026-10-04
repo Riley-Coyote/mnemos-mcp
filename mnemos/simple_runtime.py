@@ -13,6 +13,7 @@ import hashlib
 import heapq
 import logging
 import os
+import math
 import re
 import sqlite3
 from collections.abc import Collection, Mapping
@@ -66,6 +67,7 @@ from .store.sqlite_store import (
     FADED_ARCHIVE_REASONS,
     EngramStore,
     ReadOnlyEngramStore,
+    code_version_first_opened_key,
     handoff_retirement,
     note_kind_problem,
 )
@@ -517,14 +519,71 @@ def _simple_tags(content: str, context: str = "") -> list[str]:
     return sorted(set(tags))
 
 
-# A theme must recur across at least this many memories before the agent is
-# asked whether it has become a belief — a belief is a stable pattern, not a
-# single mention.
-_BELIEF_MIN_MEMORIES = 4
-
 # The marker a belief ask carries, so the answer can be filed under its theme
 # and a theme already asked is not asked again.
 _THEME_MARKER = re.compile(r"\[theme:([^\]]+)\]")
+# The word-count belief ask older code made ("You keep returning to <word> (N
+# memories)"), in both of its wordings, for `mnemos repair word-questions`.
+# The code version whose lessons and fading questions wait for real fading.
+# Whatever was drawn after it first opened a store was drawn by that rule, so
+# `mnemos repair early-lessons` never touches it, whatever the decay settings
+# were then or are now.
+_FADING_RULE_VERSION = 13
+
+# What the lesson pass asks about a memory that has faded. `mnemos repair
+# early-lessons` removes only asks in exactly these words.
+_FADING_QUESTION = "This is fading. What did it teach you? The lesson outlives the details."
+
+
+def _early_window_hours(consolidation: Mapping[str, Any]) -> float:
+    """How soon after a memory was written a lesson or a fading question about
+    it can only have come from the old rule (before code version 13).
+
+    The earliest a memory can legitimately teach, under the configured
+    ``decay_rate``, ``softening_threshold`` and ``softening_min_age_hours``,
+    decaying with no stability or links to slow it. A new memory starts at
+    ``DEFAULT_ACCESSIBILITY``.
+    - A threshold at or below ``RECENCY_FLOOR``: the sooner of two paths.
+      Held at the floor for ``RECENCY_FLOOR_HOURS`` after its last use, then
+      decaying the rest of the way; or, when the first maintenance cycle comes
+      after the floor's hours, caught up all at once from where it started
+      (``_hours_since_last_cycle`` gives no ceiling then, and the floor no
+      longer applies), so never sooner than the floor's hours. With the
+      defaults (0.01 an hour, threshold 0.15) about 120 hours.
+    - A threshold above the floor: the floor holds nothing back, so it crosses
+      as soon as it decays there from where it starts (at once, when the
+      threshold is at or above where it starts).
+    Never sooner than ``softening_min_age_hours``. With no decay nothing
+    fades, and the window is that minimum age alone, which folds back nothing.
+    Anything drawn sooner than this was drawn before its memory faded,
+    whatever the memory's accessibility is now (a recall raises it again).
+    """
+    from .consolidation.decay import RECENCY_FLOOR, RECENCY_FLOOR_HOURS
+    from .core.types import DEFAULT_ACCESSIBILITY
+
+    try:
+        rate = float(consolidation.get("decay_rate", 0.01))
+        threshold = float(consolidation.get("softening_threshold", 0.15))
+        min_age = float(consolidation.get("softening_min_age_hours", 24))
+    except (TypeError, ValueError):
+        rate, threshold, min_age = 0.01, 0.15, 24.0
+    if rate <= 0 or threshold <= 0:
+        return min_age
+    if threshold > RECENCY_FLOOR:
+        crossing = (
+            0.0 if threshold >= DEFAULT_ACCESSIBILITY
+            else math.log(DEFAULT_ACCESSIBILITY / threshold) / rate
+        )
+    else:
+        held = RECENCY_FLOOR_HOURS + math.log(RECENCY_FLOOR / threshold) / rate
+        caught_up = max(
+            float(RECENCY_FLOOR_HOURS), math.log(DEFAULT_ACCESSIBILITY / threshold) / rate,
+        )
+        crossing = min(held, caught_up)
+    return max(crossing, min_age)
+
+
+_WORD_QUESTION = re.compile(r'^You keep returning to "[^"]+" \(\d+ memor(?:y|ies)\)\. Is that a belief you now hold\?.*\[theme:[^\]]+\]', re.S)
 
 # Only captures whose encoding registered real surprise (they did not fit what
 # was already held) are offered as contradiction candidates. Keeps the ask rare
@@ -1857,6 +1916,161 @@ class MnemosRuntime:
             todo=lambda found: any(found["by_text"].values()), apply=apply,
         )
 
+    def repair_word_questions(self, *, write: bool = False) -> dict:
+        """Show, and with ``write`` remove, the unanswered word-count belief
+        asks in this scope that hold none of the agent's words.
+
+        Code before version 13 asked whether a single recurring word was a
+        belief (``_WORD_QUESTION``); on a real store, 248 asks about words like
+        "need" and "branch", 4% of questions ever answered. An ask the agent
+        wrote on, or answered, stays: those are its words.
+        """
+        agent, person, project = (
+            self.scope.agent_id, self.scope.person_id, self.scope.project_scope,
+        )
+        plan = {
+            "target": (agent, person, project), "db_path": str(self.db_path),
+            "exists": self.db_path.exists(), "older_than_store": False,
+            "found": None, "done": None, "backup": None,
+        }
+
+        def find(store: EngramStore) -> dict:
+            rows = store._get_conn().execute(
+                "SELECT id, prompt, answer FROM reflection_queue WHERE agent_id = ? "
+                "AND person_id = ? AND project_scope = ? AND kind = 'belief' "
+                "AND answered_at IS NULL ORDER BY id", (agent, person, project),
+            ).fetchall()
+            found = {"empty": [], "worded": []}
+            for row in rows:
+                if _WORD_QUESTION.match(row["prompt"] or ""):
+                    key = "worded" if (row["answer"] or "").strip() else "empty"
+                    found[key].append(row["id"])
+            return found
+
+        def apply(store: EngramStore, found: dict) -> dict:
+            cursor = store._get_conn().executemany(
+                "DELETE FROM reflection_queue WHERE id = ? AND answered_at IS NULL",
+                [(row_id,) for row_id in found["empty"]],
+            )
+            return {"removed": max(0, cursor.rowcount)}
+
+        return self._run_repair(
+            "word-questions", plan, write=write, find=find,
+            todo=lambda found: bool(found["empty"]), apply=apply,
+        )
+
+    def repair_early_lessons(self, *, write: bool = False) -> dict:
+        """Show, and with ``write`` fold back, the lessons drawn before their
+        memory faded, and the "this is fading" questions about memories in reach.
+
+        Before version 13 softening ignored ``softening_threshold``, so a
+        day-old memory counted as fading: its meaning was copied word for word
+        into an unsigned lesson. Such a lesson (drawn sooner after every memory
+        it came from than the memory could have faded, by
+        ``_early_window_hours``, and none of which has faded now) is archived
+        (recall still finds it by id or with ``include_archived``) and its
+        ``distilled_into`` links go, so the memory draws its lesson anew when it
+        really fades. A signed lesson, or one drawn later, stays: a memory that
+        really faded and was recalled since is in reach again, and its lesson is
+        real. The memory keeps its meaning throughout. Unanswered fading
+        questions in the lesson pass's own words (``_FADING_QUESTION``) with no
+        words of the agent's, asked that early about a memory still in reach,
+        are removed; it is asked again when it fades.
+        """
+        agent, person, project = (
+            self.scope.agent_id, self.scope.person_id, self.scope.project_scope,
+        )
+        try:
+            consolidation = load_config().get("consolidation", {}) or {}
+        except Exception:
+            consolidation = {}
+        threshold = consolidation.get("softening_threshold", 0.15)
+        window_days = _early_window_hours(consolidation) / 24.0
+        plan = {
+            "target": (agent, person, project), "db_path": str(self.db_path),
+            "exists": self.db_path.exists(), "older_than_store": False,
+            "found": None, "done": None, "backup": None,
+        }
+
+        def find(store: EngramStore) -> dict:
+            conn = store._get_conn()
+            # Only what older rules drew: anything newer than the first time
+            # the fading rule's code opened this store was drawn by that rule.
+            rule_since = _moment(store.get_meta(
+                code_version_first_opened_key(_FADING_RULE_VERSION), None,
+            ))
+
+            def older_rule(created_at: str | None) -> bool:
+                moment = _moment(created_at)
+                return rule_since is None or (moment is not None and moment < rule_since)
+
+            rows = conn.execute(
+                "SELECT id, tags, content, created_at FROM engrams WHERE owner_agent_id = ? "
+                "AND person_id = ? AND project_scope = ? AND state = 'active' "
+                "AND COALESCE(author_model, '') = '' ORDER BY id", (agent, person, project),
+            ).fetchall()
+            lessons = []
+            for row in rows:
+                tags = self._json(row["tags"], [])
+                if not ({"lesson", "distilled"} & set(tags)):
+                    continue
+                if not older_rule(row["created_at"]):
+                    continue
+                sources = conn.execute(
+                    "SELECT e.state, e.accessibility, trim(e.impact) = trim(?) AS same, "
+                    "julianday(?) - julianday(e.created_at) AS days "
+                    "FROM connections c LEFT JOIN engrams e ON e.id = c.source_id "
+                    "WHERE c.target_id = ? AND c.relation = 'distilled_into'",
+                    (row["content"], row["created_at"], row["id"]),
+                ).fetchall()
+                # Early by history, not by today's accessibility alone: drawn
+                # sooner after each memory it came from than that memory could
+                # have faded (_early_window_hours), and none has faded now. A
+                # memory written after the lesson joined it later (it faded and
+                # reinforced it), so the lesson's own time says nothing about
+                # that link: such a lesson stays.
+                if sources and all(
+                    source["state"] == "active" and source["accessibility"] >= threshold
+                    and source["days"] is not None and 0 <= source["days"] < window_days
+                    for source in sources
+                ) and any(source["same"] for source in sources):
+                    lessons.append(row["id"])
+            questions = [row["id"] for row in conn.execute(
+                "SELECT q.id, q.answer, q.created_at FROM reflection_queue q JOIN engrams e ON e.id = q.target_id "
+                "WHERE q.agent_id = ? AND q.person_id = ? AND q.project_scope = ? "
+                "AND q.kind = 'lesson' AND q.answered_at IS NULL AND q.prompt = ? "
+                "AND e.state = 'active' AND e.accessibility >= ? "
+                "AND julianday(q.created_at) - julianday(e.created_at) < ? ORDER BY q.id",
+                (agent, person, project, _FADING_QUESTION, threshold, window_days),
+            ).fetchall() if not (row["answer"] or "").strip() and older_rule(row["created_at"])]
+            return {"lessons": lessons, "questions": questions}
+
+        def apply(store: EngramStore, found: dict) -> dict:
+            conn = store._get_conn()
+            archived = 0
+            for lesson_id in found["lessons"]:
+                sources = conn.execute(
+                    "SELECT source_id FROM connections WHERE target_id = ? "
+                    "AND relation = 'distilled_into'", (lesson_id,),
+                ).fetchall()
+                store.remove_connections([
+                    (row["source_id"], lesson_id, "distilled_into") for row in sources
+                ])
+                store.archive_engram(
+                    store.get_engram(lesson_id), reason="drawn before its memory faded",
+                )
+                archived += 1
+            cursor = conn.executemany(
+                "DELETE FROM reflection_queue WHERE id = ? AND answered_at IS NULL",
+                [(row_id,) for row_id in found["questions"]],
+            )
+            return {"lessons": archived, "questions": max(0, cursor.rowcount)}
+
+        return self._run_repair(
+            "early-lessons", plan, write=write, find=find,
+            todo=lambda found: bool(found["lessons"] or found["questions"]), apply=apply,
+        )
+
     def repair_faded_words(self, *, write: bool = False) -> dict[str, Any]:
         """Show, and with ``write`` restore, the live memories in this scope
         whose words a model-less softening cut, from the words they were
@@ -2450,7 +2664,7 @@ class MnemosRuntime:
             if self._store.enqueue_reflection(
                 "lesson",
                 engram_id,
-                "This is fading. What did it teach you? The lesson outlives the details.",
+                _FADING_QUESTION,
                 agent_id=self.scope.agent_id,
                 person_id=self.scope.person_id,
                 project_scope=self.scope.project_scope,
@@ -2459,116 +2673,26 @@ class MnemosRuntime:
         return enqueued
 
     def _enqueue_belief_reflections(self, limit: int = 1) -> int:
-        """Notice a theme the agent keeps returning to, and ask if it is a belief.
+        """Put a belief the agent holds to it again, when one is due.
 
-        Belief formation is otherwise absent on a keyless install — nothing
-        mints new beliefs. Maintenance can only NOTICE a recurring theme (a
-        non-bookkeeping tag across several memories, with no belief covering it
-        yet) and ask; the agent states the belief in its own words through
-        mnemos_reflect, or leaves it. The server never writes a belief itself.
-
-        Beside it, one belief the agent holds may be due to be put to it
-        again (see ``_enqueue_belief_reaffirmation``): the agent keeps or
-        retires it by its verdict. Conservative by design (one of each per
-        cycle at most), and the packet's own ≤2 cap keeps it from ever
-        nagging.
+        This used to mine single words that recur across memories and ask
+        whether each was a belief ("You keep returning to ..."). A word that
+        recurs is not an idea that returns: on a real store it asked 248 times,
+        about words like "need", "store" and "branch", 13 of 294 questions were
+        ever answered, and every belief the agent held had been formed in answer
+        to one. Noticing an idea that returns, by meaning and across sessions,
+        is its own work. ``limit`` is kept for callers.
         """
+        del limit
         self._ensure_init()
         assert self._store is not None
-        from collections import Counter
-
         unanswered = self._store._get_conn().execute(
             "SELECT target_id, kind, prompt FROM reflection_queue WHERE agent_id = ? "
             "AND person_id = ? AND project_scope = ? AND answered_at IS NULL",
             (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
         ).fetchall()
         already = {r["target_id"] for r in unanswered}
-        # A theme is asked once. Leaving the ask is how the agent declines, and
-        # an ask that was shown out or expired still records that it was put.
-        # Deduping by target alone let a declined theme return every cycle
-        # against a fresh memory — one more row per cycle, without end. An
-        # answered ask counts too: a theme the agent declined stays declined.
-        asked_themes = set()
-        for r in self._store._get_conn().execute(
-            "SELECT prompt FROM reflection_queue WHERE agent_id = ? "
-            "AND person_id = ? AND project_scope = ? AND kind = 'belief'",
-            (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
-        ).fetchall():
-            m = _THEME_MARKER.search(r["prompt"] or "")
-            if m:
-                asked_themes.add(m.group(1).strip())
-
-        # Themes are mined only from what the agent wrote: a word a tool's or
-        # a model's memories keep using is theirs, not something the agent
-        # keeps returning to.
-        rows = self._store._get_conn().execute(
-            """
-            SELECT e.id, e.content
-            FROM engrams e
-            JOIN hypomnema_entries h ON h.related_engram_id = e.id
-            WHERE h.agent_id = ? AND h.person_id = ? AND h.project_scope = ?
-              AND h.active = 1 AND e.state = 'active'
-              AND e.author_kind = 'agent'
-            ORDER BY e.created_at DESC
-            LIMIT 200
-            """,
-            (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
-        ).fetchall()
-
-        # A theme is a salient content term recurring across several memories.
-        # Tags from a simple capture are all bookkeeping, so cluster on content
-        # instead — the agent then judges whether the recurrence is a belief.
-        # Salient means distinctive, as for links and lessons: counted over
-        # every word, the ask went to "only", "asked", "first" and "into".
-        term_engrams: dict[str, list[str]] = {}
-        for row in rows:  # newest first
-            for term in distinctive_terms(row["content"] or ""):
-                # Nearly every note starts with a date, and the tokenizer splits
-                # dates and times into digit-led runs ("2026", "24t22", "11pm"),
-                # so a year outranked every real theme. A number is not a theme;
-                # words, even ones carrying digits like "a11y", lead with a letter.
-                if term[0].isdigit():
-                    continue
-                ids = term_engrams.setdefault(term, [])
-                if row["id"] not in ids:
-                    ids.append(row["id"])
-
-        existing = " ".join(
-            b.content.lower()
-            for b in self._store.get_beliefs(self.scope.agent_id, active_only=True)
-        )
-
-        ranked = sorted(term_engrams.items(), key=lambda kv: len(kv[1]), reverse=True)
-        asked = 0
-        for theme, ids in ranked:
-            if len(ids) < _BELIEF_MIN_MEMORIES:
-                break  # descending — nothing else clears the bar
-            if theme in asked_themes or theme.lower() in existing:
-                continue
-            # A belief ask must not share a target with another pending
-            # reflection: the tool answers by target_id alone, so a collision
-            # would route the agent's belief answer to an impact question.
-            target = next((i for i in ids if i not in already), None)
-            if target is None:
-                continue
-            if self._store.enqueue_reflection(
-                "belief",
-                target,
-                f'You keep returning to "{theme}" ({len(ids)} memories). Is that a '
-                "belief you now hold? If it is, state it in one line with verdict "
-                f"hold; if it is not, decline. Or leave it. [theme:{theme}]",
-                agent_id=self.scope.agent_id,
-                person_id=self.scope.person_id,
-                project_scope=self.scope.project_scope,
-            ):
-                already.add(target)
-                asked = 1
-                break  # one belief ask per cycle, never more
-
-        # A reaffirmation is not left for a cycle with no new theme: on a
-        # real store every cycle found one (14 cycles, 14 theme asks in a
-        # day), so a belief waiting for a quiet cycle was never asked again.
-        return asked + self._enqueue_belief_reaffirmation(already)
+        return self._enqueue_belief_reaffirmation(already)
 
     def _enqueue_belief_reaffirmation(self, already: set[str]) -> int:
         """Put one belief the agent holds to it again: still true?
@@ -3509,8 +3633,16 @@ class MnemosRuntime:
                 session_introduction_key(session),
                 session_introduction_record(self._session_author, name),
             )
+        giver = clean_model_id(model)
         if name:
             self._set_meta("agent_name", name)
+            self._set_meta("agent_name_model", giver)
+        elif (self._get_meta("agent_name_model", "") or "") != giver:
+            # A name is the model's that gave it. Another model introducing
+            # itself without one doesn't inherit it; the live store went on
+            # calling Opus "Grok" after Grok had introduced itself once.
+            self._set_meta("agent_name", "")
+            self._set_meta("agent_name_model", "")
 
         # Keep this runtime and any outer host transaction alive. Reopening the
         # store here used to split introduction into multiple transactions.

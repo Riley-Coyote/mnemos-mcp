@@ -452,11 +452,11 @@ def test_maintenance_records_no_access(tmp_path, monkeypatch):
         # The captured memory has faded, and long enough ago to be softened.
         [fading] = [e for e in store.get_active_engrams(agent_id="demo", limit=10)
                     if "lesson" not in e.tags]
-        fading.accessibility, fading.resolution = 0.02, 1.0
+        fading.accessibility, fading.resolution = 0.1, 1.0
         store.save_engram(fading)
         conn = store._get_conn()
-        conn.execute("UPDATE engrams SET created_at = ? WHERE id = ?",
-                     ("2020-01-01T00:00:00+00:00", fading.id))
+        conn.execute("UPDATE engrams SET created_at = ?, last_accessed = ? WHERE id = ?",
+                     ("2020-01-01T00:00:00+00:00", "2020-01-01T00:00:00+00:00", fading.id))
         conn.commit()
         before = dict((engram_id, rest) for engram_id, *rest in _all(
             db, "SELECT id, access_count, last_accessed FROM engrams"))

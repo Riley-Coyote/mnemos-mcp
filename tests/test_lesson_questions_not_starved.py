@@ -30,11 +30,13 @@ from mnemos.simple_runtime import MnemosRuntime
 SCOPE = {"agent_id": "nova", "person_id": "riley", "project_scope": "demo"}
 
 # Three of the agent's own memories with the accessibility each is left at,
-# most accessible first: the order the softening pass names them in.
+# most accessible first: the order the softening pass names them in. All are
+# below the softening threshold (0.15): only a memory that has faded is asked
+# what it taught.
 HARBOUR = (
-    ("The harbour pilot boards every ship at the outer buoy, whatever the weather.", 0.30),
-    ("Brass lamps on the jetty are polished each Sunday by the harbourmaster's niece.", 0.25),
-    ("Tide tables for the estuary are posted at the chandlery door each morning.", 0.20),
+    ("The harbour pilot boards every ship at the outer buoy, whatever the weather.", 0.14),
+    ("Brass lamps on the jetty are polished each Sunday by the harbourmaster's niece.", 0.12),
+    ("Tide tables for the estuary are posted at the chandlery door each morning.", 0.10),
 )
 LONG_AGO = "2020-01-01T00:00:00+00:00"
 
