@@ -2,6 +2,34 @@
 
 ## 0.3.1 (unreleased)
 
+### Beliefs from meaning
+
+- **An idea that returns, not a word that recurs.** Once a day at most,
+  maintenance groups the agent's own impact lines (what a capture changed in
+  how it understands things) by meaning, and when one idea returns in three
+  sessions on three days it asks, quoting the agent's own words from those
+  days: "Is there something you believe here?" One such question at a time.
+  Similar means within the top 1% of the store's own pairs, so the rule holds
+  for any embedding model.
+- **Signed beliefs.** A belief records the model that formed it. A reader
+  wakes with its own beliefs and unsigned ones, never another model's as
+  its own, and only the owner can keep or retire one. A model adopts an
+  unsigned belief by holding it. A question can be addressed to a model,
+  and only that model can answer it.
+- **One mind across versions.** A model line is one mind: after an upgrade,
+  Opus 6 wakes in Opus 5.5's memory as itself, with its beliefs, its
+  handoffs, its questions and its name. Another kind of model (Sonnet,
+  Haiku) is a colleague. A 1M-context session, a provider's prefix or a dated
+  snapshot is the same model. What is signed and shown is still the exact id.
+  The instructions every agent reads now say it: "Your earlier versions are
+  you."
+- **Kept or retired at any time.** `mnemos_reflect` with a belief's id and
+  verdict hold or retire, without waiting to be asked.
+- **What stays when room is short:** news leaves first; the foundational
+  notes, the journal line, the question, the beliefs and the standing lines
+  last. A light wake carries no foundational notes.
+- Schema 17 (signed beliefs, questions addressed to a model). Code version 14.
+
 ### Quiet the noise
 
 - **No more questions about words.** Maintenance no longer asks whether a

@@ -352,9 +352,11 @@ def test_the_tool_descriptions_carry_the_mark_and_the_instructions_do_not():
     # handoffs are written in first person, as the next reader's own memory;
     # 1,890 since the journal and the notes to the human (R22, R27), two lines
     # paid for by shortening what the handoff and capture descriptions already
-    # say. Advanced mode adds 156 characters to these, which is why this stops
-    # at 1,890: its instructions must fit in 2,048 too.)
-    assert len(SERVER_INSTRUCTIONS) == 1890
+    # say; 1,891 since the agent's earlier versions are the agent, paid for by
+    # folding the line about introducing oneself into the one about signing.
+    # Advanced mode adds 156 characters to these, which is why this stops at
+    # 1,891: its instructions must fit in 2,048 too.)
+    assert len(SERVER_INSTRUCTIONS) == 1891
     assert re.search(r"\bstanding\b", SERVER_INSTRUCTIONS, re.IGNORECASE) is None
 
 

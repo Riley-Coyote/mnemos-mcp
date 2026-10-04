@@ -150,7 +150,8 @@ person. Signatures come from `MNEMOS_AGENT_MODEL`, the session's
 `mnemos_introduce`, or the harness (Claude Code is detected from its session
 transcript). The packet shows who left the handoff, marks each note
 `by <model>` or `unsigned`, and tells the reader that a note in another
-model's name is a colleague's, not its own. Nothing unsigned is guessed.
+kind of model's name (Sonnet's, read by Opus) is a colleague's, not its own;
+an earlier version's notes are the reader's own. Nothing unsigned is guessed.
 
 ### Install Simple MCP Into Clients
 
@@ -260,7 +261,7 @@ instructions, or when you want the behaviour stated in the agent's own prompt:
 You have access to Mnemos MCP memory tools.
 
 At the start of this session, call mnemos_context.
-If a write comes back unsigned, call mnemos_introduce with your exact model id. Notes signed by a different model are a colleague's, not yours.
+If a write comes back unsigned, call mnemos_introduce with your exact model id. Notes your earlier versions signed are yours; notes another kind of model signed are a colleague's.
 Use mnemos_capture for stable preferences, decisions, project state, workflows, corrections, and context I should not have to repeat.
 Quietly refresh mnemos_handoff after meaningful progress or a changed plan, when unresolved work remains, and before pausing, ending, delegating, or changing context. Write it in your own words. Do not do this after every ordinary turn.
 Use mnemos_recall before relying on memory from prior sessions.

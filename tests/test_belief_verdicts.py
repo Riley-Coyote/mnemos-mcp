@@ -947,6 +947,7 @@ def test_a_v10_queue_is_rebuilt_to_take_reaffirmations(tmp_path):
 
     db = _v10_store(tmp_path)
     rows = _all(db, "SELECT * FROM reflection_queue ORDER BY id")
+    v10_columns = ", ".join(row[1] for row in _all(db, "PRAGMA table_info(reflection_queue)"))
     target = rows[0][5]
 
     store = EngramStore(db)
@@ -964,7 +965,8 @@ def test_a_v10_queue_is_rebuilt_to_take_reaffirmations(tmp_path):
     assert _all(db, "SELECT value FROM meta WHERE key = 'schema_version'") == [
         (str(SCHEMA_VERSION),)
     ]
-    assert _all(db, "SELECT * FROM reflection_queue WHERE id IN ('a1', 'a2') ORDER BY id") == rows
+    assert _all(db, f"SELECT {v10_columns} FROM reflection_queue WHERE id IN ('a1', 'a2') ORDER BY id") == rows
+    assert _all(db, "SELECT for_model FROM reflection_queue WHERE id IN ('a1', 'a2') ORDER BY id") == [("",), ("",)]
     assert first and third, "a reaffirmation could not be asked, or asked again once answered"
     assert second is None, "two reaffirmations waited on one memory"
     assert again is None, "an answered belief question no longer counts as asked"

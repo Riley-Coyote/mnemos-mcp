@@ -25,8 +25,11 @@ from .authorship import (
     clean_model_id,
     display_name,
     harness_session,
+    line_name,
+    model_line,
     note_signature,
     resolve_author_model,
+    same_mind,
     session_introduction,
     session_introduction_key,
     session_introduction_record,
@@ -67,7 +70,6 @@ from .store.sqlite_store import (
     FADED_ARCHIVE_REASONS,
     EngramStore,
     ReadOnlyEngramStore,
-    code_version_first_opened_key,
     handoff_retirement,
     note_kind_problem,
 )
@@ -584,6 +586,59 @@ def _early_window_hours(consolidation: Mapping[str, Any]) -> float:
 
 
 _WORD_QUESTION = re.compile(r'^You keep returning to "[^"]+" \(\d+ memor(?:y|ies)\)\. Is that a belief you now hold\?.*\[theme:[^\]]+\]', re.S)
+
+# An idea the agent keeps returning to: its own impact lines (what a capture
+# changed in how it understands things), grouped by meaning, across sessions
+# and days. Calibrated on 2026-10-04 on the maintainer's store (101 signed
+# impact lines, all-MiniLM-L6-v2): pairs at or above the 99th percentile of
+# all pairwise similarities (0.454) were the same idea, and groups whose mean
+# similarity reached the 98th (0.408) held together; percentiles keep the rule
+# for any embedding model. A word that recurs is not an idea that returns.
+_EVIDENCE_MARKER = re.compile(r"\[evidence:([A-Za-z0-9_,]+)\]")
+_IDEA_MIN = 3                # memories, sessions and days an idea must return across
+_IDEA_WINDOW_DAYS = 60
+_IDEA_EVERY_HOURS = 24
+_IDEA_EXPIRES_DAYS = 14
+_IDEA_MIN_CANDIDATES = 30
+_IDEA_PURE_PYTHON_CAP = 200  # without numpy, only the newest this many are compared
+_IDEA_SIMILAR_PCT = 99.0
+_IDEA_COHESION_PCT = 98.0
+_IDEA_FLOOR = 0.30
+
+
+def _idea_similarities(values: list[list[float]]) -> tuple[Any, float, float]:
+    """Every pair's cosine similarity, and the _IDEA_SIMILAR_PCT and
+    _IDEA_COHESION_PCT percentiles of the pairs (each pair once, linear
+    interpolation), before the floor. With numpy when it imports; the same
+    rule in pure Python otherwise."""
+    try:
+        import numpy as np
+    except ImportError:
+        np = None
+    count = len(values)
+    if np is not None:
+        matrix = np.asarray(values, dtype=float)
+        matrix = matrix / np.linalg.norm(matrix, axis=1)[:, None]
+        similarities = matrix @ matrix.T
+        pairs = similarities[np.triu_indices(count, k=1)]
+        similar = float(np.percentile(pairs, _IDEA_SIMILAR_PCT))
+        cohesive = float(np.percentile(pairs, _IDEA_COHESION_PCT))
+    else:
+        norms = [math.sqrt(sum(value * value for value in vector)) for vector in values]
+        similarities = [[sum(a * b for a, b in zip(left, right)) / (norms[i] * norms[j])
+                         for j, right in enumerate(values)] for i, left in enumerate(values)]
+        pairs = sorted(similarities[i][j] for i in range(count) for j in range(i + 1, count))
+
+        def percentile(percent: float) -> float:
+            position = (len(pairs) - 1) * percent / 100.0
+            lower = math.floor(position)
+            upper = math.ceil(position)
+            return pairs[lower] + (pairs[upper] - pairs[lower]) * (position - lower)
+
+        similar = percentile(_IDEA_SIMILAR_PCT)
+        cohesive = percentile(_IDEA_COHESION_PCT)
+    return similarities, similar, cohesive
+
 
 # Only captures whose encoding registered real surprise (they did not fit what
 # was already held) are offered as contradiction candidates. Keeps the ask rare
@@ -1996,9 +2051,17 @@ class MnemosRuntime:
             conn = store._get_conn()
             # Only what older rules drew: anything newer than the first time
             # the fading rule's code opened this store was drawn by that rule.
-            rule_since = _moment(store.get_meta(
-                code_version_first_opened_key(_FADING_RULE_VERSION), None,
-            ))
+            # A store that newer code created never saw version 13; the rule
+            # began the first time any code at or above it opened the store.
+            opened = []
+            for key, value in conn.execute(
+                "SELECT key, value FROM meta WHERE key LIKE 'code_version_%_first_opened_at'",
+            ).fetchall():
+                version = re.fullmatch(r"code_version_(\d+)_first_opened_at", key)
+                moment = _moment(value)
+                if version and int(version.group(1)) >= _FADING_RULE_VERSION and moment is not None:
+                    opened.append(moment)
+            rule_since = min(opened) if opened else None
 
             def older_rule(created_at: str | None) -> bool:
                 moment = _moment(created_at)
@@ -2694,6 +2757,129 @@ class MnemosRuntime:
         already = {r["target_id"] for r in unanswered}
         return self._enqueue_belief_reaffirmation(already)
 
+    def _enqueue_returning_idea(self) -> int:
+        """Notice an idea the agent keeps returning to, once a day at most.
+
+        Its own impact lines, grouped by meaning (the top 1% of the store's own
+        pairs), returning in three sessions on three days. The best group not yet
+        asked about becomes one question, quoting the agent's own words and
+        addressed to the resident model, when no other such question is open.
+        Returns 1 when it asked, else 0.
+        """
+        self._ensure_init()
+        assert self._store is not None
+        from .interface.context_packet import cut_at_sentence, resident_model
+
+        now = datetime.now(timezone.utc)
+        noticed = _moment(self._get_meta("ideas_noticed_at", ""))
+        if noticed is not None and now - noticed < timedelta(hours=_IDEA_EVERY_HOURS):
+            return 0
+        scope = {
+            "agent_id": self.scope.agent_id,
+            "person_id": self.scope.person_id,
+            "project_scope": self.scope.project_scope,
+        }
+        scope_values = tuple(scope.values())
+        conn = self._store._get_conn()
+        if conn.execute(
+            "SELECT 1 FROM reflection_queue q JOIN engrams e ON e.id = q.target_id "
+            "WHERE q.agent_id = ? AND q.person_id = ? AND q.project_scope = ? "
+            "AND q.kind = 'belief' AND q.answered_at IS NULL "
+            "AND (q.expires_at IS NULL OR q.expires_at > ?) AND instr(q.prompt, '[evidence:') > 0 "
+            "AND e.state != 'archived' AND q.surfaced_count < ?",
+            (*scope_values, now.isoformat(), self._store.MAX_SURFACINGS),
+        ).fetchone():
+            return 0
+        resident = resident_model(self._store, scope)
+        if not resident:
+            self._set_meta("ideas_noticed_at", now.isoformat())
+            return 0
+        try:
+            import numpy as np
+        except ImportError:
+            np = None
+        candidates = [dict(row) for row in conn.execute(
+            "SELECT id, impact, tags, author_model, author_session, created_at "
+            "FROM engrams WHERE owner_agent_id = ? AND person_id = ? AND project_scope = ? "
+            "AND state = 'active' AND author_kind = 'agent' AND impact_source = 'agent' "
+            "AND trim(impact) != '' AND standing = 0 AND created_at >= ? "
+            "ORDER BY created_at DESC",
+            (*scope_values, (now - timedelta(days=_IDEA_WINDOW_DAYS)).isoformat()),
+        ).fetchall() if same_mind(row["author_model"], resident)
+            and not {"lesson", "distilled"}.intersection(json.loads(row["tags"]))]
+        if np is None:
+            candidates = candidates[:_IDEA_PURE_PYTHON_CAP]
+        if len(candidates) < _IDEA_MIN_CANDIDATES or self._embedding_index is None:
+            self._set_meta("ideas_noticed_at", now.isoformat())
+            return 0
+        vectors = self._embedding_index.impact_vectors({row["id"]: row["impact"] for row in candidates})
+        if len(vectors) < _IDEA_MIN_CANDIDATES:
+            self._set_meta("ideas_noticed_at", now.isoformat())
+            return 0
+        candidates = [row for row in candidates if row["id"] in vectors]
+        values = [vectors[row["id"]] for row in candidates]
+        count = len(values)
+        similarities, similar, cohesive = _idea_similarities(values)
+        similar = max(similar, _IDEA_FLOOR)
+        cohesive = max(cohesive, _IDEA_FLOOR)
+        asked = set()
+        for row in conn.execute(
+            "SELECT prompt FROM reflection_queue WHERE agent_id = ? AND person_id = ? "
+            "AND project_scope = ? AND kind = 'belief'", scope_values,
+        ).fetchall():
+            for marker in _EVIDENCE_MARKER.finditer(row["prompt"]):
+                asked.update(marker.group(1).split(","))
+        groups = []
+        for i, seed in enumerate(candidates):
+            members = [j for j in range(count) if j == i or similarities[i][j] >= similar]
+            if len(members) < _IDEA_MIN:
+                continue
+            sessions = {candidates[j]["author_session"] or candidates[j]["id"] for j in members}
+            dates = {_moment(candidates[j]["created_at"]).astimezone(timezone.utc).date() for j in members}
+            if len(sessions) < _IDEA_MIN or len(dates) < _IDEA_MIN:
+                continue
+            mean = sum(float(similarities[a][b]) for index, a in enumerate(members)
+                       for b in members[index + 1:]) / (len(members) * (len(members) - 1) / 2)
+            if mean < cohesive or sum(candidates[j]["id"] in asked for j in members) > len(members) / 2:
+                continue
+            groups.append((len(dates), mean, len(members), seed["id"], members))
+        if not groups:
+            self._set_meta("ideas_noticed_at", now.isoformat())
+            return 0
+        groups.sort(key=lambda group: (-group[0], -group[1], -group[2], group[3]))
+        days, _, _, _, members = groups[0]
+        oldest_first = sorted((candidates[j] for j in members), key=lambda row: row["created_at"])
+        quotes = []
+        for row in (oldest_first[0], oldest_first[len(oldest_first) // 2], oldest_first[-1]):
+            moment = _moment(row["created_at"]).astimezone(timezone.utc)
+            quote = cut_at_sentence(row["impact"], 160)[0]
+            date = f"{moment:%B} {moment.day}"
+            quotes.append(f'- "{quote}" ({date})')
+        evidence = ",".join(row["id"] for row in oldest_first)
+        prompt = (
+            f"On {days} different days you wrote something like this:\n" + "\n".join(quotes) + "\n"
+            "Is there something you believe here? If there is, say it in one line with verdict hold; "
+            f"if not, decline. Or leave it. [evidence:{evidence}]"
+        )
+        # One question per memory, as the impact and reaffirm passes keep it:
+        # a member another question already waits on is not asked about.
+        waiting = {row["target_id"] for row in conn.execute(
+            "SELECT target_id FROM reflection_queue WHERE agent_id = ? AND person_id = ? "
+            "AND project_scope = ? AND answered_at IS NULL", scope_values,
+        ).fetchall()}
+        enqueued = 0
+        for row in reversed(oldest_first):
+            if row["id"] in waiting:
+                continue
+            if self._store.enqueue_reflection(
+                "belief", row["id"], prompt, **scope,
+                expires_in_days=_IDEA_EXPIRES_DAYS, for_model=model_line(resident),
+            ) is not None:
+                enqueued = 1
+                break
+        self._set_meta("ideas_noticed_at", now.isoformat())
+        return enqueued
+
     def _enqueue_belief_reaffirmation(self, already: set[str]) -> int:
         """Put one belief the agent holds to it again: still true?
 
@@ -2765,11 +2951,11 @@ class MnemosRuntime:
                     continue
                 conn.execute(
                     "UPDATE reflection_queue SET prompt = ?, created_at = ?, "
-                    "expires_at = ?, surfaced_count = 0 "
+                    "expires_at = ?, surfaced_count = 0, for_model = ? "
                     "WHERE id = ? AND answered_at IS NULL",
                     (prompt, now.isoformat(),
                      (now + timedelta(days=_REAFFIRM_AFTER_DAYS)).isoformat(),
-                     waiting["id"]),
+                     model_line(belief.author_model), waiting["id"]),
                 )
                 self._store._commit()
                 return 1
@@ -2789,6 +2975,7 @@ class MnemosRuntime:
                 person_id=self.scope.person_id,
                 project_scope=self.scope.project_scope,
                 expires_in_days=_REAFFIRM_AFTER_DAYS,
+                for_model=model_line(belief.author_model),
             ):
                 return 1
         return 0
@@ -2879,6 +3066,7 @@ class MnemosRuntime:
             person_id=self.scope.person_id,
             project_scope=self.scope.project_scope,
             limit=limit,
+            reader_model=self.author_model(""),
         )
 
     @_notice_when_older
@@ -2903,8 +3091,6 @@ class MnemosRuntime:
         if not answer:
             return "Nothing recorded: the reflection was empty."
         decided = (verdict or "").strip().lower().replace("-", "_").replace(" ", "_")
-        if decided and decided not in VERDICTS:
-            return f"Nothing recorded: {verdict.strip()!r} is not a verdict. {_VERDICT_GUIDE}"
 
         self._ensure_init()
         assert self._store is not None
@@ -2919,18 +3105,84 @@ class MnemosRuntime:
         target = target_id.strip()
         self._traced_read(target)
         ask = self._store.pending_reflection_for(target, **scope)
+        direct = False
+        if ask is None and target.startswith("belief_"):
+            belief = self._store.get_belief(target)
+            if belief is not None and belief.agent_id == self.scope.agent_id and not belief.superseded_by:
+                content = " ".join((belief.content or "").split())
+                if len(content) > 160:
+                    content = content[:159].rstrip() + "…"
+                ask = {
+                    "kind": "reaffirm",
+                    "target_id": (belief.supporting_engram_ids or [""])[0],
+                    "prompt": f'You hold this belief: "{content}". [belief:{belief.id}]',
+                }
+                direct = True
+        if not direct and decided and decided not in VERDICTS:
+            return f"Nothing recorded: {verdict.strip()!r} is not a verdict. {_VERDICT_GUIDE}"
         if ask is None:
             return (
                 f"Nothing was pending for {target_id}. It may already have been "
                 "reflected on, or the id may be wrong."
             )
         kind = _question_kind(ask)
+        # A question addressed to one model asks about that model's own words;
+        # another kind of model's answer would make a belief out of what it never wrote.
+        addressed = ask.get("for_model") or ""
+        if addressed and not author:
+            return (
+                f"Nothing was changed: this question is for {line_name(addressed)}, and your answer "
+                "isn't signed. Pass signed_as with your exact model id."
+            )
+        if addressed and author and model_line(author) != addressed:
+            return f"This question is for {line_name(addressed)}, not you. Nothing was changed."
+        if kind == "reaffirm":
+            marker = _BELIEF_MARKER.search(ask.get("prompt") or "")
+            belief = self._store.get_belief(marker.group(1)) if marker else None
+            if belief is not None and belief.author_model and not author:
+                return (
+                    f"Nothing was changed: this belief is {display_name(belief.author_model)}'s, and your "
+                    "answer isn't signed. Pass signed_as with your exact model id."
+                )
+            if (belief is not None and belief.author_model and author
+                    and not same_mind(author, belief.author_model)):
+                return (
+                    f"This belief is {display_name(belief.author_model)}'s to keep or retire, "
+                    "not yours. Nothing was changed."
+                )
+        if direct and decided in ("", "not_now"):
+            return "Nothing recorded: to keep or retire a belief directly, give verdict hold or retire."
         allowed = _VERDICTS.get(kind)
         if decided and allowed is not None and decided not in allowed:
             return (
                 f"Nothing recorded: {decided} does not answer this question. "
                 f"It takes {_VERDICT_HELP[kind]}."
             )
+
+        if direct:
+            # Code older than the store applies none of its rules to a belief, and a
+            # direct verdict has no question to keep the words on: nothing changes.
+            if self._older_than_store() is not None:
+                return "Nothing was changed: this code is older than the memory, so it doesn't keep or retire beliefs."
+            if decided == "decline":
+                result = "Left as it is. The belief is unchanged."
+            else:
+                result = self._apply_reaffirmation(ask, answer, decided, author=author)
+            # The verdict answers the question that waits on this belief too:
+            # asking it again right after would be asking twice. Beliefs belong
+            # to the agent, not to a scope: it waits in every person's and project's.
+            for waiting in self._store._get_conn().execute(
+                "SELECT id, target_id, person_id, project_scope FROM reflection_queue "
+                "WHERE agent_id = ? AND kind = 'reaffirm' AND answered_at IS NULL "
+                "AND instr(prompt, ?) > 0",
+                (scope["agent_id"], f"[belief:{target}]"),
+            ).fetchall():
+                self._store.answer_reflection(
+                    waiting["target_id"], answer, reflection_id=waiting["id"],
+                    agent_id=scope["agent_id"], person_id=waiting["person_id"],
+                    project_scope=waiting["project_scope"],
+                )
+            return result
 
         # Code older than the store keeps the agent's words and applies none
         # of its rules to them. What a verdict does to a belief or a link may
@@ -2960,9 +3212,9 @@ class MnemosRuntime:
             )
 
         if kind == "belief":
-            return self._apply_belief_reflection(item, answer, decided)
+            return self._apply_belief_reflection(item, answer, decided, author=author)
         if kind == "reaffirm":
-            return self._apply_reaffirmation(item, answer, decided)
+            return self._apply_reaffirmation(item, answer, decided, author=author)
         if kind == "contradiction":
             return self._apply_contradiction_reflection(item, answer, decided)
 
@@ -3093,7 +3345,7 @@ class MnemosRuntime:
             f"{self._signed_line(author)}"
         )
 
-    def _apply_belief_reflection(self, item: dict[str, Any], answer: str, verdict: str) -> str:
+    def _apply_belief_reflection(self, item: dict[str, Any], answer: str, verdict: str, *, author: str = "") -> str:
         """Form the belief the agent stated, or record that it declined.
 
         hold forms it from the agent's words, at 0.4, with the asked-about
@@ -3106,6 +3358,7 @@ class MnemosRuntime:
         if verdict == "decline":
             return "Declined. No belief was formed; your words are kept on the question."
 
+        evidence = _EVIDENCE_MARKER.search(item.get("prompt") or "")
         theme = ""
         tm = _THEME_MARKER.search(item.get("prompt") or "")
         if tm:
@@ -3114,9 +3367,11 @@ class MnemosRuntime:
             agent_id=self.scope.agent_id,
             content=answer,
             confidence=0.4,
-            domain=theme or "general",
-            supporting_engram_ids=[item["target_id"]],
+            domain="idea" if evidence else theme or "general",
+            supporting_engram_ids=evidence.group(1).split(",") if evidence else [item["target_id"]],
             source="agent",
+            author_model=author,
+            author_session=harness_session(),
         )
         self._store.save_belief(belief)
         self._traced_write(belief.id)
@@ -3126,7 +3381,7 @@ class MnemosRuntime:
             "It will shape what you notice and can be revised as you learn."
         )
 
-    def _apply_reaffirmation(self, item: dict[str, Any], answer: str, verdict: str) -> str:
+    def _apply_reaffirmation(self, item: dict[str, Any], answer: str, verdict: str, *, author: str = "") -> str:
         """Keep, retire, or leave as it is a belief the agent was asked about again.
 
         hold raises its confidence by 0.05, never past 0.99, and restarts the
@@ -3150,6 +3405,9 @@ class MnemosRuntime:
         if verdict == "hold":
             belief.revise(min(0.99, round(before + 0.05, 4)), f"reaffirmed by the agent: {answer}")
             belief.challenge()
+            if not belief.author_model and author:
+                belief.author_model = author
+                belief.author_session = harness_session()
             self._store.save_belief(belief)
             self._traced_write(belief.id)
             return (
@@ -3633,14 +3891,17 @@ class MnemosRuntime:
                 session_introduction_key(session),
                 session_introduction_record(self._session_author, name),
             )
-        giver = clean_model_id(model)
+        # An id Mnemos can't parse still names its giver, so two unknown models
+        # never share a name.
+        giver = model_line(model) or model.strip().lower()
+        stored = self._get_meta("agent_name_model", "") or ""
         if name:
             self._set_meta("agent_name", name)
             self._set_meta("agent_name_model", giver)
-        elif (self._get_meta("agent_name_model", "") or "") != giver:
-            # A name is the model's that gave it. Another model introducing
-            # itself without one doesn't inherit it; the live store went on
-            # calling Opus "Grok" after Grok had introduced itself once.
+        elif (model_line(stored) or stored.strip().lower()) != giver:
+            # A name is its line's: another line introducing itself without
+            # one doesn't inherit it; the live store went on calling Opus
+            # "Grok" after Grok had introduced itself once.
             self._set_meta("agent_name", "")
             self._set_meta("agent_name_model", "")
 
@@ -5667,6 +5928,15 @@ class MnemosRuntime:
             # contradicts what was already held. The packet's ≤2 cap and the
             # per-cycle limit of 1 each keep these from ever becoming a chore.
             self._enqueue_belief_reflections(limit=1)
+            try:
+                self._enqueue_returning_idea()
+            except Exception as exc:
+                if self._host_mutation_active:
+                    raise
+                logging.getLogger(__name__).warning(
+                    "No returning idea was noticed: %s: %s", type(exc).__name__, exc,
+                )
+                self._set_meta("ideas_noticed_at", datetime.now(timezone.utc).isoformat())
             self._enqueue_contradiction_reflections(limit=1)
         except Exception:
             if self._host_mutation_active:

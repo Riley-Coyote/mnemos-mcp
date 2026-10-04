@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from mnemos.authorship import detect_harness_model, display_name, same_model
+from mnemos.authorship import detect_harness_model, display_name, same_mind
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.store.sqlite_store import SCHEMA_VERSION, EngramStore
 
@@ -89,9 +89,9 @@ class TestNames:
     def test_display_names(self, model, name):
         assert display_name(model) == name
 
-    def test_snapshots_are_the_same_model_but_versions_are_not(self):
-        assert same_model("claude-haiku-4-5", "claude-haiku-4-5-20251001")
-        assert not same_model("claude-opus-5", "claude-opus-5-5")
+    def test_snapshots_and_versions_of_one_line_are_one_mind(self):
+        assert same_mind("claude-haiku-4-5", "claude-haiku-4-5-20251001")
+        assert same_mind("claude-opus-5", "claude-opus-5-5")
 
 
 class TestDetection:

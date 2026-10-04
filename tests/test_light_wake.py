@@ -82,7 +82,7 @@ def test_light_names_who_and_where_but_asks_nothing(tmp_path):
     db, ids = _store(tmp_path)
     packet = _packet(_hook(db, tmp_path, env={"MNEMOS_WAKE": "light"}))
     assert STANDING in packet
-    assert FOUNDATIONAL in packet
+    assert FOUNDATIONAL not in packet
     assert "### where i left off" in packet
     assert "### a question waiting for me" not in packet
     assert "last time I wrote in my journal" not in packet

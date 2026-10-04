@@ -35,9 +35,10 @@ apart at the end, for the tools:
    order it showed them, never to be shown to the person.
 
 The voice follows who is reading. The reader is this memory's resident when
-its model wrote most of the signed notes here (``resident_model``), and then
-the store-wide things (beliefs, unsigned notes) are its own. Another model is a
-guest: its own notes are still its own, the rest is labelled with who wrote
+its model line wrote most of the signed notes here (``resident_model``), and
+then the store-wide things (beliefs, unsigned notes) are its own; an earlier
+version of its line is itself. Another kind of model is a guest: its own notes
+are still its own, the rest is labelled with who wrote
 it, and the opening says whose memory it is visiting. A reader the harness
 didn't name gets every note labelled, and the opening says so once.
 
@@ -61,8 +62,9 @@ from ..authorship import (
     display_name,
     from_same_session,
     lesson_signature,
+    model_line,
     note_signature,
-    same_model,
+    same_mind,
 )
 from ..dream_journal import DREAM_JOURNAL_TAG, changed_something, latest_dream_entry
 from ..retrieval.reactive import ReactiveRetriever, RetrievalResult
@@ -233,6 +235,8 @@ def build_context_packet(
         ),
         reverse=True,
     )[:_FOUNDATIONAL_SHOWN]
+    if wake == "light":
+        foundational = []
     shown_ids = {entry["id"] for entry in foundational}
     place = place_words(workdir)
     carrying = [] if wake == "light" else _carrying(
@@ -243,13 +247,18 @@ def build_context_packet(
         ]
     )
 
-    beliefs = [_serialize_belief(b) for b in store.get_beliefs(agent_id, active_only=True)]
+    resident = resident_model(store, scope)
+    beliefs = [_serialize_belief(b) for b in _beliefs_for(
+        store.get_beliefs(agent_id, active_only=True), reader_model, resident,
+    )]
     beliefs = beliefs[:_BELIEFS_SHOWN]
 
     questions: list[dict[str, Any]] = []
     if wake != "light" and include_reflections and not older_than_store:
         try:
-            questions = store.pending_reflections(**scope, limit=PACKET_QUESTIONS)
+            questions = store.pending_reflections(
+                **scope, limit=PACKET_QUESTIONS, reader_model=reader_model or resident,
+            )
         except Exception:
             # A packet must never fail because of the reflection queue.
             questions = []
@@ -262,7 +271,6 @@ def build_context_packet(
     if wake != "light" and include_engrams and query.strip():
         found = _graph_recall(store, query, scope, max_engrams)
 
-    resident = resident_model(store, scope)
     woke = now or datetime.now().astimezone()
     if woke.tzinfo is None:
         woke = woke.astimezone()
@@ -451,11 +459,11 @@ def whose_handoff(
     Returns the label ("Yours (Opus 5.5), from another session, 5 hours ago")
     and one of ``own``, ``colleague`` or ``unplaced``.
 
-    A note the reader's own model left is the reader's, from this session or
-    another one: several sessions of one model often work in parallel, and
-    each is the same agent (Riley's decision, 2026-09-26). A note a different
-    model left is a colleague's, even in this session, where it means the
-    model was switched. When the reader's model isn't known, or the note isn't
+    A note the reader's own model line left is the reader's, from this session
+    or another one, and from any version of the line: several sessions of one
+    model often work in parallel, and each is the same agent (Riley's
+    decision, 2026-09-26). A note another kind of model left is a colleague's,
+    even in this session, where it means the model was switched. When the reader's model isn't known, or the note isn't
     signed, the label says so and the reader is left to judge.
 
     This is the wording of the tools that list handoffs on request; the packet
@@ -509,7 +517,7 @@ def _whose(
     session = from_same_session(reader_session, note.get("author_session"))
     age = _age_text(note.get("created_at"))
     name = display_name(author)
-    if author and reader and not same_model(author, reader):
+    if author and reader and not same_mind(author, reader):
         return _COLLEAGUE, name, age, session
     if (author and (reader or session is True)) or (not author and session is True):
         return _OWN, name, age, session
@@ -523,20 +531,35 @@ def _joined(*parts: str | None) -> str:
 # ── Who is reading ──
 
 
+def _beliefs_for(beliefs, reader_model, resident) -> list:
+    """The beliefs a reader wakes with as its own: those its line signed (any
+    version) and the unsigned ones. A guest (another kind of model than the
+    resident) wakes with only the ones its own line signed. Without a reader,
+    the resident's line's and the unsigned ones."""
+    if clean_model_id(reader_model) and resident and not same_mind(reader_model, resident):
+        return [belief for belief in beliefs if same_mind(belief.author_model, reader_model)]
+    owner = reader_model or resident
+    return [belief for belief in beliefs
+            if not clean_model_id(belief.author_model)
+            or same_mind(belief.author_model, owner)]
+
+
 def resident_model(store: "EngramStore", scope: dict[str, str]) -> str:
-    """The model whose memory this mostly is: the one that signed the most of
-    its live notes and handoffs, or ``""`` when none did or two tie.
+    """The model line whose memory this mostly is: the one that signed the
+    most of its live notes and handoffs, or ``""`` when none did or two tie;
+    returned as the id that line signed with most recently, so the opening
+    names its newest version.
 
     One store is often shared by several models, and each signs what it
     writes. The one that has written most of it is who it belongs to, and
-    reading it as that model is waking as oneself. Another model reading it is
-    a guest. A store with nothing signed has no resident, and whoever reads it
+    reading it as that line, any version of it, is waking as oneself. Another
+    kind of model reading it is a guest. A store with nothing signed has no resident, and whoever reads it
     reads it as their own, as before signatures existed.
     """
     try:
         rows = store._get_conn().execute(
             """
-            SELECT author_model, COUNT(*) FROM hypomnema_entries
+            SELECT author_model, COUNT(*), MAX(created_at) FROM hypomnema_entries
             WHERE agent_id = ? AND person_id = ? AND project_scope = ?
               AND active = 1 AND COALESCE(author_model, '') != ''
             GROUP BY author_model
@@ -546,27 +569,28 @@ def resident_model(store: "EngramStore", scope: dict[str, str]) -> str:
     except Exception:
         return ""
     counts: dict[str, int] = {}
-    first_id: dict[str, str] = {}
-    for model, count in rows:
+    newest: dict[str, tuple[str, str]] = {}
+    for model, count, latest in rows:
         model = clean_model_id(model)
-        if not model:
+        line = model_line(model)
+        if not line:
             continue
-        name = display_name(model)
-        counts[name] = counts.get(name, 0) + int(count)
-        first_id.setdefault(name, model)
+        counts[line] = counts.get(line, 0) + int(count)
+        if line not in newest or (latest or "") > newest[line][0]:
+            newest[line] = (latest or "", model)
     ranked = sorted(counts.items(), key=lambda item: item[1], reverse=True)
     if not ranked or (len(ranked) > 1 and ranked[0][1] == ranked[1][1]):
         return ""
-    return first_id[ranked[0][0]]
+    return newest[ranked[0][0]][1]
 
 
 def reader_voice(reader_model: str, resident: str) -> str:
     """``self`` when the reader is this memory's resident (or it has none),
-    ``guest`` when it is another model, ``unknown`` when the harness didn't
+    ``guest`` when it is another kind of model, ``unknown`` when the harness didn't
     say which model is reading."""
     if not clean_model_id(reader_model):
         return UNKNOWN
-    if not resident or same_model(reader_model, resident):
+    if not resident or same_mind(reader_model, resident):
         return SELF
     return GUEST
 
@@ -773,10 +797,10 @@ def _render(packet: dict[str, Any], *, max_chars: int) -> tuple[str, dict[str, A
 
 
 def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
-    """What leaves the packet first when it does not fit: other sessions'
-    notes, then what the reader is carrying, the foundational notes, the
-    report, the journal line, the episode, the question and the beliefs. The
-    standing lines go last, the oldest mark first: they say how to work in
+    """What leaves the packet first when it does not fit: news (other sessions'
+    notes, what's carried, the report and episodes), then the foundational
+    notes, then the journal line; the question, beliefs and standing lines
+    go last. The oldest standing mark leaves first: standing says how to work in
     this session. The person's replies never go: one left out would be marked
     delivered unread."""
     carrying = packet.get("carrying") or []
@@ -786,10 +810,10 @@ def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
     return [
         *(("other", entry["id"]) for entry in reversed(packet.get("other_handoffs") or [])),
         *(("carrying", item["id"]) for item in reversed(others)),
-        *(("who", entry["id"]) for entry in reversed(packet.get("foundational") or [])),
         ("report", ""),
-        ("journal", ""),
         *(("carrying", item["id"]) for item in episodes),
+        *(("who", entry["id"]) for entry in reversed(packet.get("foundational") or [])),
+        ("journal", ""),
         ("question", ""),
         *(("belief", belief["id"]) for belief in reversed(packet.get("beliefs") or [])),
         *(("standing", item["id"]) for item in reversed(standing)),
@@ -961,7 +985,7 @@ def _format_journal(
     days old: "last time I wrote in my journal (5 hours ago): ...".
 
     It says "I" only when the entry is the reader's own, by the rule a handoff
-    follows (``_whose``): an entry another model signed is a colleague's, and
+    follows (``_whose``): an entry another kind of model signed is a colleague's, and
     one no one can place says who signed it. No id and no tool name here; when
     more of the entry exists than this line, its id waits in the closing
     section, where ``mnemos_recall`` reads it whole.
@@ -1033,7 +1057,7 @@ def _whose_note(note_model: object, reader_model: str) -> str:
     """"my", "Fable 5's" or "a": whose note a reply answers, to this reader."""
     author, reader = clean_model_id(note_model), clean_model_id(reader_model)
     if author and reader:
-        return "my" if same_model(author, reader) else f"{display_name(author)}'s"
+        return "my" if same_mind(author, reader) else f"{display_name(author)}'s"
     return "a"
 
 
@@ -1147,7 +1171,7 @@ def _note_by(packet: dict[str, Any], item: dict[str, Any]) -> str:
         return "Mnemos"
     author = clean_model_id(str(entry.get("author_model") or ""))
     if author:
-        if reader and same_model(author, reader):
+        if reader and same_mind(author, reader):
             return ""
         return display_name(author)
     if entry.get("authored_by") == "coauthored":
@@ -1185,7 +1209,7 @@ def _format_beliefs(
     forming = [belief for belief in beliefs if float(belief["confidence"]) < _FIRM]
     voice = packet.get("voice")
     resident = display_name(packet.get("resident") or "")
-    if voice == SELF:
+    if voice in (SELF, GUEST):
         headings = ("what i've come to see", "what i'm starting to see")
     elif resident:
         headings = (f"what {resident} has come to see", f"what {resident} is starting to see")
@@ -1228,7 +1252,8 @@ def _format_question(
         excerpt = item.get("excerpt") or ""
         if len(excerpt) >= _EXCERPT_CHARS:
             excerpt = excerpt.rsplit(" ", 1)[0] + " […]"
-        lines.append(f'about "{excerpt}":')
+        if "[evidence:" not in item["prompt"]:
+            lines.append(f'about "{excerpt}":')
         lines.append(question_words(item["prompt"]))
         call = verdict_call_lines(item)
         tools["calls"].extend(
@@ -1281,7 +1306,7 @@ _EXCERPT_CHARS = 160
 
 # The queue's own markers ("[theme:room]", "[belief:<id>]", "[ref:<id>]") say
 # which theme or memory a question is about. They are for Mnemos, not the reader.
-_MARKER = re.compile(r"\s*\[(?:theme|belief|ref):[^\]]*\]")
+_MARKER = re.compile(r"\s*\[(?:theme|belief|ref|evidence):[^\]]*\]")
 _SENTENCES = re.compile(r"(?<=[.?!])\s+")
 _VERDICT_WORD = re.compile(r"\bverdict\b", re.IGNORECASE)
 

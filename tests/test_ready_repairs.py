@@ -23,15 +23,22 @@ def runtime(tmp_path):
     # These tests draw lessons and fading questions the way older rules did, so
     # the fading rule's code is taken to have first opened this store after
     # them (a test that needs otherwise sets its own time).
-    from mnemos.store.sqlite_store import code_version_first_opened_key
-
-    runtime._store._get_conn().execute(
-        "UPDATE meta SET value = '2099-01-01T00:00:00+00:00' WHERE key = ?",
-        (code_version_first_opened_key(13),),
-    )
-    runtime._store._commit()
+    _rule_first_opened_at(runtime, "2099-01-01T00:00:00+00:00")
     yield runtime
     runtime.close()
+
+
+def _rule_first_opened_at(runtime, value):
+    """Set when every code version at or above the fading rule's (13) first
+    opened the store, inserting v13's when none did."""
+    from mnemos.store.sqlite_store import code_version_first_opened_key
+
+    conn = runtime._store._get_conn()
+    keys = [key for (key,) in conn.execute("SELECT key FROM meta").fetchall()
+            if (found := re.fullmatch(r"code_version_(\d+)_first_opened_at", key)) and int(found.group(1)) >= 13]
+    for key in keys or [code_version_first_opened_key(13)]:
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+    runtime._store._commit()
 
 
 def _capture(runtime, content=CONTENT):
@@ -232,11 +239,8 @@ def test_early_lessons_never_touch_what_the_new_rule_drew(runtime):
     """Whatever was drawn after the fading rule's code first opened the store
     was drawn by that rule, whatever the decay settings were then or are now,
     so the repair leaves it alone even when its timing looks early."""
-    from mnemos.store.sqlite_store import code_version_first_opened_key
-
     target, lesson = _lesson(runtime, 0.5)
-    _write(runtime, "UPDATE meta SET value = '2026-01-10T00:00:00+00:00' WHERE key = ?",
-           (code_version_first_opened_key(13),))
+    _rule_first_opened_at(runtime, "2026-01-10T00:00:00+00:00")
     _write(runtime, "UPDATE engrams SET created_at = '2026-01-14T00:00:00+00:00' WHERE id = ?", (target,))
     _write(runtime, "UPDATE engrams SET created_at = '2026-01-15T00:00:00+00:00' WHERE id = ?", (lesson,))
     ask_target = _capture(runtime, f"{CONTENT} Asked under the new rule.")
@@ -258,3 +262,16 @@ def test_the_first_open_of_each_code_version_is_kept_once(runtime):
     assert first
     runtime._store.raise_min_code_version(MAINTENANCE_CODE_VERSION + 1)
     assert runtime._store.get_meta(key) == first
+
+
+def test_a_store_new_code_created_keeps_its_lessons(tmp_path):
+    """A store this code created never saw version 13: its lessons were all
+    drawn by the fading rule, so the repair finds none."""
+    fresh = MnemosRuntime(db_path=tmp_path / "memory.db", use_dedicated_model=False, **SCOPE)
+    fresh._ensure_init()
+    try:
+        _lesson(fresh, 0.5)
+        plan = fresh.repair_early_lessons()
+        assert plan["found"]["lessons"] == []
+    finally:
+        fresh.close()

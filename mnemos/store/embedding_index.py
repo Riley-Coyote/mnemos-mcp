@@ -134,6 +134,9 @@ _ID_CHUNK = 400
 # local model's one-time load (from this machine only, once per process) is
 # not an embedding call and is not counted.
 WRITE_EMBED_SECONDS = 2.0
+# A local model can't be stopped mid-batch, so impact lines are embedded this
+# many at a time, and no batch starts after the write path's deadline.
+_IMPACT_BATCH = 32
 # A network backend's wait for one call, anywhere: recall's and the cue's
 # query, doctor's probe, the maintenance cycle's link lookups, and every
 # indexing request. Outside the write path the Gemini backend waited 30 s for
@@ -1156,6 +1159,48 @@ class EmbeddingIndex:
         it were off."""
         values = self._embed(text)
         return values if values is not None and _storable(values) else None
+
+    def impact_vectors(self, impacts: dict[str, str]) -> dict[str, list[float]]:
+        """Vectors for the agent's impact lines: the lesson passages recall
+        already stored where their words still match and the vector is usable
+        (the one rule above ``_USABLE_PASSAGES``), else embedded now, in
+        batches of 32 started within ``WRITE_EMBED_SECONDS``, and not kept;
+        what the time doesn't reach, or what comes back unusable, is left out
+        this cycle."""
+        if not self._available or not self._embedder:
+            return {}
+        vectors: dict[str, list[float]] = {}
+        conn = self._existing_conn()
+        if conn is not None:
+            try:
+                rows = conn.execute(
+                    "SELECT item_id, embedding, dims, text_hash FROM passage_vectors "
+                    "WHERE model_name = ? AND part = ?",
+                    (self._embedder.model_name, LESSON_PART),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+            rows = [row for row in rows if row[0] in impacts and row[3] == text_hash(impacts[row[0]])]
+            for i in _usable_shapes(rows, self._embedder.dims):
+                values = self._from_bytes(rows[i][1], rows[i][2])
+                if _usable_norm(math.sqrt(sum(v * v for v in values))):
+                    vectors[rows[i][0]] = values
+        missing = [item_id for item_id in impacts if item_id not in vectors]
+        deadline = time.monotonic() + WRITE_EMBED_SECONDS
+        for start in range(0, len(missing), _IMPACT_BATCH):
+            if time.monotonic() > deadline:
+                break
+            batch = missing[start:start + _IMPACT_BATCH]
+            try:
+                embedded = self._embed_many([impacts[item_id] for item_id in batch], deadline=deadline)
+            except Exception:
+                embedded = []
+            for item_id, values in zip(batch, embedded or []):
+                if values is not None:
+                    values = [float(v) for v in values]
+                    if _storable(values):
+                        vectors[item_id] = values
+        return vectors
 
     def search_candidates(
         self,

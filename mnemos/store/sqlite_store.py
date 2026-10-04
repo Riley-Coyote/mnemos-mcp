@@ -37,7 +37,7 @@ from ..core.identity import AgentIdentity
 # meaning index (see embedding_index.PASSAGE_TABLE_SQL). v16: journal_entries
 # and notes, the agent's journal and the notes between the agent and the
 # person (see JOURNAL_WRITTEN and NOTE_KINDS).
-SCHEMA_VERSION = 16
+SCHEMA_VERSION = 17
 
 # The lowest maintenance code version still allowed to maintain this store,
 # raised by each newer version that opens it (see mnemos/code_version.py).
@@ -241,7 +241,7 @@ def _version_stored_in(version: VersionRef, store_key: str) -> bool:
 _BELIEF_COLUMNS = frozenset({
     "id", "agent_id", "content", "confidence", "domain", "created_at",
     "last_revised", "last_challenged", "revision_history", "superseded_by",
-    "supporting_engram_ids", "source",
+    "supporting_engram_ids", "source", "author_model", "author_session",
 })
 
 # Columns a store from before 0.2 may be missing, added on open by
@@ -281,7 +281,10 @@ _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "beliefs": [
         ("source", "source TEXT NOT NULL DEFAULT ''"),
+        ("author_model", "author_model TEXT NOT NULL DEFAULT ''"),
+        ("author_session", "author_session TEXT NOT NULL DEFAULT ''"),
     ],
+    "reflection_queue": [("for_model", "for_model TEXT NOT NULL DEFAULT ''")],
     "consolidation_log": [
         ("agent_id", "agent_id TEXT"),
         ("person_id", "person_id TEXT"),
@@ -338,7 +341,8 @@ _REFLECTION_QUEUE_TABLE = """CREATE TABLE IF NOT EXISTS reflection_queue (
     created_at TEXT NOT NULL,
     expires_at TEXT,
     answered_at TEXT,
-    answer TEXT
+    answer TEXT,
+    for_model TEXT NOT NULL DEFAULT ''
 )"""
 _REFLECTION_QUEUE_COLUMNS = (
     "id, agent_id, person_id, project_scope, kind, target_id, prompt, excerpt, "
@@ -454,7 +458,9 @@ CREATE TABLE IF NOT EXISTS beliefs (
     revision_history TEXT NOT NULL DEFAULT '[]',
     superseded_by TEXT,
     supporting_engram_ids TEXT NOT NULL DEFAULT '[]',
-    source TEXT NOT NULL DEFAULT ''
+    source TEXT NOT NULL DEFAULT '',
+    author_model TEXT NOT NULL DEFAULT '',
+    author_session TEXT NOT NULL DEFAULT ''
 );
 
 -- Hypomnema: scoped durable continuity that can revise before promotion
@@ -1364,7 +1370,13 @@ class EngramStore:
                 continue  # table absent — the schema script will create it whole
             for name, add_ddl in columns:
                 if name not in existing:
-                    conn.execute(f"ALTER TABLE {table} ADD COLUMN {add_ddl}")
+                    try:
+                        conn.execute(f"ALTER TABLE {table} ADD COLUMN {add_ddl}")
+                    except sqlite3.OperationalError as exc:
+                        # Another process opening the same store may have added it since we looked.
+                        if "duplicate column name" not in str(exc):
+                            raise
+                        continue
                     # Some SQLite builds leave numeric defaults virtual after
                     # ALTER TABLE and then report those legacy rows as NULL
                     # during integrity_check. The column is brand new, so
@@ -4424,8 +4436,11 @@ class EngramStore:
         person_id: str = "user",
         project_scope: str = "global",
         expires_in_days: int = 30,
+        for_model: str = "",
     ) -> str | None:
         """Propose a reflection. Returns None if this was already asked.
+
+        ``for_model``: the model line it's for (``opus``), or "" for anyone.
 
         Asking twice about the same memory is nagging, so the unique index
         makes a repeat enqueue a no-op rather than a duplicate. A
@@ -4448,11 +4463,11 @@ class EngramStore:
                 """
                 INSERT INTO reflection_queue(
                     id, agent_id, person_id, project_scope, kind, target_id,
-                    prompt, excerpt, created_at, expires_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?)
+                    prompt, excerpt, created_at, expires_at, for_model
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
                 """,
                 (entry_id, agent_id, person_id, project_scope, kind, target_id,
-                 prompt, now.isoformat(), expires),
+                 prompt, now.isoformat(), expires, for_model),
             )
             self._commit()
         except sqlite3.IntegrityError:
@@ -4471,6 +4486,7 @@ class EngramStore:
         person_id: str = "user",
         project_scope: str = "global",
         limit: int = 2,
+        reader_model: str = "",
     ) -> list[dict[str, Any]]:
         """Unanswered reflections worth showing, oldest and least-shown first.
 
@@ -4486,10 +4502,14 @@ class EngramStore:
           answers "the memory is no longer there" — so surfacing one spends the
           agent's turn to reach nothing.
         """
+        from ..authorship import model_line
+
+        model_clause = "AND (q.for_model = '' OR q.for_model = ?)" if reader_model else "AND q.for_model = ''"
+        model_params = (model_line(reader_model),) if reader_model else ()
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
         rows = conn.execute(
-            """
+            f"""
             SELECT q.*, e.content AS live_content
             FROM reflection_queue q
             JOIN engrams e ON e.id = q.target_id
@@ -4498,10 +4518,11 @@ class EngramStore:
               AND q.surfaced_count < ?
               AND (q.expires_at IS NULL OR q.expires_at > ?)
               AND e.state != 'archived'
+              {model_clause}
             ORDER BY q.surfaced_count ASC, q.created_at ASC
             LIMIT ?
             """,
-            (agent_id, person_id, project_scope, self.MAX_SURFACINGS, now, limit),
+            (agent_id, person_id, project_scope, self.MAX_SURFACINGS, now, *model_params, limit),
         ).fetchall()
 
         items = []

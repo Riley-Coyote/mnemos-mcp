@@ -117,7 +117,7 @@ def _gather(kind, path, since, scope):
         handoffs = store.handoffs_since(since, **scope)
         if kind == "ours":
             return handoffs, store.agent_captures_since(since, **scope), [], []
-        questions = store.pending_reflections(**scope, limit=10_000)
+        questions = store.pending_reflections(**scope, limit=10_000, reader_model=HOUR_MODEL)
         # Belief asks are built from word counts today ("You keep returning to 'running'"),
         # and they stay out of the hours until R11 grounds them in meaning.
         questions = [question for question in questions if question["kind"] != "belief"]

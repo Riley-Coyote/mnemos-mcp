@@ -85,11 +85,7 @@ def display_name(model: str) -> str:
     model = clean_model_id(model)
     if not model:
         return ""
-    base = re.sub(r"\[[^\]]*\]$", "", model)  # context-window suffixes, e.g. [1m]
-    base = base.rsplit("/", 1)[-1]  # anthropic/claude-…
-    base = re.sub(r"^(?:[a-z]{2}\.)?anthropic\.", "", base)  # Bedrock ids
-    base = re.sub(r"-v\d+(?::\d+)?$", "", base)
-    base = re.sub(r"-\d{8}$", "", base)  # dated snapshots
+    base = _base_id(model)
     match = re.fullmatch(r"claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?", base)
     if match:
         family, major, minor = match.groups()
@@ -101,13 +97,51 @@ def display_name(model: str) -> str:
     return model
 
 
-def same_model(a: str, b: str) -> bool:
-    """Whether two model ids name the same model (dated snapshots included)."""
+def model_line(model: object) -> str:
+    """The line a model belongs to, which is one mind across its versions:
+    ``claude-opus-5-5``, ``claude-opus-5-5[1m]`` and ``claude-opus-6`` are all
+    ``opus``. An id that isn't a Claude model's is its own line: its base id,
+    lowercased. ``""`` when there is no model id."""
 
-    a, b = clean_model_id(a), clean_model_id(b)
-    if not a or not b:
-        return False
-    return a == b or display_name(a) == display_name(b)
+    model = clean_model_id(model)
+    if not model:
+        return ""
+    base = _base_id(model).lower()
+    match = (re.fullmatch(r"claude-([a-z]+)-\d+(?:-\d{1,2})?", base)
+             or re.fullmatch(r"claude-\d+(?:-\d{1,2})?-([a-z]+)", base))
+    return match.group(1) if match else base
+
+
+def same_mind(a: object, b: object) -> bool:
+    """Whether two model ids are one mind: the same line, whatever the version."""
+
+    a, b = model_line(a), model_line(b)
+    return bool(a) and a == b
+
+
+def line_name(line: str) -> str:
+    """How a line reads in a sentence: ``opus`` -> ``Opus``; any other line as it is."""
+
+    return line.capitalize() if re.fullmatch(r"[a-z]+", line or "") else line
+
+
+def _base_id(model: str) -> str:
+    """A model id, lowercased, without its context marker, provider prefix or
+    profile, Bedrock version, Vertex or dated snapshot, or "latest" alias, and
+    with a dotted version read as dashed: ``US.ANTHROPIC.CLAUDE-OPUS-5-5-V1:0``,
+    ``global.anthropic.claude-opus-5-5-20260101-v1:0``,
+    ``claude-opus-5-5@20260101`` and ``anthropic/claude-opus-5.5`` are all
+    ``claude-opus-5-5``."""
+
+    base = model.strip().lower()
+    base = re.sub(r"\[[^\]]*\]$", "", base)  # context-window suffixes, e.g. [1m]
+    base = base.rsplit("/", 1)[-1]  # anthropic/claude-…, Bedrock ARNs
+    base = re.sub(r"^(?:[a-z][a-z-]*\.)?anthropic\.", "", base)  # Bedrock ids and profiles
+    base = re.sub(r"-v\d+(?::\d+)?$", "", base)  # Bedrock versions
+    base = re.sub(r"@\d{8}$", "", base)  # Vertex snapshots
+    base = re.sub(r"-\d{8}$", "", base)  # dated snapshots
+    base = re.sub(r"-latest$", "", base)  # aliases
+    return re.sub(r"(?<=\d)\.(?=\d)", "-", base)  # 4.5 reads as 4-5
 
 
 def signature(model: str) -> str:

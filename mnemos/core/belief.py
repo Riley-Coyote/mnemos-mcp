@@ -89,6 +89,12 @@ class Belief:
     supersede a belief it authored, but must not be able to erase a seed or
     model belief by mistake."""
 
+    author_model: str = ""
+    """The model that formed or adopted this belief (a clean model id), or "" when unknown."""
+
+    author_session: str = ""
+    """The harness session it was formed or adopted in, or ""."""
+
     def revise(
         self,
         new_confidence: float,
@@ -130,6 +136,8 @@ class Belief:
             "superseded_by": self.superseded_by,
             "supporting_engram_ids": json.dumps(self.supporting_engram_ids),
             "source": self.source,
+            "author_model": self.author_model,
+            "author_session": self.author_session,
         }
 
     @classmethod
@@ -155,4 +163,6 @@ class Belief:
             superseded_by=d.get("superseded_by"),
             supporting_engram_ids=supporting,
             source=d.get("source", "") or "",
+            author_model=d.get("author_model", "") or "",
+            author_session=d.get("author_session", "") or "",
         )
