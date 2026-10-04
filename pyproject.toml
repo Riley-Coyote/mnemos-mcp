@@ -105,3 +105,6 @@ packages = ["mnemos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "lived_time: runs on the agent's real lived days, not the suite's every day lived (see tests/conftest.py)",
+]

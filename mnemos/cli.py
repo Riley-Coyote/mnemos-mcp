@@ -819,6 +819,11 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 person_name=person_name,
                 wake=wake,
             )
+            # Waking is living: the day counts on the agent's own clock.
+            try:
+                store.mark_lived(scope.agent_id)
+            except Exception:
+                pass
         finally:
             store.close()
         text = (packet.get("prompt") or "").strip()
@@ -2009,6 +2014,7 @@ def _cmd_remember(args: argparse.Namespace) -> int:
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
         use_dedicated_model=False,  # CLI capture stays local and deterministic
+        marks_lived=False,  # a person at the command line, not the agent living
     )
     try:
         print(
@@ -2057,6 +2063,7 @@ def _journal_runtime(args: argparse.Namespace, *, read_only: bool):
         project_scope=getattr(args, "project_scope", None),
         use_dedicated_model=False,
         read_only=read_only,
+        marks_lived=False,
     )
 
 
@@ -2187,6 +2194,7 @@ def _cmd_repair_softening(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         dry_run = bool(getattr(args, "dry_run", False))
@@ -2218,6 +2226,7 @@ def _cmd_repair_lessons(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         plan = runtime.repair_lessons(write=args.write)
@@ -2267,6 +2276,7 @@ def _cmd_repair_versions(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         plan = runtime.repair_versions(write=args.write)
@@ -2356,6 +2366,7 @@ def _repair_runtime(args: argparse.Namespace) -> Any:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
 
 
@@ -2717,6 +2728,7 @@ def _cmd_repair_quarantine_tool_written(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         plan = runtime.repair_quarantine_tool_written(write=args.write, undo=args.undo)
@@ -2810,6 +2822,7 @@ def _cmd_repair_keyword_contradictions(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         plan = runtime.repair_keyword_contradictions(write=args.write)
@@ -2908,6 +2921,7 @@ def _cmd_repair_min_code_version(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
+        marks_lived=False,
     )
     try:
         plan = runtime.repair_min_code_version(set_to=set_to, write=args.write)
@@ -2983,6 +2997,7 @@ def _cmd_adopt_legacy(args: argparse.Namespace) -> int:
         agent_id=getattr(args, "agent_id", None),
         person_id=person,
         project_scope=project,
+        marks_lived=False,
     )
     try:
         plan = runtime.adopt_legacy(
@@ -3069,6 +3084,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         person_id=getattr(args, "person_id", None),
         project_scope=getattr(args, "project_scope", None),
         read_only=True,
+        marks_lived=False,
     )
     try:
         print("Mnemos Doctor")

@@ -26,6 +26,7 @@ import ulid as _ulid_mod
 from ..core.placeholders import is_templated
 from ..core.types import ConnectionRelation, EngramKind, SourceType
 from ..store.fts import distinctive_terms, fts_words, or_query, overlap
+from .lived import LivedClock
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -229,10 +230,16 @@ def run_softening_pass(
     # memory captured seconds ago qualified as fading and the agent was asked
     # what it had taught. Nothing had faded; the pass had simply never run
     # before, so the missing notion of age had never mattered.
+    # The age is in the lived hours of the pass's agent (see lived.py); with
+    # no agent named, in wall hours.
     min_age_hours = float(config.get("softening_min_age_hours", 24))
+    clock = LivedClock.for_agent(store, agent_id) if agent_id is not None else None
 
     for engram in all_engrams:
-        if _hours_since(engram.created_at) < min_age_hours:
+        age_hours = _hours_since(engram.created_at)
+        if clock is not None and age_hours != float("inf"):
+            age_hours = clock.hours_between(engram.created_at)
+        if age_hours < min_age_hours:
             stats["too_recent"] = stats.get("too_recent", 0) + 1
             continue
 

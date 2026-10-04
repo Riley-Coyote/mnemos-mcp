@@ -36,8 +36,9 @@ from ..core.identity import AgentIdentity
 # Schema version — increment when tables change. v15: passage_vectors, recall's
 # meaning index (see embedding_index.PASSAGE_TABLE_SQL). v16: journal_entries
 # and notes, the agent's journal and the notes between the agent and the
-# person (see JOURNAL_WRITTEN and NOTE_KINDS).
-SCHEMA_VERSION = 17
+# person (see JOURNAL_WRITTEN and NOTE_KINDS). v18: lived_days, the days the
+# agent lived (see consolidation/lived.py).
+SCHEMA_VERSION = 18
 
 # The lowest maintenance code version still allowed to maintain this store,
 # raised by each newer version that opens it (see mnemos/code_version.py).
@@ -676,6 +677,15 @@ CREATE TABLE IF NOT EXISTS notes (
     read_at TEXT
 );
 
+-- The days the agent lived: did anything at all, in any scope. Its own time,
+-- which decay and the other "how long ago" rules run on (see lived.py).
+-- One row per agent per UTC date; never pruned, never rewritten.
+CREATE TABLE IF NOT EXISTS lived_days (
+    agent_id TEXT NOT NULL,
+    day TEXT NOT NULL,
+    PRIMARY KEY (agent_id, day)
+);
+
 """ + ";\n".join(_REFLECTION_QUEUE_INDEXES) + """;
 CREATE INDEX IF NOT EXISTS idx_host_mutations_completed
     ON host_mutations(completed_at DESC);
@@ -980,11 +990,16 @@ class EngramStore:
         self._reconcile_columns(conn)
         self._rebuild_handoff_index(conn)
         self._allow_reaffirm_asks(conn)
+        had_lived_days = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lived_days'"
+        ).fetchone() is not None
         conn.executescript(SQL_CREATE_TABLES)
         self._classify_legacy_hypomnema(conn)
         self._backfill_engram_scopes(conn)
         self._label_engram_authors(conn)
         self._link_older_capture_pairs(conn)
+        if not had_lived_days:
+            self._backfill_lived_days(conn)
         # Only ever raised. A store newer code has stamped keeps its version
         # when older code opens it, as min_code_version does: stamping this
         # code's version over it would tell the newer code its own migration
@@ -1056,6 +1071,31 @@ class EngramStore:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
         destination = backup_dir / f"{self.db_path.stem}.pre-v{SCHEMA_VERSION}-{stamp}.db"
         create_backup(self.db_path, destination, source_connection=conn)
+
+    @staticmethod
+    def _backfill_lived_days(conn: sqlite3.Connection) -> None:
+        """Fill ``lived_days`` from what the store already holds, once, when
+        the table is first made (v18): the dates of the agent's traced tool
+        calls, continuity notes, own memories and journal entries.
+
+        Each is written as an ISO timestamp in UTC (``+00:00``). SQLite's
+        ``date()`` turns one carrying another offset into its UTC date, reads
+        one with none as UTC (as every reader here does) and gives NULL for
+        anything it can't read, which is left out.
+        """
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO lived_days (agent_id, day)
+            SELECT agent_id, day FROM (
+                SELECT agent_id, date(at) AS day FROM memory_trace
+                UNION SELECT agent_id, date(created_at) FROM hypomnema_entries
+                UNION SELECT owner_agent_id, date(created_at) FROM engrams
+                    WHERE author_kind = 'agent'
+                UNION SELECT agent_id, date(created_at) FROM journal_entries
+            )
+            WHERE agent_id IS NOT NULL AND day IS NOT NULL
+            """
+        )
 
     @staticmethod
     def _rebuild_handoff_index(conn: sqlite3.Connection) -> None:
@@ -5229,6 +5269,38 @@ class EngramStore:
         except Exception:
             self._rollback()
             raise
+
+    # ── Lived days: the agent's own time ──
+
+    def mark_lived(self, agent_id: str, when: datetime | None = None) -> None:
+        """Record that ``agent_id`` lived on the UTC date of ``when`` (default
+        now). Code older than the store writes nothing, as with other writes
+        a newer version decides."""
+        minimum = self.min_code_version()
+        if minimum is not None and minimum > MAINTENANCE_CODE_VERSION:
+            return
+        moment = when or datetime.now(timezone.utc)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        day = moment.astimezone(timezone.utc).date().isoformat()
+        conn = self._get_conn()
+        try:
+            conn.execute(
+                "INSERT OR IGNORE INTO lived_days (agent_id, day) VALUES (?, ?)",
+                (agent_id, day),
+            )
+            self._commit()
+        except Exception:
+            self._rollback()
+            raise
+
+    def lived_days(self, agent_id: str) -> list[str]:
+        """The UTC dates ``agent_id`` lived, sorted."""
+        rows = self._get_conn().execute(
+            "SELECT day FROM lived_days WHERE agent_id = ? ORDER BY day",
+            (agent_id,),
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def set_min_code_version(self, version: int) -> None:
         """Set the minimum outright, lower or higher. Only a human's reset

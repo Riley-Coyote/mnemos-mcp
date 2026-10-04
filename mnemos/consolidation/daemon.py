@@ -32,6 +32,7 @@ from ..core.emotional_state import EmotionalState
 from ..core.identity import AgentIdentity
 from .connection_discovery import run_connection_discovery
 from .decay import run_decay_pass
+from .lived import LivedClock
 from .softening import run_softening_pass
 from .belief_review import run_belief_review
 from .reflection import run_identity_pass, run_reflection_pass
@@ -296,7 +297,7 @@ class ConsolidationDaemon:
         }
 
     def _hours_since_last_cycle(
-        self, agent_id: str, person_id: str | None, project_scope: str | None
+        self, agent_id: str | None, person_id: str | None, project_scope: str | None
     ) -> float | None:
         """Hours elapsed since the last logged consolidation cycle.
 
@@ -306,6 +307,11 @@ class ConsolidationDaemon:
         scratch, so N cycles compound to exp(-rate * hours * N) instead of
         exp(-rate * hours). This returns the real elapsed window so decay can
         clamp to it.
+
+        The window is in the lived hours of ``agent_id`` (see lived.py), the
+        clock its memories age on, so an absence opens no window. When
+        ``agent_id`` is None (shared consolidation, over every agent) it is in
+        wall hours.
 
         Returns None when no cycle has ever run, which lets the first pass
         apply full catch-up decay from each engram's own last access.
@@ -338,6 +344,11 @@ class ConsolidationDaemon:
         except (ValueError, TypeError):
             return None
 
+        if agent_id is not None:
+            try:
+                return LivedClock.for_agent(self._store, agent_id).hours_between(last)
+            except Exception:
+                pass  # a clock that can't be read: wall hours, never no ceiling
         elapsed = (datetime.now(timezone.utc) - last).total_seconds() / 3600.0
         return max(0.0, elapsed)
 

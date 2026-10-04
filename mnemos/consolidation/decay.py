@@ -31,10 +31,10 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterator
-from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..code_version import MAINTENANCE_CODE_VERSION
+from .lived import LivedClock
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 # At most this many active memories are decayed in one pass, the most
 # accessible first.
 ACTIVE_LIMIT = 10000
-# For this many hours after its last use, an active memory is held at no less
-# than this accessibility: just used, it can't be fading.
+# For this many lived hours after its last use, an active memory is held at no
+# less than this accessibility: just used, it can't be fading.
 RECENCY_FLOOR = 0.4
 RECENCY_FLOOR_HOURS = 72
 # Dormant memories are read this many at a time, and all of them are decayed.
@@ -90,6 +90,8 @@ def run_decay_pass(
         "dormant_processed": 0,
         "dormant_decayed": 0,
     }
+    # A memory ages on its owner's lived clock: one clock per agent per pass.
+    clocks: dict[str, LivedClock] = {}
 
     # Dormant memories keep fading, by rules this code version holds: code
     # older than the store leaves them as they are, whoever calls the pass
@@ -101,7 +103,7 @@ def run_decay_pass(
     if not _older_than(store):
         for engram in _dormant_engrams(store, agent_id, person_id, project_scope):
             stats["dormant_processed"] += 1
-            _decay_engram(store, engram, config, max_elapsed_hours, stats)
+            _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks)
 
     # load_connections=True because decay uses connection count for decay resistance
     engrams = store.get_engrams_in_states(
@@ -119,7 +121,7 @@ def run_decay_pass(
     for engram in engrams:
         stats["engrams_processed"] += 1
         total_before += engram.accessibility
-        after = _decay_engram(store, engram, config, max_elapsed_hours, stats)
+        after = _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks)
         if after is not None:
             total_after += after
 
@@ -159,6 +161,7 @@ def _decay_engram(
     config: dict[str, Any],
     max_elapsed_hours: float | None,
     stats: dict[str, Any],
+    clocks: dict[str, LivedClock],
 ) -> float | None:
     """Decay one memory, move it on if it faded far enough, and save it.
     Returns its accessibility after the pass, or None when it was archived."""
@@ -167,12 +170,16 @@ def _decay_engram(
     archive_threshold = config.get("archive_threshold", 0.01)
     was_dormant = engram.state == "dormant"
 
-    # age_hours is how long since this memory was last touched; it drives
+    # age_hours is how long since this memory was last touched, in the lived
+    # hours of its owner (see lived.py: an absence costs it nothing); it drives
     # the recency floor below. decay_hours is how much decay this pass is
     # entitled to apply — capped at the elapsed window since the previous
     # cycle, because accessibility is already the decayed value and would
     # otherwise be re-decayed by its full age on every single pass.
-    age_hours = _hours_since(engram.last_accessed)
+    owner = engram.owner_agent_id
+    if owner not in clocks:
+        clocks[owner] = LivedClock.for_agent(store, owner)
+    age_hours = clocks[owner].hours_between(engram.last_accessed)
     decay_hours = age_hours
     if max_elapsed_hours is not None:
         decay_hours = min(age_hours, max_elapsed_hours)
@@ -253,15 +260,3 @@ def _older_than(store: Any) -> bool:
     minimum = store.min_code_version()
     return minimum is not None and minimum > MAINTENANCE_CODE_VERSION
 
-
-def _hours_since(iso_timestamp: str) -> float:
-    """Calculate hours elapsed since an ISO 8601 timestamp."""
-    try:
-        then = datetime.fromisoformat(iso_timestamp)
-        if then.tzinfo is None:
-            then = then.replace(tzinfo=timezone.utc)
-        now = datetime.now(timezone.utc)
-        delta = now - then
-        return max(0.0, delta.total_seconds() / 3600)
-    except (ValueError, TypeError):
-        return 0.0

@@ -2,6 +2,18 @@
 
 ## 0.3.1 (unreleased)
 
+### Lived time
+
+Memories fade with the time the agent lived, not the calendar. A day counts
+when the agent did anything at all: woke, worked, wrote, or spent a quiet
+hour. Decay, its ceiling per cycle, the recency floor, softening's minimum
+age and the month before a belief is put to the agent again all run on those
+days. For an agent used every day nothing changes; an absence costs it no
+memory, however long. (Schema: `lived_days`, backfilled from what the store
+already holds.)
+
+- Code version 16.
+
 ### Edges
 
 - **The faded first.** Softening reads the least accessible memories first:

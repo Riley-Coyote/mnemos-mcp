@@ -66,6 +66,42 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("MNEMOS_JEV_KEY_FILE", os.devnull)
 
 
+_EVERY_DAY: list[str] | None = None
+
+
+def _every_day() -> list[str]:
+    """Every UTC date from 2000-01-01 through two days from now, built once."""
+    global _EVERY_DAY
+    if _EVERY_DAY is None:
+        from datetime import date, datetime, timedelta, timezone
+
+        day = date(2000, 1, 1)
+        last = datetime.now(timezone.utc).date() + timedelta(days=2)
+        days = []
+        while day <= last:
+            days.append(day.isoformat())
+            day += timedelta(days=1)
+        _EVERY_DAY = days
+    return _EVERY_DAY
+
+
+@pytest.fixture(autouse=True)
+def every_day_lived(request, monkeypatch):
+    """The agent lived every day, so its time is the calendar's.
+
+    Memories fade with the days the agent lived (consolidation/lived.py). The
+    suite's backdated timestamps assume an agent that lived through them, the
+    case where nothing changes. A test marked ``lived_time`` keeps the days
+    its store really holds.
+    """
+    if request.node.get_closest_marker("lived_time") is not None:
+        return
+    from mnemos.store.sqlite_store import EngramStore
+
+    days = _every_day()
+    monkeypatch.setattr(EngramStore, "lived_days", lambda self, agent_id: list(days), raising=False)
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     """Create a temporary database path."""

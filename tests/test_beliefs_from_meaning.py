@@ -348,7 +348,7 @@ def test_older_stores_gain_the_new_columns(runtime):
         assert held.author_session == ""
         row = store._get_conn().execute("SELECT for_model FROM reflection_queue WHERE id = ?", (ask,)).fetchone()
         assert row["for_model"] == ""
-        assert store._get_conn().execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "17"
+        assert store._get_conn().execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()[0] == "18"
     finally:
         store.close()
 

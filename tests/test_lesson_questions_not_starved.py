@@ -20,12 +20,14 @@ import re
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.simple_runtime import MnemosRuntime
+from mnemos.store.sqlite_store import EngramStore
 
 SCOPE = {"agent_id": "nova", "person_id": "riley", "project_scope": "demo"}
 
@@ -69,6 +71,22 @@ def _fading(db: Path) -> list[str]:
     finally:
         conn.close()
     return ids
+
+
+def _lived_since_long_ago(db: Path) -> None:
+    """Mark every day from LONG_AGO through today lived, on the store itself.
+
+    The suite's every_day_lived patch (conftest.py) can't reach another
+    process, and memories fade only with the days the agent lived."""
+    store = EngramStore(str(db))
+    try:
+        day = datetime.fromisoformat(LONG_AGO)
+        today = datetime.now(timezone.utc)
+        while day <= today:
+            store.mark_lived(SCOPE["agent_id"], day)
+            day += timedelta(days=1)
+    finally:
+        store.close()
 
 
 def _read(db: Path, sql: str, params: tuple = ()) -> list[tuple]:
@@ -241,6 +259,8 @@ def test_a_question_asked_in_one_process_is_answered_in_another(tmp_path):
     finally:
         rt.close()
     (left,) = set(ids) - set(_lessons(db))  # asked next, by the other process
+
+    _lived_since_long_ago(db)
 
     home = tmp_path / "home"
     home.mkdir()

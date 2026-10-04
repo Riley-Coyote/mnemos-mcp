@@ -38,6 +38,7 @@ from .authorship import (
 from .code_version import MAINTENANCE_CODE_VERSION, OLDER_CODE_FIX, OLDER_CODE_MESSAGE
 from .config.loader import load_config
 from .consolidation.daemon import ConsolidationDaemon
+from .consolidation.lived import LivedClock
 from .core.types import SourceType
 from .dream_journal import DREAM_JOURNAL_TAG, fetch_active_dream_entry
 from .encoding.encoder import Encoder
@@ -649,8 +650,8 @@ _CONTRADICTION_MIN_SURPRISE = 0.4
 # The marker a reaffirmation carries: which belief it asks about.
 _BELIEF_MARKER = re.compile(r"\[belief:(belief_[A-Za-z0-9]+)\]")
 
-# A belief the agent has not held to (formed or reaffirmed) for this long may
-# be put to it again: still true? Never more often than that.
+# A belief the agent has not held to (formed or reaffirmed) for this many of
+# its lived days may be put to it again: still true? Never more often than that.
 _REAFFIRM_AFTER_DAYS = 30
 
 # What the agent can decide about each kind of question: mnemos_reflect's
@@ -865,6 +866,7 @@ class MnemosRuntime:
         project_scope: str | None = None,
         use_dedicated_model: bool = True,
         read_only: bool = False,
+        marks_lived: bool = True,
     ) -> None:
         self.scope = resolve_scope(
             db_path=db_path,
@@ -875,6 +877,9 @@ class MnemosRuntime:
         # A read-only runtime inspects an existing store and cannot change it
         # (`mnemos doctor`). Anything that would write raises instead.
         self._read_only = read_only
+        # Whether this runtime's tool calls are the agent living, and count its
+        # day (see consolidation/lived.py). A person at the command line isn't.
+        self._marks_lived = marks_lived
         self._store: EngramStore | None = None
         self._encoder: Encoder | None = None
         self._retriever: ReactiveRetriever | None = None
@@ -2896,8 +2901,8 @@ class MnemosRuntime:
         """Put one belief the agent holds to it again: still true?
 
         A belief the agent stated may be asked about again once it has gone
-        ``_REAFFIRM_AFTER_DAYS`` without being formed or reaffirmed, and no
-        sooner than that after it was last asked. The ask has its own kind,
+        ``_REAFFIRM_AFTER_DAYS`` lived days without being formed or
+        reaffirmed, and no sooner than that after it was last asked. The ask has its own kind,
         so the answered ask that formed the belief no longer blocks it. One
         left unanswered is put again the same way once it has expired, if
         nothing else waits on its memory. ``already`` holds the memories that
@@ -2907,11 +2912,14 @@ class MnemosRuntime:
         conn = self._store._get_conn()
         scope = (self.scope.agent_id, self.scope.person_id, self.scope.project_scope)
         now = datetime.now(timezone.utc)
-        month = now - timedelta(days=_REAFFIRM_AFTER_DAYS)
+        # A month of the agent's own days (see consolidation/lived.py): an
+        # absence brings no belief back sooner. Expiry dates stay on the
+        # calendar.
+        clock = LivedClock.for_agent(self._store, self.scope.agent_id)
 
         def within_month(timestamp: str | None) -> bool:
             moment = _moment(timestamp)
-            return moment is not None and moment > month
+            return moment is not None and clock.days_since(moment, now) < _REAFFIRM_AFTER_DAYS
 
         beliefs = [
             b for b in self._store.get_beliefs(self.scope.agent_id, active_only=True)
@@ -3861,6 +3869,10 @@ class MnemosRuntime:
                 read_ids=trace["read"],
                 written_ids=trace["written"],
             )
+            # A tool call is the agent living, and the day counts on its own
+            # clock (see consolidation/lived.py). Maintenance is not.
+            if self._marks_lived and tool != "maintain":
+                self._store.mark_lived(self.scope.agent_id)
         except Exception:
             pass
 

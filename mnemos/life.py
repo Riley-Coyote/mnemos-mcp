@@ -409,6 +409,16 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             env["MNEMOS_HOUR_ID"] = hour_id
             if config_dir is not None:
                 env["CLAUDE_CONFIG_DIR"] = str(Path(config_dir).expanduser())
+            # An hour is the agent living: the day counts on its own clock, in
+            # the store the hour uses.
+            try:
+                marker = EngramStore(store)
+                try:
+                    marker.mark_lived(resolved.agent_id)
+                finally:
+                    marker.close()
+            except Exception:
+                pass
             outcome, guarded = _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens)
             launched = True
             record.update(outcome)
