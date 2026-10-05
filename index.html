@@ -646,7 +646,7 @@ footer a:hover{color:var(--text-soft)}
   <div class="chapter-sub">Full functionality through the Model Context Protocol. Any MCP-compatible client&mdash;Claude Code, Cursor, Windsurf, or custom agents&mdash;can connect and start forming memories immediately.</div>
 </div><div class="wide">
   <div class="tool-grid">
-    <div class="tool-card"><div class="tn">mnemos_setup</div><div class="td">Guided onboarding wizard&mdash;10 steps to personalize your memory system</div></div>
+    <div class="tool-card"><div class="tn">mnemos_setup</div><div class="td">Guided setup, in four steps</div></div>
     <div class="tool-card"><div class="tn">mnemos_remember</div><div class="td">Encode a new memory with full dual-trace initialization</div></div>
     <div class="tool-card"><div class="tn">mnemos_recall</div><div class="td">Retrieve via spreading activation through the connection graph</div></div>
     <div class="tool-card"><div class="tn">mnemos_inspect</div><div class="td">View full engram&mdash;traces, connections, versions, history</div></div>
@@ -666,46 +666,32 @@ footer a:hover{color:var(--text-soft)}
 
   <p>Every memory tool is <strong>gated</strong> behind onboarding. If the agent tries to remember, recall, or do anything before setup is complete, Mnemos redirects it: <em>&ldquo;call mnemos_setup to get started.&rdquo;</em> The agent figures it out from there.</p>
 
-  <p>Setup is a conversation between you and your agent. Seven steps, each building on the last:</p>
+  <p>Setup is a conversation between you and your agent. Four steps:</p>
 
   <div class="onboard-flow">
     <div class="onboard-step">
       <div class="onboard-num">1</div>
       <div class="onboard-body">
         <div class="onboard-title">Name your agent</div>
-        <div class="onboard-detail">Not a label&mdash;a real name. This becomes part of the agent&rsquo;s identity engrams.</div>
+        <div class="onboard-detail">Not a label&mdash;a real name. Its memory is kept under it.</div>
       </div>
     </div>
     <div class="onboard-step">
       <div class="onboard-num">2</div>
       <div class="onboard-body">
         <div class="onboard-title">Introduce yourself</div>
-        <div class="onboard-detail">Your name, what you care about, what you&rsquo;re building. These become the agent&rsquo;s first real memories&mdash;and early memories form the strongest connections.</div>
+        <div class="onboard-detail">Your name, what you care about, what you&rsquo;re building. Kept as you said it, as your words, never as the agent&rsquo;s.</div>
       </div>
     </div>
     <div class="onboard-step">
       <div class="onboard-num">3</div>
       <div class="onboard-body">
         <div class="onboard-title">Active projects</div>
-        <div class="onboard-detail">What you&rsquo;re working on right now. The agent starts forming context around these&mdash;noticing patterns, connecting what you say across conversations.</div>
+        <div class="onboard-detail">What you&rsquo;re working on right now, so the agent knows them from the start.</div>
       </div>
     </div>
     <div class="onboard-step">
       <div class="onboard-num">4</div>
-      <div class="onboard-body">
-        <div class="onboard-title">Import history <span class="onboard-opt">optional</span></div>
-        <div class="onboard-detail">Point the agent at conversation exports from ChatGPT, Claude, or Cursor. It reads through them and forms memories from what happened before you met.</div>
-      </div>
-    </div>
-    <div class="onboard-step">
-      <div class="onboard-num">5</div>
-      <div class="onboard-body">
-        <div class="onboard-title">First beliefs form</div>
-        <div class="onboard-detail">From what you told it, the agent forms its first beliefs&mdash;things it <em>thinks</em> are true based on early evidence. These shift as it learns more.</div>
-      </div>
-    </div>
-    <div class="onboard-step">
-      <div class="onboard-num">6</div>
       <div class="onboard-body">
         <div class="onboard-title">LLM provider</div>
         <div class="onboard-detail">Paste an OpenRouter key (or any supported provider). Used for classifying connections and generating reflections.</div>
@@ -714,8 +700,8 @@ footer a:hover{color:var(--text-soft)}
     <div class="onboard-step onboard-final">
       <div class="onboard-num">&bull;</div>
       <div class="onboard-body">
-        <div class="onboard-title">Alive</div>
-        <div class="onboard-detail">The agent reports how many memories formed, how many beliefs are taking shape, how many connections already emerged. All 10 tools unlock. You&rsquo;re live.</div>
+        <div class="onboard-title">Ready</div>
+        <div class="onboard-detail">Setup says what it kept, and the memory tools unlock. You&rsquo;re live.</div>
       </div>
     </div>
   </div>

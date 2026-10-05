@@ -2,6 +2,21 @@
 
 ## 0.3.1 (unreleased)
 
+### Setup keeps the person's words, and speaks for no one
+
+Advanced setup kept nothing. It named a memory source that doesn't exist,
+so every write failed and it said "Encoded 0 seed memories". What it meant
+to write wasn't right either: two memories in the agent's voice ("My user is
+…", "I am Nova …"), the person's answer cut into fragments ("Riley told me:
+…"), and a lesson the agent never drew. Now the person's answer is kept
+once, whole, as their own words, and the projects they name as setup's own
+lines, never the agent's. Setup no longer writes beliefs for the agent
+("Riley is deeply invested in …") or tells the person, in the agent's voice,
+that it is forming them: what the agent believes is its own to form. It no
+longer asks for history to import, which it never imported; a setup saved on
+that question moves on to the provider question. `mnemos_hypomnema_promote`,
+which failed the same way, works again and keeps whose words the note was.
+
 ### Meaning search asks the network nothing
 
 Loading the local model from files already on the machine still reached the

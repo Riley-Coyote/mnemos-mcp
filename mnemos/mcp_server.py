@@ -100,8 +100,8 @@ ONBOARDING_PROMPTS = {
         "1. Functional memory: the live working context of this session.\n"
         "2. Hypomnema: scoped continuity that survives sessions and can still be revised.\n"
         "3. Mnemos: the long-term graph of engrams, beliefs, decay, and reconsolidation.\n\n"
-        "During setup I'll learn the agent identity, the human relationship, active projects, "
-        "and review preferences."
+        "During setup I'll learn the agent's name, who its person is, what they want "
+        "remembered, and their active projects."
     ),
     1: "What should this agent be called?",
     2: "Who is the primary human this memory should be scoped to?",
@@ -113,11 +113,6 @@ ONBOARDING_PROMPTS = {
         "What projects or ongoing work should this agent recognize immediately? "
         "Use commas or separate lines."
     ),
-    5: (
-        "Do you have conversation history, notes, or project files to import? "
-        "Share a local path, or say 'skip' to start fresh."
-    ),
-    6: None,  # Generated dynamically from steps 3-4
     8: (
         "Optional: add an LLM provider for richer classification, reflection, and consolidation.\n\n"
         "Format: provider:key (e.g., openrouter:sk-or-v1-abc123)\n"
@@ -280,7 +275,8 @@ def mnemos_setup(response: str = "") -> str:
     user's response to advance through the setup steps.
 
     Args:
-        response: The user's answer to the current setup step. Empty on first call.
+        response: The person's answer to the current setup step, as they gave
+            it: don't summarize or reword it. Empty on first call.
     """
     config = _get_config()
     step = config.get("setup_step", 0)
@@ -312,18 +308,16 @@ def mnemos_setup(response: str = "") -> str:
         _config_invalidate()
         return ONBOARDING_PROMPTS[3]
 
-    # Step 3: User description → encode seed engrams
+    # Step 3: what the person says matters, kept whole as their own words
     if step == 3:
         config["user_description"] = response.strip()
         config["setup_step"] = 4
         save_config(config)
         _config_invalidate()
 
-        # Encode seed engrams from the description
         _ensure_store()
         agent_id = config.get("agent_id", "default")
         person_id = config.get("person_id", "user")
-        agent_name = config.get("agent_name", "Agent")
         user_name = config.get("user_name", "User")
         session = _store.start_memory_session(  # type: ignore
             session_id=config.get("onboarding_session_id") or None,
@@ -335,30 +329,26 @@ def mnemos_setup(response: str = "") -> str:
         )
         config["onboarding_session_id"] = session["id"]
 
-        seeds = [
-            f"My user is {user_name}. {response.strip()[:500]}",
-            f"I am {agent_name}. {user_name} and I are beginning to work together.",
-        ]
-        # Extract key phrases for additional seed engrams
-        sentences = [s.strip() for s in response.replace(".", ".\n").split("\n") if len(s.strip()) > 20]
-        for s in sentences[:3]:
-            seeds.append(f"{user_name} told me: {s}")
-
-        encoded = 0
-        for seed in seeds[:5]:
+        # Their words, once and whole: never split into fragments, reworded
+        # into the agent's voice, or given a lesson the agent didn't draw.
+        # Nothing here speaks for the agent: who it is is its own to write.
+        kept = ""
+        if response.strip():
             try:
                 _encoder.encode(
-                    content=seed,
-                    impact=f"Foundation memory from initial setup with {user_name}.",
+                    content=response.strip(),
                     kind="semantic",
                     tags=["identity", "setup"],
-                    source=SourceType.USER_EXPLICIT,
+                    source=SourceType.BOOTSTRAP,
                     agent_id=agent_id,
+                    person_id=person_id,
                     skip_surprise_detection=True,
+                    author_kind="person",
                 )
-                encoded += 1
+                kept = f"Kept what {user_name} said, in their own words."
             except Exception as e:
-                logger.warning(f"Failed to encode seed engram: {e}")
+                logger.warning(f"Failed to keep the person's starting context: {e}")
+                kept = f"Couldn't keep what {user_name} said: {e}"
 
         try:
             _store.write_hypomnema_entry(  # type: ignore
@@ -391,7 +381,7 @@ def mnemos_setup(response: str = "") -> str:
 
         save_config(config)
         _config_invalidate()
-        return f"Encoded {encoded} seed memories.\n\n" + ONBOARDING_PROMPTS[4]
+        return f"{kept}\n\n{ONBOARDING_PROMPTS[4]}" if kept else ONBOARDING_PROMPTS[4]
 
     # Step 4: Projects
     if step == 4:
@@ -400,7 +390,7 @@ def mnemos_setup(response: str = "") -> str:
             config["indexer"] = {}
         config["indexer"]["known_projects"] = projects
         config["indexer"]["active_projects"] = projects
-        config["setup_step"] = 5
+        config["setup_step"] = 7
         save_config(config)
         _config_invalidate()
 
@@ -411,17 +401,20 @@ def mnemos_setup(response: str = "") -> str:
         session_id = config.get("onboarding_session_id")
         for proj in projects[:5]:
             try:
+                # Setup's own line around the person's answer: not the
+                # agent's words, so it never shapes who the agent is.
                 _encoder.encode(
                     content=f"Active project: {proj}",
-                    impact=f"Part of the current work context.",
                     kind="semantic",
                     tags=["project", "context"],
-                    source=SourceType.USER_EXPLICIT,
+                    source=SourceType.BOOTSTRAP,
                     agent_id=agent_id,
+                    person_id=person_id,
                     skip_surprise_detection=True,
+                    author_kind="system",
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to keep project {proj!r}: {e}")
             try:
                 _store.write_hypomnema_entry(  # type: ignore
                     f"Active project for this relationship: {proj}",
@@ -449,81 +442,16 @@ def mnemos_setup(response: str = "") -> str:
             except Exception as e:
                 logger.warning(f"Failed to seed project continuity: {e}")
 
-        return ONBOARDING_PROMPTS[5]
+        return ONBOARDING_PROMPTS[8]
 
-    # Step 5: History import (optional)
-    if step == 5:
-        config["setup_step"] = 7
-        save_config(config)
-        _config_invalidate()
-
-        resp_lower = response.strip().lower()
-        if resp_lower in ("skip", "no", "fresh", "start fresh", ""):
-            pass  # Skip history import
-        else:
-            # TODO: Run extraction pipeline on the provided path
-            logger.info(f"History import requested: {response.strip()}")
-
-        # Generate seed beliefs from what we know
-        _ensure_store()
-        agent_id = config.get("agent_id", "default")
-        user_name = config.get("user_name", "User")
-        user_desc = config.get("user_description", "")
-        projects = config.get("indexer", {}).get("known_projects", [])
-
-        # Imported at step scope: the second belief below is created even
-        # when user_desc is empty, and a function-local import inside the
-        # first branch left it undefined there — a NameError swallowed by
-        # the except, silently dropping the belief.
-        from .core.belief import Belief
-
-        beliefs_created = []
-        if user_desc:
-            # Extract key themes for beliefs
-            belief1 = f"{user_name} is deeply invested in their work"
-            if projects:
-                belief1 = f"{user_name} is deeply invested in {projects[0]}"
-            try:
-                b = Belief(
-                    content=belief1,
-                    domain="identity",
-                    confidence=0.70,
-                    agent_id=agent_id,
-                )
-                _store.save_belief(b)
-                beliefs_created.append(f'"{belief1}" — confidence: 70%')
-            except Exception as e:
-                logger.warning(f"Failed to create belief: {e}")
-
-        if projects and len(projects) > 1:
-            belief2 = f"The work centers on {', '.join(projects[:3])}"
-            try:
-                b = Belief(
-                    content=belief2,
-                    domain="context",
-                    confidence=0.65,
-                    agent_id=agent_id,
-                )
-                _store.save_belief(b)
-                beliefs_created.append(f'"{belief2}" — confidence: 65%')
-            except Exception as e:
-                logger.warning(f"Failed to create belief: {e}")
-
-        belief_text = "\n".join(f"  - {b}" for b in beliefs_created) if beliefs_created else "  (none yet — they'll form as we talk)"
-        return (
-            "From what you've told me, I'm forming my first beliefs. "
-            "These aren't facts — they're things I think are true based on what I know so far. "
-            "They'll shift as I learn more:\n\n"
-            f"{belief_text}\n\n"
-            "When something contradicts a belief, I don't just delete it. I examine it. "
-            "That's how I grow.\n\n"
-            + ONBOARDING_PROMPTS[8]
-        )
-
-    # Step 6 asked whether the cognitive substrate should run, and the
-    # substrate is retired (0.4.0). A setup saved waiting on that answer moves
-    # on to the provider question, as step 5 now does.
-    if step == 6:
+    # Step 5 asked for history to import, which setup never imported: the
+    # answer was logged and dropped. It then wrote beliefs for the agent from
+    # the person's answers ("Riley is deeply invested in …") and told them, in
+    # the agent's voice, "I'm forming my first beliefs". What the agent
+    # believes is its own to form. Step 6 asked whether the cognitive
+    # substrate should run, and the substrate is retired (0.4.0). A setup
+    # saved waiting on either answer moves on to the provider question.
+    if step in (5, 6):
         config["setup_step"] = 7
         save_config(config)
         _config_invalidate()
@@ -570,12 +498,10 @@ def mnemos_setup(response: str = "") -> str:
         try:
             stats = _store.get_stats(agent_id)
             engram_count = stats.get("engrams_active", 0)
-            belief_count = stats.get("beliefs_active", 0)
-            conn_count = stats.get("connections", 0)
             functional_count = stats.get("functional_active", 0)
             hypomnema_count = stats.get("hypomnema_active", 0)
         except Exception:
-            engram_count = belief_count = conn_count = functional_count = hypomnema_count = 0
+            engram_count = functional_count = hypomnema_count = 0
 
         agent_name = config.get("agent_name", "Agent")
         person_id = config.get("person_id", "user")
@@ -588,10 +514,8 @@ def mnemos_setup(response: str = "") -> str:
         _config_invalidate()
 
         return (
-            f"{agent_name} is ready.\n\n"
-            f"{functional_count} functional memories active, {hypomnema_count} hypomnema entries seeded, "
-            f"{engram_count} engrams formed, {belief_count} beliefs taking shape, "
-            f"{conn_count} connections emerging.\n\n"
+            f"{agent_name} is ready: {engram_count} memories, {hypomnema_count} hypomnema "
+            f"entries and {functional_count} functional memories so far.\n\n"
             "Recommended next call:\n"
             f"mnemos_context_packet(query=\"what should I know before this session?\", "
             f"agent_id=\"{agent_id}\", person_id=\"{person_id}\", project_scope=\"{project_scope}\")"
@@ -1327,14 +1251,20 @@ def mnemos_hypomnema_promote(
             f"  Would encode as Mnemos engram:\n  {content}"
         )
 
+    # A note keeps whose words it was: the agent's own stay its own, signed;
+    # setup's stay setup's; a coauthored or unknown one stays unknown.
+    author_kind = {"agent": "agent", "system": "system"}.get(entry.get("authored_by"), "unknown")
+    signed = author_kind == "agent"
     engram = _encoder.encode(  # type: ignore
         content=content,
-        impact="Stable scoped continuity promoted from hypomnema.",
         kind="semantic",
         tags=["hypomnema", "promoted", "continuity", project_scope],
-        source=SourceType.USER_EXPLICIT,
+        source=SourceType.BOOTSTRAP,
         agent_id=agent_id,
         skip_surprise_detection=True,
+        author_kind=author_kind,
+        author_model=entry.get("author_model", "") if signed else "",
+        author_session=entry.get("author_session", "") if signed else "",
     )
     _store.mark_hypomnema_promoted(entry_id, engram.id)  # type: ignore
     return (

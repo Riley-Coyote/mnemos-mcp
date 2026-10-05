@@ -184,7 +184,8 @@ class Encoder:
                 later.
             author_kind: Who wrote the words: 'agent' (the agent's own words,
                 through its tools), 'tool' (a program or a model working for
-                Mnemos), 'system', 'import', or 'unknown'. Unknown unless the
+                Mnemos), 'system', 'import', 'person' (the person's own words,
+                as they gave them), or 'unknown'. Unknown unless the
                 caller says: the encoder cannot tell whose words it is given,
                 and only the agent's shape its identity, beliefs and lessons.
             author_model: The model that wrote them, when known.
