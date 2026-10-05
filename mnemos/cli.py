@@ -185,7 +185,14 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── remember ──
     p_remember = sub.add_parser(
-        "remember", help="Capture durable continuity from the command line"
+        "remember", help="Keep something in your own words (in an agent's shell: the agent's)",
+        description=(
+            "Keep something in the agent's memory, in your own words: unsigned, shown "
+            "to the agent once at its next wake, and marked as yours when it recalls "
+            "it. In an agent's own shell (Claude Code's, which sets CLAUDECODE, or one "
+            "that sets AI_AGENT), or with --signed-as, it keeps the agent's words "
+            "instead. To write as yourself, run it in your own terminal."
+        ),
     )
     p_remember.add_argument("content", help="What to remember")
     p_remember.add_argument("--context", default="", help="Where/why this came up")
@@ -195,6 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_remember.add_argument(
         "--importance", default="auto", help="auto, or a number from 0.0 to 1.0"
+    )
+    p_remember.add_argument(
+        "--signed-as", default="", metavar="MODEL",
+        help="Keep these as the agent's own words, signed with this model id",
     )
     _scope_options(p_remember)
 
@@ -2027,8 +2038,23 @@ def _cmd_bridge(args: argparse.Namespace) -> int:
 
 
 def _cmd_remember(args: argparse.Namespace) -> int:
-    """Capture continuity via the same path as the mnemos_capture MCP tool."""
+    """Keep what the person types, in their own words: the mnemos_capture
+    path, unsigned, as the person's (``author_kind`` 'person').
+
+    Run from an agent's own shell (``CLAUDECODE`` or ``AI_AGENT`` set, as
+    Claude Code sets it in every shell its agent runs) or with
+    ``--signed-as``, it keeps the agent's own words, signed, as before."""
+    import re
+
+    from .code_version import OLDER_CODE_FIX, OLDER_CODE_MESSAGE
     from .simple_runtime import MnemosRuntime
+
+    signed_as = (getattr(args, "signed_as", "") or "").strip()
+    agent = bool(
+        signed_as
+        or os.environ.get("CLAUDECODE", "").strip()
+        or os.environ.get("AI_AGENT", "").strip()
+    )
 
     runtime = MnemosRuntime(
         db_path=getattr(args, "db_path", None),
@@ -2043,12 +2069,28 @@ def _cmd_remember(args: argparse.Namespace) -> int:
         if close is not None:
             words = " ".join(str(close.get("content") or "").split())[:80]
             print(f'A memory already says something close: "{words}" ({close["id"]}). Saved yours too.')
-        print(
-            runtime.capture(
+        if agent:
+            # The agent's own words, signed, from its own shell.
+            said = runtime.capture(
                 args.content, context=args.context, importance=args.importance,
-                impact=getattr(args, "impact", ""),
+                impact=getattr(args, "impact", ""), signed_as=signed_as,
             )
-        )
+        else:
+            # The person's own words, unsigned: never the agent's.
+            said = runtime.capture(
+                args.content, context=args.context, importance=args.importance,
+                impact=getattr(args, "impact", ""), author_kind="person",
+            )
+        kept = re.search(r"Memory ID: (\S+)", said)
+        if kept is None:
+            print(said)
+            return 1
+        if agent:
+            print(f"Remembered, as the agent's own words: {kept.group(1)}")
+        else:
+            print(f"Remembered, in your words: {kept.group(1)}")
+        if runtime._stale():
+            print(f"{OLDER_CODE_MESSAGE} {OLDER_CODE_FIX}")
         return 0
     finally:
         runtime.close()

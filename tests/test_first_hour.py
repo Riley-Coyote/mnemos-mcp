@@ -203,12 +203,12 @@ def test_remember_warns_about_a_near_duplicate_and_not_about_something_new(tmp_p
     warning = re.search(r'A memory already says something close: "(.*)" \((\S+)\)\. Saved yours too\.', out)
     assert warning, out
     assert warning.group(1) == "Sam prefers tabs over spaces and wants terse commit messages."
-    assert "Captured continuity." in out
+    assert re.search(r"^Remembered, in your words: engram_\w+$", out, re.M), out
 
     assert main(["remember", "Gerald the sourdough starter lives on the fridge", "--db-path", str(db), *SCOPE]) == 0
     out = capsys.readouterr().out
     assert "already says something close" not in out, out
-    assert "Captured continuity." in out
+    assert re.fullmatch(r"Remembered, in your words: engram_\w+\n", out), out
 
 
 def test_doctor_still_warns_when_the_judge_is_on_without_a_key(tmp_path, monkeypatch, capsys):

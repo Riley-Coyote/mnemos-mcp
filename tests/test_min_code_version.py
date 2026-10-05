@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import subprocess
 import sys
@@ -255,8 +256,12 @@ def test_an_older_process_capture_is_read_back_by_another_process(tmp_path):
     token = f"harbour-{uuid.uuid4().hex[:12]}"
     wrote = _run("remember", f"The spare key is kept at {token}.", home=home)
     assert wrote.returncode == 0, wrote.stderr
-    assert "Captured continuity." in wrote.stdout
-    assert OLDER in wrote.stdout
+    # `remember` prints its one line for the person, then that this Mnemos is
+    # older than the store, as `mnemos embeddings index` says it.
+    assert re.fullmatch(
+        rf"Remembered, in your words: engram_\w+\n{re.escape(f'{OLDER} {FIX}')}\n",
+        wrote.stdout,
+    ), wrote.stdout
     assert _count(db, "consolidation_log") == cycles, "the older process ran maintenance"
 
     # Another process, by the defaults, as the agent's own mnemos_recall does.

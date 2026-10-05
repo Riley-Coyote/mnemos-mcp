@@ -469,7 +469,7 @@ def test_verification_fires_on_later_session_then_never_again(tmp_path):
     finally:
         runtime1.close()
 
-    assert "MEMORY VERIFIED" not in same_session
+    assert "I still have what I kept before:" not in same_session
 
     runtime2 = _runtime(tmp_path)
     try:
@@ -477,8 +477,7 @@ def test_verification_fires_on_later_session_then_never_again(tmp_path):
     finally:
         runtime2.close()
 
-    assert "MEMORY VERIFIED" in later_session
-    assert "Bartholomew" in later_session
+    assert 'I still have what I kept before: "The garden gnome is named Bartholomew".' in later_session
 
     runtime3 = _runtime(tmp_path)
     try:
@@ -486,7 +485,7 @@ def test_verification_fires_on_later_session_then_never_again(tmp_path):
     finally:
         runtime3.close()
 
-    assert "MEMORY VERIFIED" not in after_verified
+    assert "I still have what I kept before:" not in after_verified
 
     store = EngramStore(str(tmp_path / "memory.db"))
     try:
@@ -498,7 +497,7 @@ def test_verification_fires_on_later_session_then_never_again(tmp_path):
     assert datetime.fromisoformat(verified_at) is not None
 
 
-def test_verification_waits_for_completed_onboarding(tmp_path):
+def test_the_first_restart_is_said_before_onboarding_completes(tmp_path):
     runtime1 = _runtime(tmp_path)
     try:
         runtime1.capture("A fact captured before any introduction")
@@ -508,11 +507,13 @@ def test_verification_waits_for_completed_onboarding(tmp_path):
     runtime2 = _runtime(tmp_path)
     try:
         packet = runtime2.context()
+        stage = runtime2._get_meta("onboarding_stage")
     finally:
         runtime2.close()
 
-    assert "MEMORY VERIFIED" not in packet
+    assert stage != "complete"
     assert "ONBOARDING - almost done" in packet
+    assert 'I still have what I kept before: "A fact captured before any introduction".' in packet
 
 
 def test_grandfathered_scope_never_verifies(tmp_path):
@@ -543,7 +544,7 @@ def test_grandfathered_scope_never_verifies(tmp_path):
     finally:
         runtime2.close()
 
-    assert "MEMORY VERIFIED" not in packet
+    assert "I still have what I kept before:" not in packet
 
     store = EngramStore(db_path)
     try:

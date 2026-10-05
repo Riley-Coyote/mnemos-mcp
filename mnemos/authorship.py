@@ -52,8 +52,9 @@ _TAIL_MAX = 4 * 1024 * 1024
 
 #: Who wrote a memory's words: the agent itself, a tool working for Mnemos (a
 #: program or a model, such as the transcript indexer), Mnemos's own templates,
-#: something brought in from elsewhere, or no one known.
-AUTHOR_KINDS = ("agent", "tool", "system", "import", "unknown")
+#: something brought in from elsewhere, the person, in their own words, through
+#: `mnemos remember`, or no one known.
+AUTHOR_KINDS = ("agent", "tool", "system", "import", "person", "unknown")
 
 # Where a store keeps the model each harness session last introduced itself as.
 _SESSION_INTRODUCTION = "session_model:"

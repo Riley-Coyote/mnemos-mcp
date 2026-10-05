@@ -1,5 +1,7 @@
 """CLI smoke tests for simple-mode setup helpers."""
 
+import re
+
 from mnemos.cli import main
 
 
@@ -89,8 +91,7 @@ def test_remember_captures_in_scope(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert result == 0
-    assert "Captured continuity." in out
-    assert "Scope: nova/riley/demo" in out
+    assert re.fullmatch(r"Remembered, in your words: engram_\w+\n", out), out
 
     from mnemos.store.sqlite_store import EngramStore
 

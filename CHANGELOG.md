@@ -2,6 +2,19 @@
 
 ## 0.3.1 (unreleased)
 
+### The person's own words, and the first restart
+
+What a person types with `mnemos remember` is theirs: kept unsigned as the
+person's words, shown once in the next wake ("Riley wrote this into my
+memory: …"), marked in recall ("in Riley's words"), and never counted as the
+agent's own: not in what has been changing in it, its returning ideas, its
+beliefs or its questions. `remember` prints one line. The first wake that
+crosses a restart says so in the agent's own words ("I still have what I
+kept before: …"), through the session-start hook as well as mnemos_context;
+the scripted "MEMORY VERIFIED" block is gone. Run from an agent's own shell
+(Claude Code's, or with --signed-as), `remember` keeps the agent's words,
+signed, as before. Code version 18.
+
 ### Waking in my own words
 
 The waking note is now the agent's own words, in the order a mind wakes:

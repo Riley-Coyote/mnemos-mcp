@@ -50,6 +50,11 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
         # session's answerer: a test run inside a session would otherwise
         # look for that session's server.
         "CLAUDE_PID",
+        # The marks of an agent's own shell: `mnemos remember` keeps the
+        # agent's words under them and the person's words without them, so a
+        # suite run from Claude Code would take the agent's path everywhere
+        # CI takes the person's. A test about the agent's shell sets them.
+        "CLAUDECODE", "AI_AGENT",
         # The cue's judge: a developer who switched it on would otherwise
         # send test messages to Jev.
         "MNEMOS_CUE_JUDGE",

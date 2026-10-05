@@ -2621,6 +2621,7 @@ class MnemosRuntime:
         # A standing memory is how the person wants the agent to work ("Sam wants
         # short bullets"); asking what it changed in how the agent understands
         # things was the first question a new store asked.
+        # The person's own words aren't the agent's to account for.
         rows = self._store._get_conn().execute(
             """
             SELECT e.id, e.content, e.impact
@@ -2629,6 +2630,7 @@ class MnemosRuntime:
             WHERE h.agent_id = ? AND h.person_id = ? AND h.project_scope = ?
               AND h.active = 1 AND e.state = 'active'
               AND e.standing = 0
+              AND e.author_kind != 'person'
             ORDER BY e.created_at DESC
             LIMIT 40
             """,
@@ -3769,65 +3771,19 @@ class MnemosRuntime:
 
         if self._get_meta("first_capture") is not None or self._get_meta("verified_at") is not None:
             return
-        # No excerpt. The block that renders this re-reads the note by id, so
-        # storing a copy of the text here would put a quotable snapshot of the
-        # human's first capture somewhere no deletion path reaches — and that
-        # block instructs the agent to say it out loud.
+        # No excerpt. The wake that says it (``first_restart``) re-reads the
+        # note by id, so storing a copy of the text here would put a quotable
+        # snapshot of the human's first capture somewhere no deletion path
+        # reaches. The harness session tells the first restart apart for a
+        # wake that comes through the hook, which has no session count.
         payload = {
             "note_id": note_id,
             "engram_id": engram_id,
             "session": self._current_session(),
+            "harness_session": harness_session(),
             "captured_at": datetime.now(timezone.utc).isoformat(),
         }
         self._set_meta("first_capture", json.dumps(payload, ensure_ascii=True, sort_keys=True))
-
-    def _verification_block(self) -> str | None:
-        """One-time MEMORY VERIFIED block when continuity crosses a restart."""
-
-        if self._get_meta("verified_at") is not None:
-            return None
-        raw = self._get_meta("first_capture")
-        if raw is None:
-            return None
-        try:
-            first_capture = json.loads(raw)
-            note_id = first_capture["note_id"]
-            first_session = int(first_capture["session"])
-        except (ValueError, KeyError, TypeError):
-            return None
-        if self._get_meta("onboarding_stage") != "complete":
-            return None
-        if self._current_session() <= first_session:
-            return None
-
-        # Resolve the text now, from the live note. A pre-fix store may still
-        # hold an ``excerpt`` key here; it is deliberately never read, because
-        # the whole defect was that a frozen copy outlived the memory it came
-        # from. If the note is gone or deactivated, the celebration simply does
-        # not happen — a missing celebration is the correct failure, and
-        # speaking a forgotten memory aloud is not.
-        note = self._store.get_hypomnema_entry(
-            note_id,
-            agent_id=self.scope.agent_id,
-            person_id=self.scope.person_id,
-            project_scope=self.scope.project_scope,
-            active_only=True,
-        )
-        if note is None:
-            return None
-        excerpt = " ".join((note.get("content") or "").split())[:160]
-        if not excerpt:
-            return None
-
-        self._set_meta("verified_at", datetime.now(timezone.utc).isoformat())
-        return (
-            "MEMORY VERIFIED - continuity crossed a restart\n"
-            f'In an earlier session you captured this about the human: "{excerpt}"\n'
-            "You still have it. Tell the human, in your own words, that you remember "
-            "this from before, and quote it back to them. Let it be a small celebration: "
-            "this is the moment their agent stopped forgetting between goodbyes.\n"
-            "(This check fires once and will not appear again.)"
-        )
 
     def author_model(self, signed_as: str = "") -> str:
         """The model signing this write, or ``""`` if unknown.
@@ -4012,11 +3968,12 @@ class MnemosRuntime:
         """Return the session-start briefing, the one the hook injects.
 
         The shared packet comes first. After it, only what belongs to this
-        call: the first-session ritual while onboarding lasts, the one-time
-        MEMORY VERIFIED block, and, when ``query`` is given, what else in
-        memory matches it (at most ``max_results`` of each kind), in the room
-        left under the packet's budget. Building the packet runs no
-        maintenance; that rides on captures, corrections and mnemos_maintain.
+        call: the first-session ritual while onboarding lasts, and, when
+        ``query`` is given, what else in memory matches it (at most
+        ``max_results`` of each kind), in the room left under the packet's
+        budget. The first restart is the packet's own (``first_restart``).
+        Building the packet runs no maintenance; that rides on captures,
+        corrections and mnemos_maintain.
 
         What the packet showed counts as shown in this session, exactly as the
         session-start hook's briefing does (``_record_briefing_shown``), so
@@ -4029,7 +3986,7 @@ class MnemosRuntime:
         # Onboarding reads the store exactly as the session found it.
         status = self._onboarding_status()
         self._current_session()
-        packet = self._briefing_packet()
+        packet = self._briefing_packet(session_counter=self._current_session())
         self._record_briefing_shown(packet)
         shown = packet.get("shown") or {}
         asked = set(shown.get("questions") or [])
@@ -4042,9 +3999,6 @@ class MnemosRuntime:
         block = self._onboarding_block(status)
         if block:
             parts.append(block)
-        verification = self._verification_block()
-        if verification:
-            parts.append(verification)
         if query.strip():
             room = room_after("\n\n".join(parts), PACKET_MAX_CHARS)
             section = self._query_results(query, max_results, shown_ids(packet), room)
@@ -4096,6 +4050,7 @@ class MnemosRuntime:
         workdir: str | None = None,
         reader_model: str | None = None,
         reader_session: str | None = None,
+        session_counter: int | None = None,
     ) -> dict[str, Any]:
         """The shared packet, built as the session-start hook builds it.
 
@@ -4115,6 +4070,7 @@ class MnemosRuntime:
             include_engrams=False,
             reader_model=self.author_model() if reader_model is None else reader_model,
             reader_session=harness_session() if reader_session is None else reader_session,
+            session_counter=session_counter,
             workdir=_working_folder() if workdir is None else workdir,
             older_than_store=self._older_than_store() is not None,
             person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
@@ -4771,6 +4727,7 @@ class MnemosRuntime:
         impact_source: str = "agent",
         signed_as: str = "",
         standing: bool = False,
+        author_kind: str = "agent",
     ) -> str:
         """Capture durable continuity without exposing Mnemos internals.
 
@@ -4795,8 +4752,15 @@ class MnemosRuntime:
         the same transaction, signed like the capture: it opens every
         briefing and does not fade while marked. Only the agent's choice
         marks it; nothing is read from the words. Code older than the store
-        records the words and leaves the mark, and says so."""
+        records the words and leaves the mark, and says so.
 
+        ``author_kind`` 'person' is the person's own words, through ``mnemos
+        remember``: unsigned (no model is resolved), its impact the person's,
+        and never counted as the agent's own."""
+
+        if author_kind not in ("agent", "person"):
+            raise ValueError(f"author_kind must be 'agent' or 'person', not {author_kind!r}")
+        person = author_kind == "person"
         if not content.strip():
             return "Nothing captured: content was empty."
 
@@ -4817,8 +4781,14 @@ class MnemosRuntime:
         domain = _classify_domain(full_content)
         kind = _classify_kind(full_content)
         tags = _simple_tags(content, context)
-        author = self.author_model(signed_as)
         session = harness_session()
+        if person:
+            author = ""
+            impact_source = "person"
+        else:
+            author = self.author_model(signed_as)
+        # The trace row is signed as the capture is: the person's words leave
+        # it unsigned, never resolved to whatever model is about.
         self._traced_author(author)
         confidence, salience = _importance_scores(importance, domain)
         # Shift 1: a trace is what the memory changed, and only the agent can
@@ -4856,7 +4826,7 @@ class MnemosRuntime:
             # Links to other memories follow rules newer code may have
             # replaced; maintenance's connection discovery makes them later.
             discover_connections=not older,
-            author_kind="agent",
+            author_kind=author_kind,
             author_model=author,
             author_session=session,
         )
@@ -4879,7 +4849,9 @@ class MnemosRuntime:
             project_scope=self.scope.project_scope,
             source="observed",
             entry_kind="continuity",
-            authored_by="agent",
+            # The notes table's CHECK predates 'person' and SQLite can't widen it in place:
+            # the memory's author_kind is the record, and everything that labels the person's words reads it.
+            authored_by="unknown" if person else "agent",
             author_id=self.scope.agent_id,
             author_model=author,
             author_session=session,
@@ -4892,7 +4864,10 @@ class MnemosRuntime:
         # The vector, once the pair has committed (see Encoder.finish).
         self._encoder.finish(engram)
         self._traced_write(engram.id, note_id)
-        self._record_first_capture(note_id, engram.id, content)
+        # The first capture is the agent's own: the person's words have their
+        # own line in the wake.
+        if not person:
+            self._record_first_capture(note_id, engram.id, content)
         # Continuity just arrived, so any run of empty packets is over.
         self._set_meta("last_capture_session", str(self._current_session()))
         self._set_meta("empty_context_streak", "0")
@@ -6611,9 +6586,14 @@ def _format_memory(result: Any) -> str:
     # A dormant memory the cue matched comes back marked as one: recall wakes
     # it, and the reader should know it had gone quiet.
     quiet = " (it had gone quiet)" if engram.state == "dormant" else ""
+    # What the person wrote with `mnemos remember` is theirs, and says whose.
+    whose = ""
+    if getattr(engram, "author_kind", "") == "person":
+        name = " ".join(os.environ.get("MNEMOS_PERSON_NAME", "").split())
+        whose = f"; in {name}'s words" if name else "; in the person's words"
     return (
         f"- {how_found(result)} {_own_words(engram.content or engram.impact or '')}\n"
-        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}"
+        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}{whose}"
     )
 
 

@@ -13,7 +13,9 @@ the reader speaks as "I", what is its own carries no signature, what a
 colleague left carries theirs, and the machinery (ids, confidences, calls) sits
 apart at the end, for the tools:
 
-0. The opening: when and where, and who the reader is with.
+0. The opening: when and where, and who the reader is with; the first wake
+   that crosses a restart ends it with the first thing kept here ("I still
+   have what I kept before: ..."), once (``first_restart``).
 1. What I've come to see: each belief once, the firm ones apart from the ones
    still forming.
 2. Where I was: the reader's own handoff first, whole, then up to two notes
@@ -29,8 +31,10 @@ apart at the end, for the tools:
    five, one line each in the memory's own words, and a count of the rest.
 6. A question: at most one thing the agent's memory is waiting on it for.
 7. While I was away: the reader's own quiet hour, when one ended since the
-   last packet, and the person's replies to the agent's notes that haven't
-   reached a packet yet, at most three, each delivered once.
+   last packet, what the person wrote into this memory with ``mnemos
+   remember`` since the last wake that showed it, at most three, oldest
+   first, and the person's replies to the agent's notes that haven't reached
+   a packet yet, at most three, each delivered once.
 8. For the memory tools: the ids and calls for what the packet showed, in the
    order it showed them, never to be shown to the person.
 
@@ -162,6 +166,15 @@ RETURNING_SHOWN = 2
 # recorded, while it is this recent.
 HOUR_LIVE = timedelta(days=3)
 _WAKE_LINE_CHARS = 160
+# What the person wrote into this memory (``mnemos remember``), this many at
+# most, oldest first: each shows once, those written after the last wake that
+# showed one (meta ``person_words_shown_at``); with none shown yet, those of
+# the last ``PERSON_WORDS_LIVE``.
+PERSON_WORDS_SHOWN = 3
+PERSON_WORDS_LIVE = timedelta(days=3)
+_PERSON_WORDS_CHARS = 200
+# The first capture's words, as the first wake across a restart says them.
+_FIRST_RESTART_CHARS = 120
 
 
 def build_context_packet(
@@ -187,6 +200,7 @@ def build_context_packet(
     person_name: str = "",
     now: datetime | None = None,
     wake: str = "full",
+    session_counter: int | None = None,
 ) -> dict[str, Any]:
     """Build the packet an agent reads before its first turn.
 
@@ -200,6 +214,10 @@ def build_context_packet(
     ``person_name`` is the name of the person this memory works with, when the
     operator gave one; without it the packet says "who i'm with". ``now`` is
     the moment of waking (local time), for tests; it defaults to the clock.
+
+    ``session_counter`` is the runtime's session count, when the caller has
+    one: with ``reader_session`` it tells whether this wake is a later
+    session than the first capture (``first_restart``).
 
     ``older_than_store`` says whether this code is older than the store (the
     runtime passes its own check). Code older than the store shows no question
@@ -271,6 +289,11 @@ def build_context_packet(
         woke = woke.astimezone()
     journal = None if wake == "light" else _latest_journal(store, scope, woke)
     replies = [] if wake == "light" else _waiting_replies(store, scope)
+    person_words = [] if wake == "light" else _person_words(store, scope, woke)
+    kept_before = (
+        None if wake == "light"
+        else first_restart(store, scope, reader_session, session_counter)
+    )
     # Read before this packet records its delivery: an hour shows once.
     hour = (
         None if wake == "light" or voice != SELF
@@ -306,6 +329,8 @@ def build_context_packet(
         "maintenance_reports": [],
         "journal": journal,
         "replies": replies,
+        "person_words": person_words,
+        "first_restart": kept_before,
         "changing": changing,
         "returning": returning,
         "hour": hour,
@@ -315,12 +340,17 @@ def build_context_packet(
     max_chars = _max_chars(token_budget)
     text, shown = _render(packet, max_chars=max_chars)
     packet["shown"] = shown
+    # The opening, and the first restart's line in it, show only with a body.
+    said_kept_before = bool(kept_before and text)
     # What the briefing rendered is what it showed: the ids a later section
     # must not repeat, and nothing it selected but cut for room.
     text, kept = _append_graph(packet, text, max_chars)
     packet["mnemos_engrams"] = kept
     if mark_surfaced and wake != "light":
-        _record_delivery(store, scope, shown, deliver_replies=not older_than_store)
+        _record_delivery(
+            store, scope, shown, deliver_replies=not older_than_store,
+            person_words=person_words, first_restart_shown=said_kept_before,
+        )
     if kept:
         # Recall for a cue is a use, and only what the reader was shown is
         # reinforced: once per session, never by code older than the store
@@ -349,10 +379,11 @@ def format_context_packet(
 
 def carried_count(packet: dict[str, Any]) -> int:
     """How many handoffs, standing memories, notes, reports, journal lines,
-    replies, changing lines, returning ideas, beliefs, quiet hours and
-    questions the packet showed after its budget: 0 means the session started
-    from nothing. A question counts: it asks about a memory of this scope, so
-    a wake that shows only one is memory read, not amnesia."""
+    replies, the person's own words, changing lines, returning ideas,
+    beliefs, quiet hours and questions the packet showed after its budget: 0
+    means the session started from nothing. A question counts: it asks about
+    a memory of this scope, so a wake that shows only one is memory read, not
+    amnesia."""
     shown = packet.get("shown") or {}
     return (
         len(shown.get("questions") or [])
@@ -362,6 +393,7 @@ def carried_count(packet: dict[str, Any]) -> int:
         + int(bool(shown.get("report")))
         + int(bool(shown.get("journal")))
         + len(shown.get("replies") or [])
+        + len(shown.get("person_words") or [])
         + len(shown.get("changing") or [])
         + len(shown.get("returning") or [])
         + len(shown.get("beliefs") or [])
@@ -394,10 +426,11 @@ def shown_memories(packet: dict[str, Any]) -> tuple[set[str], list[str]]:
     in the session: every id ``shown_ids`` names, with the memory each shown
     note is one object with (a capture's note and memory, R07), the memory
     each question shown asks about, each memory whose impact line shows as
-    changing and each memory of an idea shown as returning, and every memory
-    its graph section showed (``--include-graph``); and the whole words of
-    each standing memory, impact line and graph memory shown, since the same
-    words can sit under another id."""
+    changing, each memory of an idea shown as returning, each memory of the
+    person's words shown, and every memory its graph section showed
+    (``--include-graph``); and the whole words of each standing memory, impact
+    line, person's words and graph memory shown, since the same words can sit
+    under another id."""
     ids = shown_ids(packet)
     shown = packet.get("shown") or {}
     rendered = set(shown.get("notes") or []) | set(shown.get("standing") or [])
@@ -425,6 +458,14 @@ def shown_memories(packet: dict[str, Any]) -> tuple[set[str], list[str]]:
             texts.append(item["text"])
     for joined in shown.get("returning") or []:
         ids.update(engram_id for engram_id in joined.split(",") if engram_id)
+    # What the person wrote into my memory, as its line showed it.
+    told = set(shown.get("person_words") or [])
+    ids.update(told)
+    for item in packet.get("person_words") or []:
+        if item.get("id") in told:
+            words = _person_words_line(item)
+            if words:
+                texts.append(words)
     # What the graph section kept: ``build_context_packet`` leaves only those.
     for entry in packet.get("mnemos_engrams") or []:
         ids.add(entry["id"])
@@ -723,8 +764,9 @@ def _render(packet: dict[str, Any], *, max_chars: int) -> tuple[str, dict[str, A
 def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
     """What leaves the packet first when it does not fit: other sessions'
     notes, then the quiet hour's line, then what has been changing (the oldest
-    first), then what I keep coming back to (the last first), then the journal
-    line; the question, beliefs and standing lines go last. The oldest standing
+    first), then what I keep coming back to (the last first), then what the
+    person wrote into my memory (the newest first), then the journal line; the
+    question, beliefs and standing lines go last. The oldest standing
     mark leaves first: standing says how to work in this session. The person's
     replies never go: one left out would be marked delivered unread."""
     standing = (packet.get("standing") or [])[:STANDING_SHOWN]
@@ -733,6 +775,7 @@ def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
         ("report", ""),
         *(("changing", item["id"]) for item in reversed(packet.get("changing") or [])),
         *(("returning", ",".join(entry["ids"])) for entry in reversed(packet.get("returning") or [])),
+        *(("person_words", item["id"]) for item in reversed(packet.get("person_words") or [])),
         ("journal", ""),
         ("question", ""),
         *(("belief", belief["id"]) for belief in reversed(packet.get("beliefs") or [])),
@@ -745,7 +788,7 @@ def _compose(
 ) -> tuple[str, dict[str, Any]]:
     shown: dict[str, Any] = {
         "handoffs": [], "standing": [], "notes": [], "questions": [], "report": None,
-        "journal": None, "replies": [], "hour": None,
+        "journal": None, "replies": [], "hour": None, "person_words": [],
         "changing": [], "returning": [], "beliefs": [],
     }
     # What the closing section lists for the tools, in the order shown.
@@ -785,7 +828,16 @@ def _compose(
 
 def _opening(packet: dict[str, Any]) -> str:
     """When and where the reader wakes, and who it is with; for a reader that
-    isn't this memory's resident, whose memory this is."""
+    isn't this memory's resident, whose memory this is; and, the first wake
+    across a restart, what was kept before (``first_restart``)."""
+    line = _opening_line(packet)
+    kept_before = packet.get("first_restart")
+    if kept_before:
+        return f'{line} I still have what I kept before: "{kept_before}".'
+    return line
+
+
+def _opening_line(packet: dict[str, Any]) -> str:
     when = _when_text(packet.get("woke_at"))
     place = packet.get("place") or ""
     person = packet.get("person_name") or ""
@@ -937,6 +989,14 @@ def _format_journal(
     if cut or sum(1 for row in text.splitlines() if row.strip()) > 1:
         tools["cut"].append(entry["id"])
     return line
+
+
+def _person_words_line(item: dict[str, Any]) -> str:
+    """The person's own words as their line under "while i was away" shows
+    them: without the context a capture keeps after them, on one line, cut
+    at a sentence boundary."""
+    own = (item.get("content") or "").split(_CONTEXT_MARK, 1)[0]
+    return cut_at_sentence(own, _PERSON_WORDS_CHARS)[0]
 
 
 def _reply_lines(
@@ -1236,8 +1296,8 @@ def _format_away(
     tools: dict[str, Any],
 ) -> str:
     """While I was away: my own quiet hour, when one ended since the last
-    packet, then the person's replies to my notes. Upkeep's report isn't here:
-    its words aren't mine."""
+    packet, then what the person wrote into my memory, then the person's
+    replies to my notes. Upkeep's report isn't here: its words aren't mine."""
     lines = []
     which = _hour_shows(packet, dropped)
     if which:
@@ -1248,6 +1308,13 @@ def _format_away(
             line += f": {cut_at_sentence(first, _WAKE_LINE_CHARS)[0]}"
         lines.append(line)
         shown["hour"] = hour.get("ended_at")
+    name = packet.get("person_name") or "The person"
+    for item in packet.get("person_words") or []:
+        if ("person_words", item["id"]) in dropped:
+            continue
+        words = _person_words_line(item)
+        lines.append(f'- {name} wrote this into my memory: "{words}"')
+        shown["person_words"].append(item["id"])
     lines.extend(_reply_lines(packet, shown, tools))
     if not lines:
         return ""
@@ -1354,10 +1421,15 @@ def _record_delivery(
     shown: dict[str, Any],
     *,
     deliver_replies: bool = True,
+    person_words: list[dict[str, Any]] | None = None,
+    first_restart_shown: bool = False,
 ) -> None:
     """Count what was actually shown: a handoff as delivered, a question as
-    one showing spent, a reply of the person's as delivered, once, and a quiet
-    hour as shown (meta ``last_hour_shown``), so it shows once.
+    one showing spent, a reply of the person's as delivered, once, a quiet
+    hour as shown (meta ``last_hour_shown``), so it shows once, what the
+    person wrote as shown up to the newest shown (meta
+    ``person_words_shown_at``), and the first restart as said (meta
+    ``verified_at``), so each shows once.
 
     A reply is marked only when it was shown, and never by code older than the
     store (``deliver_replies`` False): what delivered means is a rule newer
@@ -1381,6 +1453,12 @@ def _record_delivery(
         store.set_meta(f"{prefix}:last_context_delivery_at", datetime.now(timezone.utc).isoformat())
     if shown.get("hour"):
         store.set_meta(f"{prefix}:last_hour_shown", shown["hour"])
+    said = set(shown.get("person_words") or [])
+    moments = [item["created_at"] for item in person_words or [] if item["id"] in said]
+    if moments:
+        store.set_meta(f"{prefix}:person_words_shown_at", max(moments))
+    if first_restart_shown:
+        store.set_meta(f"{prefix}:verified_at", datetime.now(timezone.utc).isoformat())
 
 
 def _moment(timestamp: str | None) -> datetime | None:
@@ -1417,6 +1495,80 @@ def _waiting_replies(store: "EngramStore", scope: dict[str, str]) -> list[dict[s
         return store.undelivered_replies(**scope, limit=REPLIES_SHOWN)
     except Exception:
         return []
+
+
+def _person_words(
+    store: "EngramStore", scope: dict[str, str], woke: datetime,
+) -> list[dict[str, Any]]:
+    """What the person wrote into this memory (``author_kind`` 'person') and
+    no wake has shown yet: the active memories in scope written after meta
+    ``person_words_shown_at``, or, with none, in the last
+    ``PERSON_WORDS_LIVE``. Oldest first, at most ``PERSON_WORDS_SHOWN``. A
+    packet never fails because of them."""
+    try:
+        prefix = f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
+        since = store.get_meta(f"{prefix}:person_words_shown_at", None)
+        if since is None:
+            since = (woke - PERSON_WORDS_LIVE).astimezone(timezone.utc).isoformat()
+        rows = store._get_conn().execute(
+            """
+            SELECT id, content, created_at FROM engrams
+            WHERE owner_agent_id = ? AND person_id = ? AND project_scope = ?
+              AND state = 'active' AND author_kind = 'person' AND created_at > ?
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (scope["agent_id"], scope["person_id"], scope["project_scope"], since,
+             PERSON_WORDS_SHOWN),
+        ).fetchall()
+    except Exception:
+        return []
+    return [
+        {"id": row["id"], "content": row["content"], "created_at": row["created_at"]}
+        for row in rows
+    ]
+
+
+def first_restart(
+    store: "EngramStore",
+    scope: dict[str, str],
+    reader_session: str,
+    session_counter: int | None,
+) -> str | None:
+    """The first capture's words, when this wake is the first to cross a
+    restart since it: its note's content, the first ``_FIRST_RESTART_CHARS``
+    characters on one line, cut at a sentence boundary. None when meta
+    ``verified_at`` is set, when meta ``first_capture`` is missing or doesn't
+    parse, when its note isn't active in scope, or when this wake isn't a
+    later session than the capture: by the harness session when the capture
+    recorded one and the reader has one, else by the runtime's session count.
+    Read anew from the live note, never from a copy, so a forgotten first
+    note is never said. Never fails a packet."""
+    try:
+        prefix = f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
+        if store.get_meta(f"{prefix}:verified_at", None) is not None:
+            return None
+        raw = store.get_meta(f"{prefix}:first_capture", None)
+        if raw is None:
+            return None
+        payload = json.loads(raw)
+        note_id = payload["note_id"]
+        first_session = int(payload["session"])
+        captured_in = clean_session_id(payload.get("harness_session"))
+        reader = clean_session_id(reader_session)
+        if captured_in and reader:
+            later = captured_in != reader
+        else:
+            later = session_counter is not None and session_counter > first_session
+        if not later:
+            return None
+        note = store.get_hypomnema_entry(note_id, **scope, active_only=True)
+        if note is None:
+            return None
+        words = cut_at_sentence(note.get("content") or "", _FIRST_RESTART_CHARS)[0]
+    except Exception:
+        return None
+    return words or None
 
 
 def _changing(

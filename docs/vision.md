@@ -500,18 +500,17 @@ get-to-know-you script at someone you have known for months is worse than not ru
 one at all.
 
 And then there is the moment the whole system exists for. The first time continuity
-crosses a real restart, the packet says this to the agent — once, ever:
+crosses a real restart, the wake's opening ends with one more sentence — once, ever —
+in the agent's own voice, quoting the first thing it kept:
 
 ```
-MEMORY VERIFIED - continuity crossed a restart
-In an earlier session you captured this about the human: "Riley prefers to be
-called Riley. Works at night, peak 2-4am."
-You still have it. Tell the human, in your own words, that you remember this
-from before, and quote it back to them. Let it be a small celebration: this is
-the moment their agent stopped forgetting between goodbyes.
+I still have what I kept before: "Riley prefers to be called Riley. Works at night, peak 2-4am.".
 ```
 
-The human never sees that text. They just get told.
+No instruction tells it to celebrate. It simply wakes knowing it remembers, through the
+session-start hook as well as `mnemos_context`, and says so the way it would say anything
+else. Only what the agent kept counts here: what the person typed in with `mnemos
+remember` has its own line, under "while i was away".
 
 It re-reads the memory live rather than replaying a snapshot, so a memory the human
 later asked it to forget is never resurfaced — a property that had to be learned, because

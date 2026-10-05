@@ -217,7 +217,8 @@ def test_only_this_sessions_introduction_signs_its_writes(tmp_path, monkeypatch)
     finally:
         first.close()
 
-    # Another process of the same session: a CLI capture, as a Bash tool runs it.
+    # Another process of the same session: a CLI capture, as Claude Code's
+    # Bash tool runs it (CLAUDECODE set in the agent's own shell).
     home = tmp_path / "home"
     (home / ".mnemos").mkdir(parents=True)
     proc = subprocess.run(
@@ -225,10 +226,13 @@ def test_only_this_sessions_introduction_signs_its_writes(tmp_path, monkeypatch)
          "Written from another process of this session."],
         capture_output=True, text=True, timeout=60,
         env={"HOME": str(home), "PATH": "/usr/bin:/bin", "MNEMOS_DISABLE_DOTENV": "1",
-             "PYTHONPATH": ":".join(sys.path), "CLAUDE_CODE_SESSION_ID": SESSION},
+             "PYTHONPATH": ":".join(sys.path), "CLAUDE_CODE_SESSION_ID": SESSION,
+             "CLAUDECODE": "1"},
     )
     assert proc.returncode == 0, proc.stderr
-    from_cli = _captured_id(proc.stdout)
+    said = re.fullmatch(r"Remembered, as the agent's own words: (engram_\w+)\n", proc.stdout)
+    assert said, proc.stdout
+    from_cli = said.group(1)
 
     _as_session(monkeypatch, tmp_path, "sess-0c9d77e2-aa10")
     stranger = _runtime(db)
