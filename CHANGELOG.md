@@ -2,6 +2,14 @@
 
 ## 0.3.1 (unreleased)
 
+### Meaning search asks the network nothing
+
+Loading the local model from files already on the machine still reached the
+network: with huggingface_hub 1.33 it fetched the Hub's list of agent
+harnesses, to name the agent in its user-agent. The load now runs with the
+Hub libraries offline and their telemetry off. `mnemos embeddings download`
+is still the one step that uses the network.
+
 ### The substrate, retired
 
 The cognitive substrate (`mnemos substrate-tick` and mnemos/substrate) is

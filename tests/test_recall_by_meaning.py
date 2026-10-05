@@ -25,6 +25,7 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import re
 import sqlite3
 import subprocess
@@ -590,6 +591,42 @@ def test_an_older_sentence_transformers_loads_the_cached_copy_by_its_path(monkey
 
     assert asked == [("sentence-transformers/all-MiniLM-L6-v2", {"local_files_only": True})]
     assert loaded == ["/cache/sentence-transformers/all-MiniLM-L6-v2"]
+
+
+def test_the_hub_libraries_are_offline_while_the_model_loads(monkeypatch):
+    """local_files_only keeps a load from downloading, not from the network:
+    loading the cached model with huggingface_hub 1.33 fetched the Hub's list
+    of agent harnesses (2026-10-05). The load runs with the Hub offline and
+    its telemetry off, and both are put back after, for a download."""
+    seen = []
+    module = types.ModuleType("sentence_transformers")
+    hub = types.ModuleType("huggingface_hub")
+    constants = types.ModuleType("huggingface_hub.constants")
+    constants.HF_HUB_OFFLINE = False
+    constants.HF_HUB_DISABLE_TELEMETRY = False
+    hub.constants = constants
+
+    class SentenceTransformer:
+        def __init__(self, name, **kwargs):
+            seen.append((
+                constants.HF_HUB_OFFLINE, constants.HF_HUB_DISABLE_TELEMETRY,
+                os.environ.get("HF_HUB_OFFLINE"), os.environ.get("HF_HUB_DISABLE_TELEMETRY"),
+                kwargs.get("local_files_only"),
+            ))
+
+    module.SentenceTransformer = SentenceTransformer
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", hub)
+    monkeypatch.setitem(sys.modules, "huggingface_hub.constants", constants)
+    monkeypatch.delenv("HF_HUB_OFFLINE", raising=False)
+    monkeypatch.setenv("HF_HUB_DISABLE_TELEMETRY", "0")
+
+    ei._load_local_model("all-MiniLM-L6-v2")
+
+    assert seen == [(True, True, "1", "1", True)]
+    assert (constants.HF_HUB_OFFLINE, constants.HF_HUB_DISABLE_TELEMETRY) == (False, False)
+    assert "HF_HUB_OFFLINE" not in os.environ
+    assert os.environ["HF_HUB_DISABLE_TELEMETRY"] == "0"
 
 
 def test_downloading_is_one_explicit_step(monkeypatch, capsys):

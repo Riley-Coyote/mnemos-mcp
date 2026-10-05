@@ -19,8 +19,9 @@ The local model loads from the files already on this machine and nowhere else
 (``local_files_only``). Loading it used to ask the Hugging Face Hub about it
 first: on 2026-09-26 `mnemos doctor` sat over two minutes in an SSL read while
 loading a model that was already cached, and every session's first meaning
-search makes the same load. Downloading is one explicit step,
-``mnemos embeddings download`` (``download_local_model``).
+search makes the same load. Nor does a load reach the network another way:
+the Hub libraries are offline while it runs (``_hub_offline``). Downloading
+is one explicit step, ``mnemos embeddings download`` (``download_local_model``).
 
 Recall's meaning index is ``passage_vectors``: each memory recall can return,
 and each handoff, cut into passages (``passages``) with a vector for each, and
@@ -48,7 +49,8 @@ import struct
 import time
 import urllib.request
 import urllib.error
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Collection, Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -596,13 +598,56 @@ def _hub_repo(model_name: str) -> str:
     return model_name if "/" in model_name else f"sentence-transformers/{model_name}"
 
 
+_HUB_SWITCHES = ("HF_HUB_OFFLINE", "HF_HUB_DISABLE_TELEMETRY")
+
+
+@contextmanager
+def _hub_offline() -> Iterator[None]:
+    """The Hugging Face libraries offline, telemetry off, for one load.
+
+    ``local_files_only`` keeps a load from downloading, not from the network:
+    on 2026-10-05, loading the model with huggingface_hub 1.33 fetched the
+    Hub's list of agent harnesses, to name the agent in its user-agent. Offline
+    it asks nothing. Both switches are put back afterwards, in the library and
+    the environment, so ``mnemos embeddings download`` and anything else in
+    the process find them as they were.
+    """
+    try:
+        from huggingface_hub import constants
+    except ImportError:  # no Hub library, nothing to keep offline
+        yield
+        return
+    held = {name: getattr(constants, name, False) for name in _HUB_SWITCHES}
+    held_env = {name: os.environ.get(name) for name in _HUB_SWITCHES}
+    for name in _HUB_SWITCHES:
+        setattr(constants, name, True)
+        os.environ[name] = "1"
+    try:
+        yield
+    finally:
+        for name in _HUB_SWITCHES:
+            setattr(constants, name, held[name])
+            if held_env[name] is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = held_env[name]
+
+
 def _load_local_model(model_name: str) -> Any:
     """The local model, from files already on this machine, never the network.
 
     A hanging network must not block recall, health or doctor, and the load
     happens on a session's first meaning search. A model that is not on disk
-    fails at once, and semantic recall reports that it is off and why.
+    fails at once, and semantic recall reports that it is off and why. The
+    Hub libraries are offline while it loads (``_hub_offline``).
     """
+    with _hub_offline():
+        return _load_cached_model(model_name)
+
+
+def _load_cached_model(model_name: str) -> Any:
+    """The model from its local files, by name, or by its path on a
+    sentence-transformers too old to load by name from local files only."""
     from sentence_transformers import SentenceTransformer
 
     # transformers' "Loading weights" bar would print into doctor, search and
