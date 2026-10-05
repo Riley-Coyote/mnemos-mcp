@@ -2,6 +2,20 @@
 
 ## 0.3.1 (unreleased)
 
+### The substrate, retired
+
+The cognitive substrate (`mnemos substrate-tick` and mnemos/substrate) is
+retired. Its handlers had a model write dreams, wanderings, insights and
+reflections into the agent's memory, and could change a belief's
+confidence: words that weren't the agent's, in a memory that is the agent's
+own or nothing. It was already off every schedule. Installing or
+uninstalling the background jobs still removes a tick an earlier install
+scheduled, and the quarantine repair still moves what it wrote out of a
+scope. Advanced setup no longer asks whether it should run; a setup saved
+waiting on that answer moves on to the provider question. What it reached
+for, an inner life between sessions, is the quiet hours', in the agent's
+own words.
+
 ### The person's own words, and the first restart
 
 What a person types with `mnemos remember` is theirs: kept unsigned as the

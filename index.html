@@ -336,7 +336,7 @@ footer a:hover{color:var(--text-soft)}
     </div>
   </div>
 </div><div class="container">
-  <p>Your memory lives on your machine in a SQLite database. It&rsquo;s yours&mdash;not locked inside any vendor. Move it to another computer, back it up, inspect it directly. The cognitive substrate runs between sessions, so your agent isn&rsquo;t just remembering&mdash;it&rsquo;s consolidating, connecting, and reflecting on what it knows even when you&rsquo;re not talking to it.</p>
+  <p>Your memory lives on your machine in a SQLite database. It&rsquo;s yours&mdash;not locked inside any vendor. Move it to another computer, back it up, inspect it directly.</p>
 </div></section>
 
 <section class="section fade" id="s-origin"><div class="container">
@@ -633,12 +633,6 @@ footer a:hover{color:var(--text-soft)}
   </div>
 </div><div class="container">
 
-  <h3>Cognitive substrate</h3>
-  <p>An event-driven layer that runs between conversations. The entity isn&rsquo;t idle between sessions&mdash;it&rsquo;s thinking. Six handlers process different types of cognitive activity:</p>
-  <p><strong>Dreaming</strong> takes softened memories and forges creative cross-domain associations&mdash;connections that wouldn&rsquo;t emerge through logical analysis. <strong>Wandering</strong> follows connection chains during silence, exploring the graph without a specific query, sometimes surfacing forgotten memories. <strong>Surprise</strong> fires when contradictions surface during consolidation, triggering curiosity pursuit and deeper investigation.</p>
-  <p><strong>Reflection</strong> examines challenged beliefs in depth, weighing evidence from multiple engrams. <strong>Insight</strong> discovers connections between previously unlinked memories&mdash;the &ldquo;aha&rdquo; moment when two distant regions of the graph suddenly connect. <strong>Initiation</strong> fires when salience accumulates above a threshold, prompting the agent to reach out to the user without being asked.</p>
-  <p>Five cognitive modulators&mdash;arousal, resolution, openness, selection, and social drive&mdash;control the intensity of each handler. High openness means wider, more creative dreaming. High selection means only the most salient events fire handlers. These modulators are the bridge between the emotional state and the cognitive processing&mdash;they translate feeling into thinking.</p>
-
   <h3>Metamemory</h3>
   <p>Most agents answer every question with equal confidence. An agent with metamemory can say: <em>I&rsquo;m strong here. I&rsquo;m thin there. My memories about that are low confidence.</em></p>
   <p>Metamemory is computed from the graph. Domain coverage comes from engram density, confidence averages, lesson counts, and belief presence. An external observer&mdash;a separate model&mdash;periodically audits the memory for unsupported beliefs, blind spots, and miscalibrated confidence. Findings become memories the agent can process. The system knows what it knows, and knows what it doesn&rsquo;t.</p>
@@ -672,7 +666,7 @@ footer a:hover{color:var(--text-soft)}
 
   <p>Every memory tool is <strong>gated</strong> behind onboarding. If the agent tries to remember, recall, or do anything before setup is complete, Mnemos redirects it: <em>&ldquo;call mnemos_setup to get started.&rdquo;</em> The agent figures it out from there.</p>
 
-  <p>Setup is a conversation between you and your agent. Eight steps, each building on the last:</p>
+  <p>Setup is a conversation between you and your agent. Seven steps, each building on the last:</p>
 
   <div class="onboard-flow">
     <div class="onboard-step">
@@ -713,15 +707,8 @@ footer a:hover{color:var(--text-soft)}
     <div class="onboard-step">
       <div class="onboard-num">6</div>
       <div class="onboard-body">
-        <div class="onboard-title">Inner life <span class="onboard-opt">optional</span></div>
-        <div class="onboard-detail">Enable the cognitive substrate&mdash;dreaming, wandering thoughts, reflection between sessions. Costs a small amount of LLM credits, but it&rsquo;s the difference between a memory system and a mind.</div>
-      </div>
-    </div>
-    <div class="onboard-step">
-      <div class="onboard-num">7</div>
-      <div class="onboard-body">
         <div class="onboard-title">LLM provider</div>
-        <div class="onboard-detail">Paste an OpenRouter key (or any supported provider). Used for classifying connections, generating reflections, and the inner life features.</div>
+        <div class="onboard-detail">Paste an OpenRouter key (or any supported provider). Used for classifying connections and generating reflections.</div>
       </div>
     </div>
     <div class="onboard-step onboard-final">
@@ -761,13 +748,6 @@ footer a:hover{color:var(--text-soft)}
       <div class="include-body">
         <div class="include-name">Consolidation Daemon</div>
         <div class="include-desc">Shallow cycles (rule-based decay, connection discovery) and deep cycles (LLM-mediated softening, belief review, reflection)</div>
-      </div>
-    </div>
-    <div class="include-card">
-      <div class="include-icon">&#9679;</div>
-      <div class="include-body">
-        <div class="include-name">Cognitive Substrate</div>
-        <div class="include-desc">Event-driven inner life: dreaming, wandering, surprise, reflection, insight, and initiation handlers. Five modulators shape cognition between sessions.</div>
       </div>
     </div>
     <div class="include-card">

@@ -52,7 +52,6 @@ Items that haven't been touched in 3+ days but are still open:
 - Memories created yesterday: [count]
 - Beliefs updated: [count]
 - Last consolidation: [timestamp]
-- Last substrate tick: [timestamp]
 
 ## Cross-Agent Activity
 - [Other agent activity summaries, if multi-agent setup]

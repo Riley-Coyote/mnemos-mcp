@@ -685,8 +685,7 @@ def test_installing_removes_the_substrate_job_an_earlier_install_left(tmp_path, 
     }
 
 
-@pytest.mark.parametrize("command", ["index", "substrate-tick"])
-def test_running_a_model_writer_by_hand_says_so(tmp_path, monkeypatch, capsys, command):
+def test_running_the_indexer_by_hand_says_so(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     class _Stub:
@@ -696,13 +695,9 @@ def test_running_a_model_writer_by_hand_says_so(tmp_path, monkeypatch, capsys, c
         def run(self):
             return {}
 
-        def tick(self):
-            return {}
-
     monkeypatch.setattr("mnemos.indexer.session_indexer.SessionIndexer", _Stub)
-    monkeypatch.setattr("mnemos.substrate.tick.Substrate", _Stub)
 
-    assert main(["--db-path", str(tmp_path / "m.db"), "--agent-id", "nova", command]) == 0
+    assert main(["--db-path", str(tmp_path / "m.db"), "--agent-id", "nova", "index"]) == 0
     out = capsys.readouterr().out
     assert "in a model's words, not the agent's" in out, out
 
@@ -950,68 +945,6 @@ def test_the_advanced_tools_record_the_agents_own_words(tmp_path, monkeypatch):
             server._store.close()
         if simple._runtime is not None:
             simple._runtime.close()
-
-
-def test_what_the_substrate_writes_is_a_tools(tmp_path, monkeypatch):
-    """Each substrate writer's memories are a tool's, so the quarantine can
-    move them as it moves the indexer's."""
-    home = tmp_path / "home"
-    (home / ".mnemos").mkdir(parents=True)
-    monkeypatch.setenv("HOME", str(home))
-    from mnemos.substrate.config import SubstrateConfig
-    from mnemos.substrate.events import EventType, SubstrateEvent
-    from mnemos.substrate.handlers import dreaming, initiation, insight, surprise, wandering
-    from mnemos.substrate.introspection_pass import _encode_audit
-    from mnemos.substrate.modulators import ModulatorState
-
-    class _Model:
-        """Answers every handler's question at once."""
-
-        def structured_complete(self, system="", user="", temperature=0.7, **_):
-            return json.dumps({
-                "insight": "The ledger and the ferry keep the same clock.",
-                "pattern": "Everything here runs on the harbour's timetable.",
-                "dream": "A ledger floating out on the morning ferry.",
-                "reflection": "The ferry schedule moved and the ledger did not.",
-                "expectation_violated": "that timetables stay put",
-                "thought": "What else keeps harbour time?",
-                "origin": "the ledger",
-                "significance": "Schedules tie the work together.",
-            })
-
-    db = tmp_path / "substrate.db"
-    store = EngramStore(str(db))
-    try:
-        vivid = Engram(content="Riley keeps the harbour ledger in ledger/2026.csv.",
-                       accessibility=0.95, strength=0.95)
-        fading = Engram(content="The ferry left at seven that spring.",
-                        accessibility=0.05, strength=0.2)
-        for engram in (vivid, fading):
-            engram.author_kind = "agent"
-            store.save_engram(engram)
-        before = {row["id"] for row in _rows(db, "SELECT id FROM engrams")}
-        config = SubstrateConfig(agent_id="default", db_path=str(db))
-        model, calm = _Model(), ModulatorState()
-        insight.handle(SubstrateEvent(EventType.CONNECTION_DISCOVERED, {
-            "from_engram_id": vivid.id, "to_engram_id": fading.id}), config, calm, store, model)
-        initiation.handle(SubstrateEvent(EventType.SALIENCE_ACCUMULATED),
-                          config, calm, store, model)
-        dreaming.handle(SubstrateEvent(EventType.MEMORY_SOFTENED, {"engram_id": fading.id}),
-                        config, calm, store, model)
-        surprise.handle(SubstrateEvent(EventType.SURPRISE_DETECTED, {
-            "engram_id": vivid.id, "surprise_score": 0.7}), config, calm, store, model)
-        wandering.handle(SubstrateEvent(EventType.SILENCE_EXTENDED), config, calm, store, model)
-        _encode_audit({"mode": "heuristic", "pattern_score": 0.2, "reaching_score": 0.8,
-                       "assessment": "Reaching."}, config, store)
-    finally:
-        store.close()
-
-    written = [row for row in _rows(db, "SELECT * FROM engrams") if row["id"] not in before]
-    kinds = {row["content"].split("]", 1)[0].lstrip("["): row.get("author_kind") for row in written}
-    assert kinds == {
-        "insight": "tool", "initiation": "tool", "dream": "tool",
-        "surprise": "tool", "wandering": "tool", "introspection": "tool",
-    }
 
 
 def test_the_openclaw_schedules_leave_the_substrate_tick_out(tmp_path):

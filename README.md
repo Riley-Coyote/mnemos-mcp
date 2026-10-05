@@ -413,11 +413,11 @@ No external agent runner is required.
 | `maintain` | decay and connection discovery | every 4h |
 | `maintain-deep` | softening, belief review, reflection | daily at 03:00 |
 
-Neither the substrate tick nor the transcript indexer is scheduled: both write
-memories in a model's words, not the agent's. They are recorded as a tool's,
-kept out of identity, beliefs and lessons, and `mnemos repair
-quarantine-tool-written` moves them out of recall. Both still run by hand.
-Installing removes a substrate tick an earlier install scheduled.
+The transcript indexer is not scheduled: it writes memories in a model's
+words, not the agent's. They are recorded as a tool's, kept out of identity,
+beliefs and lessons, and `mnemos repair quarantine-tool-written` moves them
+out of recall. It still runs by hand. The substrate is retired; installing
+removes a substrate tick an earlier install scheduled.
 
 Preview before committing to anything:
 
@@ -435,24 +435,6 @@ On macOS, install Mnemos outside `~/Documents`, `~/Desktop` and `~/Downloads`.
 Scheduled jobs do not inherit Full Disk Access, so a Mnemos living in one of
 those folders runs fine by hand and fails on every scheduled run. `mnemos
 daemon install` warns when it detects this.
-
-### One Explicit Cycle
-
-Use `substrate-tick` when you want a single cognitive substrate cycle:
-
-```bash
-mnemos substrate-tick
-```
-
-With explicit storage and identity:
-
-```bash
-MNEMOS_AGENT_ID=nova MNEMOS_DB_PATH=~/.mnemos/nova.db mnemos substrate-tick
-```
-
-The substrate can run local deterministic passes without a model provider.
-Configured model providers enable richer deep maintenance, softening, belief
-review, reflection, dreaming, and wandering.
 
 ### Dedicated Model Providers
 
@@ -530,7 +512,6 @@ mnemos search "debugging strategies"  # Search memories
 mnemos inspect <engram-id>            # Inspect memory details
 mnemos consolidate                    # Local deterministic maintenance
 mnemos consolidate --deep             # Deep maintenance when a provider exists
-mnemos substrate-tick                 # Run one substrate cycle
 ```
 
 Workspace, identity, and automation commands:

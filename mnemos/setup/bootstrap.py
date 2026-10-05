@@ -63,11 +63,6 @@ MNEMOS_MODEL={model}
 
 # ── Embedding Support (optional) ──
 # GOOGLE_API_KEY=your-key-here
-
-# ── Substrate Configuration ──
-# MNEMOS_SUBSTRATE_DECAY_RATE=0.01
-# MNEMOS_SUBSTRATE_BASE_TEMPERATURE=0.5
-# MNEMOS_SUBSTRATE_MAX_ENGRAMS_PER_TICK=200
 """
 
 

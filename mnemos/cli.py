@@ -156,9 +156,6 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.add_argument("--agent", default="main", help="OpenClaw agent ID")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be registered")
 
-    # ── substrate-tick ──
-    sub.add_parser("substrate-tick", help="Run one cognitive substrate tick")
-
     # ── index ──
     p_index = sub.add_parser("index", help="Run session indexer")
     p_index.add_argument("--backfill", action="store_true", help="Index last 24h of sessions")
@@ -681,7 +678,6 @@ def main(argv: list[str] | None = None) -> int:
         "export": _cmd_export,
         "setup-openclaw": _cmd_setup_openclaw,
         "bootstrap": _cmd_bootstrap,
-        "substrate-tick": _cmd_substrate_tick,
         "index": _cmd_index,
         "bridge": _cmd_bridge,
         "remember": _cmd_remember,
@@ -1940,38 +1936,15 @@ def _cmd_setup_openclaw(args: argparse.Namespace) -> int:
     return 0
 
 
-# Said whenever a command that writes memories in a model's words runs. Neither
-# is scheduled any more (see setup/scheduler.py); running one by hand works.
+# Said whenever the command that writes memories in a model's words runs (the
+# transcript indexer). It isn't scheduled (see setup/scheduler.py); running it
+# by hand works.
 _MODEL_TEXT_NOTICE = (
     "Note: {writer} memories in a model's words, not the agent's. They are "
     "recorded as a tool's, so they stay out of the agent's identity, beliefs "
     "and lessons, and 'mnemos repair quarantine-tool-written' moves them out "
     "of recall."
 )
-
-
-def _cmd_substrate_tick(args: argparse.Namespace) -> int:
-    """Run one cognitive substrate tick."""
-    try:
-        from .substrate.tick import Substrate
-        from .substrate.config import SubstrateConfig
-
-        config = SubstrateConfig(
-            agent_id=_resolve_agent_id(args),
-            db_path=_resolve_db_path(args),
-        )
-        substrate = Substrate(config)
-        print(f"Running substrate tick (agent: {_resolve_agent_id(args)})...")
-        print(_MODEL_TEXT_NOTICE.format(writer="the substrate's handlers write"))
-        result = substrate.tick()
-        print(f"Tick complete: {json.dumps(result, indent=2, default=str)}")
-        return 0
-    except ImportError as e:
-        print(f"Substrate not available: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Substrate tick failed: {e}", file=sys.stderr)
-        return 1
 
 
 def _cmd_index(args: argparse.Namespace) -> int:

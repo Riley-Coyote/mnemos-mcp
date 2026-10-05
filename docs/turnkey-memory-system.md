@@ -53,8 +53,7 @@ The agent should walk the human through:
 3. Important starting context and boundaries.
 4. Active projects.
 5. Optional import path for prior notes or transcripts.
-6. Whether the substrate should run in the background.
-7. Optional LLM provider for richer memory processing.
+6. Optional LLM provider for richer memory processing.
 
 The setup wizard seeds:
 
@@ -80,7 +79,7 @@ flowchart LR
   FM --> H["Hypomnema"]
   H --> M["Mnemos graph"]
   M --> I["Identity profile"]
-  M --> S["Substrate"]
+  M --> S["Upkeep"]
   R["Review queue"] --> FM
   R --> H
 ```

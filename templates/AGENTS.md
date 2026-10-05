@@ -24,7 +24,7 @@ Use Mnemos in this order:
 1. **Functional memory** is the live working set for the current session, task, correction, commitment, or open question.
 2. **Hypomnema** is scoped continuity for this human/project relationship. It survives sessions and can be revised before promotion.
 3. **Mnemos engrams** are the durable long-term memory graph. They form connections, beliefs, decay, and reconsolidate through use.
-4. **Substrate** is optional background maintenance: decay, reflection, consolidation, and review cues.
+4. **Upkeep** is optional background maintenance: decay, reflection, consolidation, and review cues.
 
 ## Session Protocol
 

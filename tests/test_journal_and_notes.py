@@ -806,8 +806,6 @@ def _store_with_a_life(tmp_path) -> Path:
 
 def test_no_maintenance_pass_changes_a_journal_or_note_row(tmp_path, monkeypatch, capsys):
     from mnemos.store import embedding_index as ei
-    from mnemos.substrate.config import SubstrateConfig
-    from mnemos.substrate.tick import Substrate
 
     monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
     db = _store_with_a_life(tmp_path)
@@ -844,17 +842,10 @@ def test_no_maintenance_pass_changes_a_journal_or_note_row(tmp_path, monkeypatch
     finally:
         rt.close()
 
-    # The scheduled job, deep, and the cognitive tick, with and without a model.
+    # The scheduled job, and deep.
     for argv in (["consolidate"], ["consolidate", "--deep"]):
         assert main(["--db-path", str(db), *SCOPE_ARGS, *argv]) == 0
     capsys.readouterr()
-    for client in (None, _Provider()):
-        substrate = Substrate(SubstrateConfig(agent_id="nova", db_path=str(db)))
-        try:
-            substrate.llm_client = client
-            substrate.tick()
-        finally:
-            substrate.store.close()
     assert main(["doctor", "--db-path", str(db), *SCOPE_ARGS]) == 0
     _hook(db, _home(tmp_path), scope_args=tuple(SCOPE_ARGS))
 

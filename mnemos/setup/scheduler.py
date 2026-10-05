@@ -4,11 +4,12 @@ Memory that only works while a session happens to be open is not a memory
 system. Consolidation, decay and connection discovery are what make
 continuity feel alive between conversations — and until now the only way to
 schedule them was OpenClaw's cron templates, which most users do not have.
-The substrate tick and the transcript indexer are not scheduled: both write
-memories in a model's words (see ``RETIRED_JOBS``).
+The transcript indexer is not scheduled: it writes memories in a model's
+words. The substrate tick, which did too, is retired (see ``RETIRED_JOBS``).
 
-None of that work was ever OpenClaw-specific. ``mnemos consolidate``,
-``mnemos substrate-tick`` and ``mnemos index`` are plain CLI commands;
+None of that work was ever OpenClaw-specific. ``mnemos consolidate``
+and ``mnemos index`` are plain CLI commands (``mnemos substrate-tick`` was
+retired in 0.4.0);
 only the *scheduling* was bound to OpenClaw. This module supplies the
 missing half with whatever the host actually provides: launchd on macOS,
 systemd user timers on Linux, and plain crontab where systemd is absent.
@@ -88,7 +89,7 @@ JOBS: tuple[SchedulerJob, ...] = (
 # The substrate tick's handlers write memories in a model's words whenever a
 # provider key is present: dreams, insights, wanderings. Those are not the
 # agent's words, and a memory is the agent's own or it is nothing to build an
-# identity on. `mnemos substrate-tick` still runs by hand, and says so.
+# identity on. `mnemos substrate-tick` was retired in 0.4.0.
 RETIRED_JOBS: tuple[SchedulerJob, ...] = (
     SchedulerJob(
         name="substrate-tick",

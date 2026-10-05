@@ -36,9 +36,9 @@ _CRON_JOBS = [
     # ~7,058 engrams against 13 deliberate captures and buried the continuity
     # layer — and this generator must not contradict it. Indexing stays
     # available as the explicit `mnemos index` command.
-    # No substrate-tick job either: its handlers write memories in a model's
-    # words, not the agent's (setup/scheduler.py retires it the same way). It
-    # stays available as the explicit `mnemos substrate-tick` command.
+    # No substrate-tick job either: its handlers wrote memories in a model's
+    # words, not the agent's (setup/scheduler.py retires it the same way).
+    # `mnemos substrate-tick` was retired in 0.4.0.
     {
         "name": "memory-maintenance",
         "schedule": "0 */6 * * *",

@@ -100,54 +100,6 @@ BOOTSTRAP_STRENGTH = 0.7
 BOOTSTRAP_STABILITY = 0.3
 CONFIDENCE_THRESHOLD = 0.3  # Below this, don't act on memory
 
-# Belief tier boundaries (descending order)
-# Crossing these thresholds triggers events in the substrate layer.
-BELIEF_TIERS = (0.7, 0.5, 0.3)
-
-
-class BeliefChangeKind(str, Enum):
-    """Result of classifying a belief confidence change against tier boundaries."""
-    CONFIRMED = "confirmed"        # Upward crossing — belief strengthened past a tier
-    CONTRADICTED = "contradicted"  # Downward crossing — belief eroded past a tier
-    NO_CROSSING = "no_crossing"    # Change stayed within the same tier band
-
-
-def classify_belief_change(
-    previous_confidence: float,
-    current_confidence: float,
-    tiers: tuple[float, ...] = BELIEF_TIERS,
-) -> BeliefChangeKind:
-    """Classify a belief confidence change against tier boundaries.
-
-    Only tier crossings produce CONFIRMED or CONTRADICTED — small changes
-    within a tier band return NO_CROSSING. This prevents cascade loops
-    where every minor revision triggers a reflection.
-
-    The critical semantic distinction:
-      - Downward crossing (previous >= tier > current) -> CONTRADICTED
-        Genuine erosion. Should trigger reflection.
-      - Upward crossing (previous < tier <= current) -> CONFIRMED
-        Belief strengthening. Should NOT trigger challenge/reflection.
-
-    Bug this fixes: previously, both directions fired CONTRADICTED,
-    creating a death spiral where strengthening a belief triggered
-    reflection that weakened it.
-
-    Args:
-        previous_confidence: Belief confidence at last check.
-        current_confidence: Belief confidence now.
-        tiers: Tier boundary thresholds (descending).
-
-    Returns:
-        BeliefChangeKind indicating what happened.
-    """
-    for tier in tiers:
-        if previous_confidence >= tier > current_confidence:
-            return BeliefChangeKind.CONTRADICTED
-        if previous_confidence < tier <= current_confidence:
-            return BeliefChangeKind.CONFIRMED
-    return BeliefChangeKind.NO_CROSSING
-
 
 # Canonical default agent scope. Library code must never default to a
 # specific agent's name — scope leaks between agents are identity

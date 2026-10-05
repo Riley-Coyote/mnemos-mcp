@@ -89,7 +89,7 @@ flowchart LR
   FM --> H["Hypomnema<br/>{hyp_count} scoped entries"]
   H --> M["Mnemos graph<br/>{engram_count} engrams"]
   M --> I["Identity profile<br/>{belief_count} active beliefs"]
-  M --> S["Substrate<br/>decay, reflection, consolidation"]
+  M --> S["Upkeep<br/>decay, reflection, consolidation"]
   R["Review queue<br/>{review_count} items"] --> FM
   R --> H
   H -. explicit promotion .-> M

@@ -19,7 +19,6 @@ What systems to monitor and what "healthy" looks like.
 |-------|---------|---------|----------|
 | Active engrams | > 10 | < 10 | 0 |
 | Last consolidation | < 8h ago | < 24h ago | > 24h ago |
-| Last substrate tick | < 8h ago | < 24h ago | > 24h ago |
 | Last session indexed | < 2h ago | < 6h ago | > 6h ago |
 | Database size | < 500MB | < 1GB | > 1GB |
 

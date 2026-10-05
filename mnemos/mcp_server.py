@@ -101,7 +101,7 @@ ONBOARDING_PROMPTS = {
         "2. Hypomnema: scoped continuity that survives sessions and can still be revised.\n"
         "3. Mnemos: the long-term graph of engrams, beliefs, decay, and reconsolidation.\n\n"
         "During setup I'll learn the agent identity, the human relationship, active projects, "
-        "review preferences, and whether the background substrate should run."
+        "and review preferences."
     ),
     1: "What should this agent be called?",
     2: "Who is the primary human this memory should be scoped to?",
@@ -118,11 +118,6 @@ ONBOARDING_PROMPTS = {
         "Share a local path, or say 'skip' to start fresh."
     ),
     6: None,  # Generated dynamically from steps 3-4
-    7: (
-        "Should the cognitive substrate run in the background? "
-        "If enabled, Mnemos can decay, consolidate, reflect, and surface review cues between sessions. "
-        "It works without this, but the system feels more alive with it on."
-    ),
     8: (
         "Optional: add an LLM provider for richer classification, reflection, and consolidation.\n\n"
         "Format: provider:key (e.g., openrouter:sk-or-v1-abc123)\n"
@@ -458,7 +453,7 @@ def mnemos_setup(response: str = "") -> str:
 
     # Step 5: History import (optional)
     if step == 5:
-        config["setup_step"] = 6
+        config["setup_step"] = 7
         save_config(config)
         _config_invalidate()
 
@@ -522,22 +517,17 @@ def mnemos_setup(response: str = "") -> str:
             f"{belief_text}\n\n"
             "When something contradicts a belief, I don't just delete it. I examine it. "
             "That's how I grow.\n\n"
-            + ONBOARDING_PROMPTS[7]
+            + ONBOARDING_PROMPTS[8]
         )
 
-    # Step 6: Inner life toggle
+    # Step 6 asked whether the cognitive substrate should run, and the
+    # substrate is retired (0.4.0). A setup saved waiting on that answer moves
+    # on to the provider question, as step 5 now does.
     if step == 6:
-        resp_lower = response.strip().lower()
-        enabled = resp_lower in ("yes", "y", "sure", "yeah", "on", "enable", "true", "absolutely", "do it")
-        if "substrate" not in config:
-            config["substrate"] = {}
-        config["substrate"]["enabled"] = enabled
         config["setup_step"] = 7
         save_config(config)
         _config_invalidate()
-
-        status = "enabled — I'll dream between our conversations" if enabled else "disabled — I'll remember, but I won't dream"
-        return f"Inner life: {status}.\n\n" + ONBOARDING_PROMPTS[8]
+        return ONBOARDING_PROMPTS[8]
 
     # Step 7: LLM provider
     if step == 7:

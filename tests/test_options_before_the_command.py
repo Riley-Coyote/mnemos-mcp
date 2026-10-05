@@ -71,7 +71,6 @@ COMMANDS = [
     (["search", "ferry"], "_cmd_search"),
     (["consolidate"], "_cmd_consolidate"),
     (["export"], "_cmd_export"),
-    (["substrate-tick"], "_cmd_substrate_tick"),
     (["index"], "_cmd_index"),
     (["bridge", "status"], "_cmd_bridge"),
     (["embeddings", "index"], "_cmd_embeddings"),
