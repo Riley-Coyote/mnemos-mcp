@@ -31,6 +31,18 @@ from mnemos.interface.context_packet import build_context_packet, format_context
 from mnemos.simple_runtime import MnemosRuntime
 
 ANSWER = "I now propose maintenance rather than perform it myself."
+# The waking note shows the agent's own reflections under "what's been
+# changing in me" when they are signed by the reader's line, as every write is
+# in real use (Ready C): these sessions sign theirs.
+OPUS = "claude-opus-5-5"
+# The heading in the reader's own voice, or as a mind not yet sure it is the
+# reader (no model named).
+CHANGING = ("### what's been changing in me", "### what has been changing in this mind")
+
+
+def _under_changing(packet: str) -> bool:
+    heads = [packet.index(h) for h in CHANGING if h in packet]
+    return bool(heads) and packet.index(ANSWER) > min(heads)
 
 
 @pytest.fixture
@@ -47,13 +59,13 @@ def _runtime(db):
 def _capture_then_reflect(db):
     """Reach the state the packet asks for: a pending request, answered."""
     rt = _runtime(db)
-    rt.capture(content="Riley rejected MCP sampling for Mnemos maintenance")
+    rt.capture(content="Riley rejected MCP sampling for Mnemos maintenance", signed_as=OPUS)
     packet = rt.context()
 
     match = re.search(r"(engram_[A-Z0-9]+)", packet)
     assert match, f"no reflection request was surfaced to answer:\n{packet}"
 
-    result = rt.reflect(target_id=match.group(1), text=ANSWER)
+    result = rt.reflect(target_id=match.group(1), text=ANSWER, signed_as=OPUS)
     assert "ecorded" in result, result
     return rt
 
@@ -66,6 +78,7 @@ class TestAnAnsweredReflectionReachesTheNextSession:
             "the agent's own reflection did not survive into the next "
             f"session's packet.\n\nPacket was:\n{packet}"
         )
+        assert _under_changing(packet), packet
 
     def test_the_hook_packet_carries_it(self, db):
         """The path that runs before an agent's first turn.
@@ -92,13 +105,14 @@ class TestAnAnsweredReflectionReachesTheNextSession:
             "the SessionStart hook — the mechanism that delivers continuity "
             f"automatically — did not carry the reflection.\n\nPacket was:\n{packet}"
         )
+        assert _under_changing(packet), packet
 
     def test_the_original_capture_is_not_destroyed(self, db):
         """A reflection adds to a memory; it must not overwrite it."""
         rt = _capture_then_reflect(db)
-        packet = _runtime(db).context()
-        assert "MCP sampling" in packet, (
-            f"the reflection replaced the memory it was about:\n{packet}"
+        recalled = _runtime(db).recall("MCP sampling")
+        assert "Riley rejected MCP sampling for Mnemos maintenance" in recalled, (
+            f"the reflection replaced the memory it was about:\n{recalled}"
         )
 
     def test_the_engram_impact_is_still_written(self, db):

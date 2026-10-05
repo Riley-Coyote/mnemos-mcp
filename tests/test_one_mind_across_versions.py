@@ -177,8 +177,8 @@ def test_an_upgraded_opus_is_home_not_visiting(runtime):
     opus = _packet(runtime, reader_model=OPUS_6)
     assert opus["voice"] == "self"
     assert "visiting" not in opus["prompt"], opus["prompt"]
-    assert "### where i left off\n" in opus["prompt"], opus["prompt"]
-    assert NOTE in opus["prompt"].split("### where i left off\n", 1)[1]
+    assert "### where i was\n" in opus["prompt"], opus["prompt"]
+    assert NOTE in opus["prompt"].split("### where i was\n", 1)[1]
 
     sonnet = _packet(runtime, reader_model=SONNET)
     assert sonnet["voice"] == "guest"
@@ -524,7 +524,7 @@ def test_a_question_addressed_to_an_exact_id_by_6f0654c(runtime):
         "This question is for claude-opus-5-5, not you. Nothing was changed.")
     runtime._set_meta("ideas_noticed_at", "")
     assert runtime._enqueue_returning_idea() == 0
-    assert runtime._get_meta("ideas_noticed_at", "") == ""  # returned at the open-question check
+    assert datetime.fromisoformat(runtime._get_meta("ideas_noticed_at", ""))  # set at the open-question check
 
 
 def test_resident_ties_and_forms(runtime):

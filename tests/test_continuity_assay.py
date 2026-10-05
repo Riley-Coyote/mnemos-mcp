@@ -49,6 +49,29 @@ def _run(*args, home, cwd=None, timeout=180):
     return result
 
 
+def _recall(*queries, home):
+    """Recall each query in one more separate process, by the defaults: no
+    scope, as an agent's own ``mnemos_recall`` does. Returns what each said."""
+    code = (
+        "import json, sys; from mnemos.simple_runtime import MnemosRuntime; "
+        "rt = MnemosRuntime(); print(json.dumps([rt.recall(q) for q in sys.argv[1:]])); rt.close()"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code, *queries],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "MNEMOS_DISABLE_DOTENV": "1",
+            "PYTHONPATH": ":".join(sys.path),
+        },
+    )
+    assert result.returncode == 0, result.stderr
+    return json.loads(result.stdout)
+
+
 @pytest.fixture
 def home(tmp_path):
     h = tmp_path / "home"
@@ -154,18 +177,17 @@ class TestContinuityCrossesAProcessBoundary:
         assert token in packet
 
     def test_continuity_is_not_reset_by_a_later_session(self, home):
-        """Later captures must not displace earlier ones from the packet."""
+        """Later captures must not displace earlier ones from recall."""
         first = f"first-{uuid.uuid4().hex[:8]}"
         second = f"second-{uuid.uuid4().hex[:8]}"
 
         assert _run("remember", f"Earliest fact {first}", home=home).returncode == 0
         assert _run("remember", f"Later fact {second}", home=home).returncode == 0
 
-        read = _run("hook", "session-start", home=home)
-        packet = json.loads(read.stdout)["hookSpecificOutput"]["additionalContext"]
+        found_first, found_second = _recall(first, second, home=home)
 
-        assert second in packet, "the most recent capture is missing"
-        assert first in packet, (
+        assert f"Later fact {second}" in found_second, "the most recent capture is missing"
+        assert f"Earliest fact {first}" in found_first, (
             "an earlier capture was displaced — continuity that only holds "
             "the last thing said is not continuity"
         )
@@ -182,9 +204,8 @@ class TestContinuityCrossesAProcessBoundary:
         )
         assert corrected.returncode == 0
 
-        read = _run("hook", "session-start", home=home)
-        packet = json.loads(read.stdout)["hookSpecificOutput"]["additionalContext"]
-        assert "Zed" in packet
+        [found] = _recall("favourite editor", home=home)
+        assert "Riley's favourite editor is Zed" in found, found
 
 
 class TestReadingIsSafe:

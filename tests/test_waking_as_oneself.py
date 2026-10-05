@@ -114,7 +114,7 @@ def test_a_fresh_session_wakes_as_itself_from_its_launch_line(tmp_path, harness)
     packet = _hook(db, tmp_path, env={"CLAUDE_PID": harness(["--model", OPUS])})
 
     # Its own note, from its own earlier session: where it left off.
-    assert "### where i left off\n" in packet, packet
+    assert "### where i was\n" in packet, packet
     assert f"in another session:\n{NOTE}" in packet, packet
     # Nothing asks it to doubt that the note is its own.
     assert "yours if" not in packet and "if I'm not" not in packet, packet
@@ -128,7 +128,7 @@ def test_the_launch_line_can_name_a_guest(tmp_path, harness):
 
     assert "This memory is mostly Fable 5.1's; I'm Opus 5.5, visiting." in packet, packet
     assert "### where things were left\nFable 5.1, a colleague, " in packet, packet
-    assert "### where i left off" not in packet, packet
+    assert "### where i was" not in packet, packet
 
 
 @needs_ps
@@ -205,16 +205,16 @@ def test_the_resident_is_the_model_that_wrote_most_of_it(tmp_path):
 
 @needs_ps
 def test_the_opening_says_where_and_with_whom(tmp_path, harness):
+    from mnemos.simple_runtime import MnemosRuntime
+
     db = _store(tmp_path)
-    store = EngramStore(db)
+    # What the person's section holds now: how they want me to work, marked
+    # standing (Ready C: foundational notes no longer appear under their name).
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **SCOPE)
     try:
-        store.write_hypomnema_entry(
-            "Riley works best after midnight.", **SCOPE, authored_by="agent",
-            author_id="nova", author_model=OPUS, domain="foundational", foundational=True,
-            confidence=0.9, salience=0.9,
-        )
+        runtime.capture("Riley works best after midnight.", signed_as=OPUS, standing=True)
     finally:
-        store.close()
+        runtime.close()
 
     named = _hook(
         db, tmp_path, env={"CLAUDE_PID": harness(["--model", OPUS])},
@@ -237,10 +237,13 @@ def test_the_reader_speaks_and_the_machinery_waits_at_the_end(tmp_path, harness)
     db = _store(tmp_path)
     store = EngramStore(db)
     try:
-        store.write_hypomnema_entry(
+        # A long handoff another session left earlier: it is cut where I was,
+        # and its id waits for the tools. (Ready C carries no notes to cut.)
+        store.write_handoff(
             "Long note. " + "The harbour ledger lists every crossing, one line each. " * 12,
-            **SCOPE, authored_by="agent", author_id="nova", author_model=OPUS,
+            **SCOPE, author_model=OPUS, author_session="33333333-cccc-4ccc-8ccc-333333333333",
         )
+        store.write_handoff(NOTE, **SCOPE, author_model=OPUS, author_session=EARLIER)
     finally:
         store.close()
     packet = _hook(db, tmp_path, env={"CLAUDE_PID": harness(["--model", OPUS])})

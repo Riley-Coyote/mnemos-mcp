@@ -237,7 +237,7 @@ def _packet(done):
 
 def _light_note(packet):
     body = packet.split("\n\n### for the memory tools\n", 1)[0]
-    heading = "### where i left off\n"
+    heading = "### where i was\n"
     assert heading in body, body[:400]
     return body.split(heading, 1)[1].split(":\n", 1)[1]
 
@@ -296,7 +296,7 @@ def test_an_upper_case_wake_value_wakes_light(tmp_path):
     db = _store(tmp_path)
     done = _hook(db, tmp_path, extra=("--wake", "LIGHT"))
     packet = _packet(done)
-    assert "### where i left off" in packet
+    assert "### where i was" in packet
     assert JOURNAL not in packet, "woke in full"
     assert len(_light_note(packet)) <= LIGHT_HANDOFF_CHARS
 

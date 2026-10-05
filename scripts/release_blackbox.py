@@ -183,17 +183,26 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
 
     async def owner_read_and_forget(session: ClientSession) -> None:
         packet = text_of(await session.call_tool("mnemos_context", {}))
+        recall = text_of(
+            await session.call_tool(
+                "mnemos_recall", {"query": "cobalt orchard", "max_results": 10}
+            )
+        )
         assert HANDOFF in packet, packet
         assert packet.count(HANDOFF) == 1, packet
-        # The handoff is signed by the model that introduced itself, is never
-        # handed to the reader as its own words (this session never said which
-        # model it is), and comes before the notes the reader is carrying.
+        # The handoff is signed by the model that introduced itself, and is
+        # never handed to the reader as its own words (this session never said
+        # which model it is).
         assert "From your previous session, in your own words" not in packet, packet
-        assert "### where i left off" not in packet, packet
-        handoff_at = packet.index("### where things were left\nindependent-blackbox, ")
-        assert handoff_at < packet.index("### what this memory is carrying"), packet
-        assert PRIVATE in packet, packet
-        assert REFLECTION in packet, packet
+        for own_words in ("### where i left off", "### where i was"):
+            assert own_words not in packet, packet
+        assert "### where things were left\nindependent-blackbox, " in packet, packet
+        # The wake is the agent's own words: the reflection it signed is there,
+        # as what has been changing; the capture it reflected on is read back
+        # by recall, not carried in the wake.
+        changing = packet.index("### what has been changing in this mind")
+        assert packet.index(REFLECTION) > changing, packet
+        assert PRIVATE in recall, recall
 
         forgotten = await session.call_tool(
             "mnemos_correct",

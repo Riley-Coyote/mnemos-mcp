@@ -2,6 +2,22 @@
 
 ## 0.3.1 (unreleased)
 
+### Waking in my own words
+
+The waking note is now the agent's own words, in the order a mind wakes:
+what it has come to see, where it was, what has been changing in it (its
+newest impact lines, signed by the reader), what it keeps coming back to
+(the ideas the noticer found, until one becomes a belief), the person, one
+question, and while it was away (its own quiet hour, the person's replies).
+Event notes, foundational notes under the person's name and upkeep's report
+no longer appear in it; recall finds them. A standing memory is no longer
+asked what it changed. Quiet hours see the questions addressed to their model.
+An empty wake that keeps memories for recall no longer counts toward the
+empty-packet warning, and the warning counts the new sections and the
+question. What the new note shows (a question's memory, what has been
+changing, a returning idea) counts as shown, so the cue doesn't bring it
+back in the same session. Code version 17.
+
 ### Recall says how it found something
 
 A recalled memory's bracket used to be its score relative to the best match,

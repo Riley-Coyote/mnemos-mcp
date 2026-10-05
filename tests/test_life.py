@@ -506,9 +506,25 @@ def hour_material(db):
         store.close()
 
 
-def test_my_hour_leaves_out_captures_and_word_count_questions(db, home, monkeypatch):
+def test_my_hour_leaves_out_captures_and_sees_its_own_questions(db, home, monkeypatch):
     from mnemos import life
+    from mnemos.authorship import model_line
+    from mnemos.core.engram import Engram
     capture_id, handoff_id, journal_id = hour_material(db)
+    owner = {'owner_agent_id': SCOPE['agent_id'], 'person_id': SCOPE['person_id'],
+             'project_scope': SCOPE['project_scope']}
+    store = EngramStore(db)
+    try:
+        mine, theirs = (Engram(content=words, **owner) for words in
+                        ('Riley plans around the ferry.', 'The timetable changed twice.'))
+        store.save_engram(mine)
+        store.save_engram(theirs)
+        store.enqueue_reflection('belief', mine.id, 'Is the ferry what your plans turn on?', **SCOPE,
+                                 for_model=model_line(life.HOUR_MODEL))
+        store.enqueue_reflection('belief', theirs.id, 'Is the timetable a promise?', **SCOPE,
+                                 for_model=model_line('claude-sonnet-5-5'))
+    finally:
+        store.close()
 
     def forbidden(*args, **kwargs):
         raise AssertionError('mine must not gather captures')
@@ -523,8 +539,9 @@ def test_my_hour_leaves_out_captures_and_word_count_questions(db, home, monkeypa
         assert f'What did the timetable teach you? · The ferry timetable changed. [{capture_id}]' in prompt
         assert f'A journal entry before the hour. [{journal_id}]' in prompt
         assert 'Captures since' not in prompt
-        assert "You keep returning to 'running'" not in prompt
-    assert record['waiting'] == {'handoffs': 1, 'captures': 0, 'questions': 1}
+        assert f'Is the ferry what your plans turn on? · Riley plans around the ferry. [{mine.id}]' in prompt
+        assert 'Is the timetable a promise?' not in prompt
+    assert record['waiting']['captures'] == 0
 
 
 def test_our_hour_is_only_the_days_work(db, home, monkeypatch):

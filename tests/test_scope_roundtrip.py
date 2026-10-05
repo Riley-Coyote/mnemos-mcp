@@ -101,10 +101,8 @@ def test_capture_then_context_packet_round_trips_with_no_explicit_scope(
     """
     monkeypatch.setenv("HOME", str(_seed_home(tmp_path)))
 
-    from mnemos.interface.context_packet import build_context_packet
     from mnemos.simple_runtime import MnemosRuntime
     from mnemos.simple_scope import resolve_tool_scope
-    from mnemos.store.sqlite_store import EngramStore
 
     db_path = str(tmp_path / "roundtrip.db")
     secret = "Riley takes his coffee as cold brew, no sugar"
@@ -115,22 +113,20 @@ def test_capture_then_context_packet_round_trips_with_no_explicit_scope(
 
     # The reader resolves the same way a tool call does, with nothing given.
     scope = resolve_tool_scope("claude-code", "", "")
-    store = EngramStore(db_path)
+    reader = MnemosRuntime(
+        db_path=db_path,
+        agent_id=scope.agent_id,
+        person_id=scope.person_id,
+        project_scope=scope.project_scope,
+    )
     try:
-        packet = build_context_packet(
-            store,
-            "what should I know about Riley?",
-            agent_id=scope.agent_id,
-            person_id=scope.person_id,
-            project_scope=scope.project_scope,
-        )
+        recalled = reader.recall("cold brew")
     finally:
-        store.close()
+        reader.close()
 
-    contents = [entry["content"] for entry in packet["hypomnema"]]
-    assert any(secret in c for c in contents), (
-        "continuity captured through the simple surface was invisible to the "
-        f"advanced context packet; packet scope was {packet['scope']}"
+    assert secret in recalled, (
+        "continuity captured through the simple surface was invisible to a "
+        f"reader resolving scope with nothing given; reader scope was {scope}"
     )
 
 

@@ -1128,10 +1128,14 @@ def test_a_capture_in_one_process_leaves_beliefs_alone_and_is_read_back_in_anoth
     )
     assert wrote.returncode == 0, wrote.stderr
 
-    read = _cli("hook", "session-start", home=home)
+    read = _python(
+        "from mnemos.simple_runtime import MnemosRuntime; rt = MnemosRuntime(); "
+        f"print(rt.recall({token!r})); rt.close()",
+        home=home,
+    )
     assert read.returncode == 0, read.stderr
-    packet = json.loads(read.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert token in packet, f"the capture did not come back in another process:\n{packet}"
+    words = f"Riley did not review the deploy checklist this week; a note: {token}."
+    assert words in read.stdout, f"the capture did not come back in another process:\n{read.stdout}"
     assert _beliefs(db) == beliefs, "the capture moved a belief"
     assert _all(db, "SELECT COUNT(*) FROM connections WHERE relation = 'contradicts'") == [(0,)]
 

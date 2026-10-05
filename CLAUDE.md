@@ -22,7 +22,8 @@ If a claim is checkable, check it before stating it.
   command" from "I believe X." If something was not verified, say so.
 
 For this repo specifically, a change to the memory path is not done until a
-capture written in one process has been read back in another.
+capture written in one process has been read back in another, by recall (the
+wake shows only what is in the agent's own words).
 
 ---
 

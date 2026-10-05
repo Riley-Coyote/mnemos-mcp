@@ -623,7 +623,7 @@ def _reports(db: Path) -> list[tuple[str, int, str]]:
     """, tuple(SCOPE.values()))
 
 
-def test_the_scheduled_consolidate_writes_a_report_the_next_briefing_reads(tmp_path, monkeypatch):
+def test_the_scheduled_consolidate_writes_a_report_the_watchdog_finds(tmp_path, monkeypatch):
     monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
     db = tmp_path / "memory.db"
     _saved(db, *BEACONS)
@@ -641,13 +641,10 @@ def test_the_scheduled_consolidate_writes_a_report_the_next_briefing_reads(tmp_p
     assert active == 1 and content.startswith("Mnemos connected"), content
     rt = _runtime(db)
     try:
-        packet = rt.context()
+        rt.context()
         data = rt.health()
     finally:
         rt.close()
-    # The report reaches the next briefing, marked as upkeep's words; its
-    # heading is the packet's to name ("lately, in this memory" since #100).
-    assert content in packet and "Mnemos's upkeep wrote this" in packet, packet
     report = data["watchdog"]["checks"]["report"]
     assert report["report_id"] == report_id and report["cycles_untold"] == 0, report
     assert data["dream"]["last_written_at"] is not None

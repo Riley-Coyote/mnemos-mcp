@@ -259,10 +259,23 @@ def test_an_older_process_capture_is_read_back_by_another_process(tmp_path):
     assert OLDER in wrote.stdout
     assert _count(db, "consolidation_log") == cycles, "the older process ran maintenance"
 
-    read = _run("hook", "session-start", home=home)
+    # Another process, by the defaults, as the agent's own mnemos_recall does.
+    read = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; from mnemos.simple_runtime import MnemosRuntime; "
+         "rt = MnemosRuntime(); print(rt.recall(sys.argv[1])); rt.close()", token],
+        capture_output=True, text=True, timeout=180,
+        env={
+            "HOME": str(home),
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "MNEMOS_DISABLE_DOTENV": "1",
+            "PYTHONPATH": ":".join(sys.path),
+        },
+    )
     assert read.returncode == 0, read.stderr
-    packet = json.loads(read.stdout)["hookSpecificOutput"]["additionalContext"]
-    assert token in packet, f"a capture from older code did not come back:\n{packet}"
+    assert f"The spare key is kept at {token}." in read.stdout, (
+        f"a capture from older code did not come back:\n{read.stdout}"
+    )
 
 
 # ── Raising the minimum ──

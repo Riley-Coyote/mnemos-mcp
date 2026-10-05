@@ -232,9 +232,8 @@ class TestThePacket:
         # This memory is Fable's; Opus 5.5 is a guest in it, and says so once.
         assert "This memory is mostly Fable 5.1's; I'm Opus 5.5, visiting." in packet
         assert "### where things were left\nFable 5.1, a colleague, " in packet
-        assert "### where i left off" not in packet and "Yours" not in packet
+        assert "### where i was" not in packet and "Yours" not in packet
         assert "don't claim the work" in packet
-        assert ", Fable 5.1: The first steward's visit" in packet
 
     def test_the_same_model_is_told_so(self, tmp_path):
         db_path = tmp_path / "shared.db"
@@ -244,7 +243,7 @@ class TestThePacket:
 
         packet = _hook(db_path, home, {"hook_event_name": "SessionStart", "model": "claude-fable-5-1"})
         # Its own memory: its note and its words carry no signature to it.
-        assert "### where i left off\n" in packet, packet
+        assert "### where i was\n" in packet, packet
         assert "Fable 5.1" not in packet and "colleague" not in packet, packet
 
     def test_without_the_readers_name_the_reader_is_asked_to_compare(self, tmp_path):
@@ -269,7 +268,6 @@ class TestThePacket:
             assert "From your previous session, in your own words" not in packet
             assert "I'm Opus 5.5, visiting." in packet
             assert "Fable 5.1, a colleague" in packet
-            assert ", Fable 5.1: The first steward's visit" in packet
         finally:
             runtime.close()
 
@@ -281,7 +279,7 @@ class TestThePacket:
             packet = runtime.context()
             assert "### where things were left\nunsigned, " in packet
             assert "don't claim the work" in packet
-            assert "### where i left off" not in packet and "Yours" not in packet
+            assert "### where i was" not in packet and "Yours" not in packet
         finally:
             runtime.close()
 

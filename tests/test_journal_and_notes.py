@@ -593,7 +593,7 @@ def test_notes_reply_writes_the_persons_own_words_and_the_next_packet_carries_th
     condensed = " ".join(words.split())
     assert condensed != words, "premise: the reply has a double space to condense"
     assert f'- Riley replied to my note "I disagree with moving the survey to Friday.": {condensed}' in packet, packet
-    assert "### replies to my notes" in packet
+    assert "### while i was away" in packet
     human = _human(packet)
     assert "mnemos_" not in human and not UUID.search(human), human
     # The id to answer it with waits in the closing section.

@@ -168,7 +168,7 @@ def test_write_dream_entry_supersedes_prior(store, tmp_db):
     assert fetched["id"] == second_id
 
 
-def test_maintain_writes_dream_and_context_renders_section(tmp_path):
+def test_maintain_writes_dream(tmp_path):
     runtime = _runtime(tmp_path)
     try:
         _seed_promotion_candidate(runtime)
@@ -180,15 +180,6 @@ def test_maintain_writes_dream_and_context_renders_section(tmp_path):
         assert narrative is not None
         assert "Mnemos promoted 1 continuity note into durable memory." in narrative
         assert runtime._get_meta("dream_last_written_at") is not None
-
-        packet = runtime.context()
-        # In the reader's voice when it is this memory's own, else plainly.
-        assert (
-            "### while i was away\n" in packet or "### lately, in this memory\n" in packet
-        ), packet
-        # The narrative renders in its own section only — never duplicated
-        # among the notes.
-        assert packet.count(narrative) == 1
     finally:
         runtime.close()
 

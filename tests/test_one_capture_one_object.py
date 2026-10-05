@@ -259,7 +259,7 @@ def test_correcting_by_the_notes_id_corrects_its_memory(tmp_path):
     assert NEW_WORDS in recalled and OLD_WORDS not in recalled, recalled
 
 
-def test_correcting_by_the_memorys_id_corrects_its_note_in_the_briefing(tmp_path):
+def test_correcting_by_the_memorys_id_corrects_its_note(tmp_path):
     db = tmp_path / "memory.db"
     runtime = _runtime(db)
     try:
@@ -268,15 +268,8 @@ def test_correcting_by_the_memorys_id_corrects_its_note_in_the_briefing(tmp_path
         result = runtime.correct(CORRECTED, target_id=memory_id)
     finally:
         runtime.close()
-    reader = _runtime(db)
-    try:
-        briefing = reader.context()
-    finally:
-        reader.close()
 
     assert "captured correction" in result, result
-    assert OLD_WORDS not in briefing, f"the briefing still shows the corrected note:\n{briefing}"
-    assert NEW_WORDS in briefing, briefing
     assert _live_notes(db, OLD_WORDS) == []
     memory, note = _only_live_pair(db)
     assert memory["content"] == note["content"] == CORRECTED
@@ -548,19 +541,11 @@ def test_a_note_shares_its_memorys_fate(tmp_path):
     db = tmp_path / "memory.db"
     runtime = _runtime(db)
     try:
-        # With their meaning given, no question about either is waiting: the
-        # briefing shows the memory's words only through its note.
+        # With their meaning given, no question about either is waiting.
         memory_id, note_id = _captured(runtime.capture(ORIGINAL, impact=MEANING))
         runtime.capture(OTHER, impact="Tuesdays belong to the choir.")
     finally:
         runtime.close()
-
-    def briefing() -> str:
-        reader = _runtime(db)
-        try:
-            return reader.context()
-        finally:
-            reader.close()
 
     def notes_counted() -> int:
         reader = _runtime(db)
@@ -569,12 +554,10 @@ def test_a_note_shares_its_memorys_fate(tmp_path):
         finally:
             reader.close()
 
-    assert OLD_WORDS in briefing() and notes_counted() == 2, "premise: both notes show"
+    assert notes_counted() == 2, "premise: both notes show"
 
     assert _decay(db, memory_id, accessibility=0.06, hours=100) == "dormant"
-    quiet = briefing()
-    assert OLD_WORDS not in quiet, f"a note showed over a memory that went quiet:\n{quiet}"
-    assert "choir rehearses" in quiet and notes_counted() == 1
+    assert notes_counted() == 1
 
     runtime = _runtime(db)
     try:
@@ -582,10 +565,8 @@ def test_a_note_shares_its_memorys_fate(tmp_path):
     finally:
         runtime.close()
     assert _state(db, memory_id) == "active"
-    assert OLD_WORDS in briefing(), "the note did not come back when its memory woke"
 
     assert _decay(db, memory_id, accessibility=0.03, hours=720) == "archived"
-    assert OLD_WORDS not in briefing(), "a note showed over a memory that faded into the archive"
 
     runtime = _runtime(db)
     try:
@@ -594,7 +575,7 @@ def test_a_note_shares_its_memorys_fate(tmp_path):
         runtime.close()
     assert ORIGINAL in by_note and "recalling the note brought it back" in by_note, by_note
     assert _state(db, memory_id) == "active"
-    assert OLD_WORDS in briefing() and notes_counted() == 2
+    assert notes_counted() == 2
 
 
 def test_older_code_shows_a_quiet_note_by_its_id_but_wakes_nothing(tmp_path):
@@ -715,9 +696,10 @@ def test_a_correction_made_in_one_process_is_one_pair_in_another(tmp_path):
     assert _lineage(db, memory_id).get("superseded_by") == memory["id"]
     reader = _runtime(db)
     try:
-        assert NEW_WORDS in reader.context() and OLD_WORDS not in reader.context()
+        recalled = reader.recall(QUERY)
     finally:
         reader.close()
+    assert CORRECTED in recalled and OLD_WORDS not in recalled, recalled
 
 
 # ── 9. A note that only references a memory is never its pair ──
@@ -817,14 +799,11 @@ def test_a_summary_note_does_not_share_the_fate_of_the_memory_it_references(tmp_
 
     reader = _runtime(db)
     try:
-        briefing = reader.context()
         counted = reader.health()["counts"]["continuity_notes_active"]
     finally:
         reader.close()
 
-    assert SUMMARY in briefing, f"a summary hid when the memory it references went quiet:\n{briefing}"
     # The memory's own note goes quiet with it; the summary and the choir stay.
-    assert OLD_WORDS not in briefing and "choir rehearses" in briefing
     assert counted == 2
 
 
@@ -924,19 +903,16 @@ def test_a_correction_by_query_reaches_a_pair_whose_memory_went_quiet(tmp_path, 
         else:
             result = runtime.correct("", query=QUERY, action="forget")
         woken = runtime.recall(memory_id)  # waking the old memory by its id
-        briefing = runtime.context()
     finally:
         runtime.close()
 
     assert _note(db, note_id)["active"] == 0, f"the quiet pair's note stayed live:\n{result}"
     assert _state(db, memory_id) == "archived"
     assert OLD_WORDS not in woken, f"waking the old memory brought its words back:\n{woken}"
-    assert OLD_WORDS not in briefing
     if action == "update":
         assert result.startswith("Updated closest continuity note"), result
         memory, note = _only_live_pair(db)
         assert memory["content"] == note["content"] == CORRECTED
-        assert NEW_WORDS in briefing
     else:
         assert _live_memories(db) == [] and _live_notes(db) == []
 

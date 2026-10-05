@@ -606,6 +606,7 @@ _IDEA_PURE_PYTHON_CAP = 200  # without numpy, only the newest this many are comp
 _IDEA_SIMILAR_PCT = 99.0
 _IDEA_COHESION_PCT = 98.0
 _IDEA_FLOOR = 0.30
+_IDEAS_KEPT = 3              # ideas found, kept for the waking note
 
 
 def _idea_similarities(values: list[list[float]]) -> tuple[Any, float, float]:
@@ -2617,6 +2618,9 @@ class MnemosRuntime:
         self._ensure_init()
         assert self._store is not None
 
+        # A standing memory is how the person wants the agent to work ("Sam wants
+        # short bullets"); asking what it changed in how the agent understands
+        # things was the first question a new store asked.
         rows = self._store._get_conn().execute(
             """
             SELECT e.id, e.content, e.impact
@@ -2624,6 +2628,7 @@ class MnemosRuntime:
             JOIN hypomnema_entries h ON h.graduated_to_engram_id = e.id
             WHERE h.agent_id = ? AND h.person_id = ? AND h.project_scope = ?
               AND h.active = 1 AND e.state = 'active'
+              AND e.standing = 0
             ORDER BY e.created_at DESC
             LIMIT 40
             """,
@@ -2786,10 +2791,10 @@ class MnemosRuntime:
         """Notice an idea the agent keeps returning to, once a day at most.
 
         Its own impact lines, grouped by meaning (the top 1% of the store's own
-        pairs), returning in three sessions on three days. The best group not yet
-        asked about becomes one question, quoting the agent's own words and
-        addressed to the resident model, when no other such question is open.
-        Returns 1 when it asked, else 0.
+        pairs), returning in three sessions on three days. The groups found are
+        kept (meta ideas_returning) for the waking note's "what i keep coming
+        back to"; the best one not yet asked becomes a question that quotes the
+        agent's own words, when no other such question is open.
         """
         self._ensure_init()
         assert self._store is not None
@@ -2806,15 +2811,6 @@ class MnemosRuntime:
         }
         scope_values = tuple(scope.values())
         conn = self._store._get_conn()
-        if conn.execute(
-            "SELECT 1 FROM reflection_queue q JOIN engrams e ON e.id = q.target_id "
-            "WHERE q.agent_id = ? AND q.person_id = ? AND q.project_scope = ? "
-            "AND q.kind = 'belief' AND q.answered_at IS NULL "
-            "AND (q.expires_at IS NULL OR q.expires_at > ?) AND instr(q.prompt, '[evidence:') > 0 "
-            "AND e.state != 'archived' AND q.surfaced_count < ?",
-            (*scope_values, now.isoformat(), self._store.MAX_SURFACINGS),
-        ).fetchone():
-            return 0
         resident = resident_model(self._store, scope)
         if not resident:
             self._set_meta("ideas_noticed_at", now.isoformat())
@@ -2865,13 +2861,36 @@ class MnemosRuntime:
                 continue
             mean = sum(float(similarities[a][b]) for index, a in enumerate(members)
                        for b in members[index + 1:]) / (len(members) * (len(members) - 1) / 2)
-            if mean < cohesive or sum(candidates[j]["id"] in asked for j in members) > len(members) / 2:
+            if mean < cohesive:
                 continue
             groups.append((len(dates), mean, len(members), seed["id"], members))
+        groups.sort(key=lambda group: (-group[0], -group[1], -group[2], group[3]))
+        # The ideas found are kept for the waking note, whether or not one is
+        # asked about now, each once: the members of one idea each seed it, so
+        # a group more than half inside one kept already is that idea again.
+        found = []
+        kept: list[set[int]] = []
+        for group_days, _, _, _, group_members in groups:
+            if len(kept) == _IDEAS_KEPT:
+                break
+            if any(len(seen.intersection(group_members)) > len(group_members) / 2 for seen in kept):
+                continue
+            kept.append(set(group_members))
+            rows = sorted((candidates[j] for j in group_members), key=lambda row: row["created_at"])
+            found.append({
+                "ids": [row["id"] for row in rows],
+                "days": group_days,
+                "quote": cut_at_sentence(rows[-1]["impact"], 120)[0],
+            })
+        self._set_meta("ideas_returning", json.dumps(found))
+        # Only the question is chosen among the ideas not asked about yet.
+        groups = [
+            group for group in groups
+            if sum(candidates[j]["id"] in asked for j in group[4]) <= len(group[4]) / 2
+        ]
         if not groups:
             self._set_meta("ideas_noticed_at", now.isoformat())
             return 0
-        groups.sort(key=lambda group: (-group[0], -group[1], -group[2], group[3]))
         days, _, _, _, members = groups[0]
         oldest_first = sorted((candidates[j] for j in members), key=lambda row: row["created_at"])
         quotes = []
@@ -2892,6 +2911,17 @@ class MnemosRuntime:
             "SELECT target_id FROM reflection_queue WHERE agent_id = ? AND person_id = ? "
             "AND project_scope = ? AND answered_at IS NULL", scope_values,
         ).fetchall()}
+        if conn.execute(
+            "SELECT 1 FROM reflection_queue q JOIN engrams e ON e.id = q.target_id "
+            "WHERE q.agent_id = ? AND q.person_id = ? AND q.project_scope = ? "
+            "AND q.kind = 'belief' AND q.answered_at IS NULL "
+            "AND (q.expires_at IS NULL OR q.expires_at > ?) AND instr(q.prompt, '[evidence:') > 0 "
+            "AND e.state != 'archived' AND q.surfaced_count < ?",
+            (*scope_values, now.isoformat(), self._store.MAX_SURFACINGS),
+        ).fetchone():
+            # Looked once today: the groups are saved, and the question waits.
+            self._set_meta("ideas_noticed_at", now.isoformat())
+            return 0
         enqueued = 0
         for row in reversed(oldest_first):
             if row["id"] in waiting:
@@ -4000,7 +4030,6 @@ class MnemosRuntime:
         status = self._onboarding_status()
         self._current_session()
         packet = self._briefing_packet()
-        self._note_context_outcome(carried_count(packet))
         self._record_briefing_shown(packet)
         shown = packet.get("shown") or {}
         asked = set(shown.get("questions") or [])
@@ -4022,10 +4051,24 @@ class MnemosRuntime:
             if section:
                 parts.append(section)
         if not parts:
-            parts.append(
-                "Nothing has carried over yet: no handoff, notes or beliefs in this "
-                "memory. Capture durable context as the conversation gives it."
-            )
+            # The wake is the agent's own words; memories kept without them are
+            # still here, and saying nothing carried over would be untrue.
+            kept = int(self._stats().get("engrams_active", 0) or 0)
+            if kept:
+                count = "1 memory is" if kept == 1 else f"{kept} memories are"
+                parts.append(
+                    f"Nothing to wake with yet in my own words, but {count} kept: "
+                    "recall finds them when something needs them."
+                )
+                # Recall reaches them, so this isn't the silent amnesia the
+                # empty-packet streak exists to catch: it is left as it is.
+                return "\n\n".join(parts)
+            else:
+                parts.append(
+                    "Nothing has carried over yet: no handoff, notes or beliefs in this "
+                    "memory. Capture durable context as the conversation gives it."
+                )
+        self._note_context_outcome(carried_count(packet))
         return "\n\n".join(parts)
 
     def _record_briefing_shown(self, packet: Mapping[str, Any]) -> None:

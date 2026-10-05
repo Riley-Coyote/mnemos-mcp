@@ -30,7 +30,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
 from .cue import JUDGE_CALLS_KEPT, JUDGE_CALLS_KEY, judged_calls, offered_summary, scope_key
-from .dream_journal import changed_something, compose_dream_narrative, latest_dream_entry
+from .dream_journal import compose_dream_narrative, latest_dream_entry
 from .jev import switched_on as judge_switched_on
 from .store.embedding_index import NETWORK_TIMEOUT, text_hash
 from .store.sqlite_store import AUTHORS_LABELED_KEY, EngramStore
@@ -302,8 +302,8 @@ def _report(store: EngramStore, scope: dict[str, str], now: datetime, index: Any
         "report_id": report["id"] if report else None,
         "report_at": report_at.isoformat() if report_at else None,
         "report_age_hours": _hours(report_at, now),
-        # The briefing shows a report only when it says something changed.
-        "shown_in_briefing": bool(report) and changed_something(report),
+        # Upkeep's report no longer appears in the wake (Ready C).
+        "shown_in_briefing": False,
         "cycles_untold": len(untold),
         "stalled": bool(untold) and _older_than(min(untold), now, STALL),
     }

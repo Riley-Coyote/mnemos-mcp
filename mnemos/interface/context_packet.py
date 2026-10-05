@@ -14,25 +14,28 @@ colleague left carries theirs, and the machinery (ids, confidences, calls) sits
 apart at the end, for the tools:
 
 0. The opening: when and where, and who the reader is with.
-1. Where I left off: the reader's own handoff first, whole, then up to two
-   notes other sessions left in the last three days, each with its age and,
-   when it isn't the reader's, its model. Then, when the latest journal entry
-   is under three days old, its first line ("last time I wrote in my journal
-   (5 hours ago): ..."), and the person's replies to the agent's notes that
-   haven't reached a packet yet, at most three, each delivered once.
-2. The person (or "who i'm with"): first what the agent marked standing, how
-   the person wants it to work in every session: the newest mark first, up to
-   five, one line each in the memory's own words, and a count of the rest.
-   Then the durable few foundational notes.
-3. What I'm carrying: up to three notes or lessons, ranked by the words they
-   share with the folder and repository the session works in, then by recency.
-   One of them is a concrete, dated episode whenever there is one.
-4. What I've come to see: each belief once, the firm ones apart from the ones
+1. What I've come to see: each belief once, the firm ones apart from the ones
    still forming.
-5. A question: at most one thing the agent's memory is waiting on it for.
-6. While I was away: the latest maintenance report, when it changed something.
-7. For the memory tools: the ids and calls for what the packet showed, in the
+2. Where I was: the reader's own handoff first, whole, then up to two notes
+   other sessions left in the last three days, each with its age and, when it
+   isn't the reader's, its model. Then, when the latest journal entry is under
+   three days old, its first line ("last time I wrote in my journal (5 hours
+   ago): ...").
+3. What's been changing in me: the reader's newest impact lines, up to five.
+4. What I keep coming back to: the ideas the noticer found in the agent's own
+   words, up to two, until one becomes a belief.
+5. The person (or "who i'm with"): what the agent marked standing, how the
+   person wants it to work in every session: the newest mark first, up to
+   five, one line each in the memory's own words, and a count of the rest.
+6. A question: at most one thing the agent's memory is waiting on it for.
+7. While I was away: the reader's own quiet hour, when one ended since the
+   last packet, and the person's replies to the agent's notes that haven't
+   reached a packet yet, at most three, each delivered once.
+8. For the memory tools: the ids and calls for what the packet showed, in the
    order it showed them, never to be shown to the person.
+
+Event notes, foundational notes and upkeep's report are not in it; recall
+finds them.
 
 The voice follows who is reading. The reader is this memory's resident when
 its model line wrote most of the signed notes here (``resident_model``), and
@@ -50,6 +53,7 @@ sentence boundary, and ``mnemos_recall(<id>)`` returns a note whole.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -61,14 +65,12 @@ from ..authorship import (
     clean_session_id,
     display_name,
     from_same_session,
-    lesson_signature,
     model_line,
-    note_signature,
     same_mind,
 )
-from ..dream_journal import DREAM_JOURNAL_TAG, changed_something, latest_dream_entry
+from ..dream_journal import DREAM_JOURNAL_TAG
 from ..retrieval.reactive import ReactiveRetriever, RetrievalResult
-from ..store.fts import distinctive_terms, is_common
+from ..store.fts import distinctive_terms
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -85,8 +87,6 @@ DEFAULT_TOKEN_BUDGET = PACKET_MAX_CHARS // _CHARS_PER_TOKEN
 # time becomes a chore list appended to every conversation.
 PACKET_QUESTIONS = 1
 
-_FOUNDATIONAL_SHOWN = 3
-_CARRYING_SHOWN = 3
 _BELIEFS_SHOWN = 6
 
 # What the agent marked standing: how the human wants it to work in every
@@ -154,6 +154,15 @@ REPLIES_SHOWN = 3
 _REPLY_CHARS = 700
 _REPLIED_NOTE_CHARS = 100
 
+# What has been changing in the reader: its newest impact lines, this many.
+CHANGING_SHOWN = 5
+# The ideas the noticer found that the reader keeps coming back to, this many.
+RETURNING_SHOWN = 2
+# A quiet hour shows once, when it ended after the last delivery; with none
+# recorded, while it is this recent.
+HOUR_LIVE = timedelta(days=3)
+_WAKE_LINE_CHARS = 160
+
 
 def build_context_packet(
     store: "EngramStore",
@@ -185,8 +194,8 @@ def build_context_packet(
     about to read it, when the harness says: they decide whether a handoff is
     the reader's own or a colleague's, and whether the reader wakes as this
     memory's resident. ``workdir`` is the folder the session works in. Its
-    name and its repository's name rank what the reader is carrying and say
-    where it wakes; they never choose whose memory this is.
+    name and its repository's name say where it wakes; they never choose
+    whose memory this is.
 
     ``person_name`` is the name of the person this memory works with, when the
     operator gave one; without it the packet says "who i'm with". ``now`` is
@@ -213,8 +222,8 @@ def build_context_packet(
     handoffs = store.live_handoffs(**scope, reader_session=reader_session)
     handoff = handoffs[0] if handoffs else None
 
-    # Every standing memory in scope, the newest mark first. Each is said once,
-    # as its standing line: its note is not a foundational note or carried too.
+    # Every standing memory in scope, the newest mark first, each said once, as
+    # its standing line.
     standing = _standing(store, scope)
     standing_ids = {item["id"] for item in standing}
     notes = [
@@ -227,26 +236,7 @@ def build_context_packet(
     for entry in notes:
         if entry.get("graduated_to_engram_id") in standing_ids:
             standing_notes.setdefault(entry["graduated_to_engram_id"], []).append(entry["id"])
-    notes = [entry for entry in notes if entry.get("graduated_to_engram_id") not in standing_ids]
-    foundational = sorted(
-        (entry for entry in notes if entry.get("foundational")),
-        key=lambda entry: (
-            float(entry.get("confidence") or 0) + float(entry.get("salience") or 0),
-            entry.get("created_at") or "",
-        ),
-        reverse=True,
-    )[:_FOUNDATIONAL_SHOWN]
-    if wake == "light":
-        foundational = []
-    shown_ids = {entry["id"] for entry in foundational}
     place = place_words(workdir)
-    carrying = [] if wake == "light" else _carrying(
-        [_note_item(entry, place) for entry in notes if entry["id"] not in shown_ids]
-        + [
-            _lesson_item(row, place) for row in _lessons(store, **scope)
-            if row["id"] not in standing_ids
-        ]
-    )
 
     resident = resident_model(store, scope)
     beliefs = [_serialize_belief(b) for b in _beliefs_for(
@@ -264,9 +254,13 @@ def build_context_packet(
             # A packet must never fail because of the reflection queue.
             questions = []
 
-    report = None if wake == "light" else latest_dream_entry(store, **scope)
-    if report is not None and not changed_something(report):
-        report = None
+    voice = reader_voice(reader_model, resident)
+    owner = reader_model or resident
+    changing = [] if wake == "light" else _changing(store, scope, owner)
+    returning = (
+        [] if wake == "light" or voice != SELF
+        else _returning(store, scope, agent_id, owner)
+    )
 
     found: list[RetrievalResult] = []
     if wake != "light" and include_engrams and query.strip():
@@ -277,13 +271,18 @@ def build_context_packet(
         woke = woke.astimezone()
     journal = None if wake == "light" else _latest_journal(store, scope, woke)
     replies = [] if wake == "light" else _waiting_replies(store, scope)
+    # Read before this packet records its delivery: an hour shows once.
+    hour = (
+        None if wake == "light" or voice != SELF
+        else _latest_hour(store, scope, owner, woke)
+    )
 
     packet: dict[str, Any] = {
         "include_engrams": include_engrams,
         "reader_model": reader_model,
         "reader_session": reader_session,
         "resident": resident,
-        "voice": reader_voice(reader_model, resident),
+        "voice": voice,
         "person_name": " ".join((person_name or "").split())[:80],
         "woke_at": woke.isoformat(),
         "wake": wake,
@@ -297,15 +296,19 @@ def build_context_packet(
         "other_handoffs": [] if wake == "light" else handoffs[1:],
         "standing": standing,
         "standing_notes": standing_notes,
-        "foundational": foundational,
-        "carrying": carrying,
-        "hypomnema": foundational + [item["entry"] for item in carrying if item["kind"] == "note"],
+        # The waking note is the agent's own words. Event notes, foundational
+        # notes and upkeep's report are not in it; recall finds them. Their
+        # keys stay, empty, for callers that read them.
+        "hypomnema": [],
         "beliefs": beliefs,
         "reflections": questions,
-        "maintenance_report": report,
-        "maintenance_reports": [report] if report else [],
+        "maintenance_report": None,
+        "maintenance_reports": [],
         "journal": journal,
         "replies": replies,
+        "changing": changing,
+        "returning": returning,
+        "hour": hour,
         "mnemos_engrams": [_serialize_retrieval_result(result) for result in found],
     }
 
@@ -345,17 +348,24 @@ def format_context_packet(
 
 
 def carried_count(packet: dict[str, Any]) -> int:
-    """How many handoffs, standing memories, notes, lessons, reports, journal
-    lines and replies the packet showed after its budget: 0 means the session
-    started from nothing."""
+    """How many handoffs, standing memories, notes, reports, journal lines,
+    replies, changing lines, returning ideas, beliefs, quiet hours and
+    questions the packet showed after its budget: 0 means the session started
+    from nothing. A question counts: it asks about a memory of this scope, so
+    a wake that shows only one is memory read, not amnesia."""
     shown = packet.get("shown") or {}
     return (
-        len(shown.get("handoffs") or [])
+        len(shown.get("questions") or [])
+        + len(shown.get("handoffs") or [])
         + len(shown.get("standing") or [])
         + len(shown.get("notes") or [])
         + int(bool(shown.get("report")))
         + int(bool(shown.get("journal")))
         + len(shown.get("replies") or [])
+        + len(shown.get("changing") or [])
+        + len(shown.get("returning") or [])
+        + len(shown.get("beliefs") or [])
+        + int(bool(shown.get("hour")))
     )
 
 
@@ -382,21 +392,17 @@ def shown_ids(packet: dict[str, Any]) -> set[str]:
 def shown_memories(packet: dict[str, Any]) -> tuple[set[str], list[str]]:
     """What the briefing showed, as the cue must know it to never show it again
     in the session: every id ``shown_ids`` names, with the memory each shown
-    note is one object with (a capture's note and memory, R07), and every
-    memory its graph section showed (``--include-graph``); and the whole words
-    of each note, lesson, standing memory and graph memory shown, since the
-    same words can sit under another id (a lesson, and the memory it was drawn
-    from)."""
+    note is one object with (a capture's note and memory, R07), the memory
+    each question shown asks about, each memory whose impact line shows as
+    changing and each memory of an idea shown as returning, and every memory
+    its graph section showed (``--include-graph``); and the whole words of
+    each standing memory, impact line and graph memory shown, since the same
+    words can sit under another id."""
     ids = shown_ids(packet)
     shown = packet.get("shown") or {}
     rendered = set(shown.get("notes") or []) | set(shown.get("standing") or [])
     texts: list[str] = []
-    entries = [
-        *(packet.get("foundational") or []),
-        *(item.get("entry") or item for item in packet.get("carrying") or []),
-        *(packet.get("standing") or []),
-    ]
-    for entry in entries:
+    for entry in packet.get("standing") or []:
         if entry.get("id") not in rendered:
             continue
         paired = entry.get("graduated_to_engram_id")
@@ -405,6 +411,20 @@ def shown_memories(packet: dict[str, Any]) -> tuple[set[str], list[str]]:
         words = entry.get("content") or entry.get("text") or ""
         if words:
             texts.append(words.split(_CONTEXT_MARK, 1)[0])
+    # What the new note shows of memories (Ready C): the memory each question
+    # shown asks about, whose words it quotes; the memories whose impact lines
+    # show as what has been changing in me; and each idea shown as returning.
+    asked = set(shown.get("questions") or [])
+    for item in packet.get("reflections") or []:
+        if item.get("id") in asked and item.get("target_id"):
+            ids.add(item["target_id"])
+    changing = set(shown.get("changing") or [])
+    ids.update(changing)
+    for item in packet.get("changing") or []:
+        if item.get("id") in changing and item.get("text"):
+            texts.append(item["text"])
+    for joined in shown.get("returning") or []:
+        ids.update(engram_id for engram_id in joined.split(",") if engram_id)
     # What the graph section kept: ``build_context_packet`` leaves only those.
     for entry in packet.get("mnemos_engrams") or []:
         ids.add(entry["id"])
@@ -602,7 +622,7 @@ def reader_voice(reader_model: str, resident: str) -> str:
 def place_words(workdir: str) -> set[str]:
     """The distinctive words of a folder's name and of its repository's name.
 
-    Used only to rank what the reader is carrying. Scope never comes from the
+    Kept in the packet as ``place_words``. Scope never comes from the
     working directory: an MCP server's cwd belongs to whichever client spawned
     it. A worktree is named for its repository, so a session in
     ``/tmp/wt-mnemos-r04`` ranks by "mnemos" as one in the checkout does.
@@ -657,94 +677,11 @@ def _repository(folder: Path) -> Path | None:
     return None
 
 
-# ── What the reader is carrying ──
+# ── What is marked standing ──
 
-# Every note in scope is a candidate; a few hundred is typical.
+# Every note in scope is read for the standing memories' notes; a few hundred
+# is typical.
 _MAX_NOTES = 5000
-
-# An episode names someone or something and something specific: a date or a
-# number, a path, code, a link or a quotation. Lessons and summaries are not
-# episodes. Compression pulls toward the generic, and a mind fed only lessons
-# feels well-informed while forgetting what happened (psiclaude's finding 4).
-_NAME = re.compile(r"\b[A-Z][A-Za-z]{2,}\b")
-_SPECIFIC = re.compile(
-    r"\d"
-    r"|[\w.~-]+/[\w./-]+"
-    r"|`[^`]+`"
-    r"|\"[^\"]{2,}\"|“[^”]{2,}”"
-)
-_NOT_NAMES = frozenset(
-    "yes today yesterday tonight tomorrow something maybe perhaps please "
-    "sometimes often usually note notes lesson context".split()
-)
-
-
-def _is_episode(text: str) -> bool:
-    names = [
-        word for word in _NAME.findall(text)
-        if not is_common(word) and word.lower() not in _NOT_NAMES
-    ]
-    return bool(names) and _SPECIFIC.search(text) is not None
-
-
-def _note_item(entry: dict[str, Any], place: set[str]) -> dict[str, Any]:
-    text = entry.get("content") or ""
-    summary = entry.get("authored_by") == "system" or entry.get("source") == "synthesized"
-    date, shown = _dated(text, entry.get("created_at"))
-    return {
-        "kind": "note",
-        "id": entry["id"],
-        "text": text,
-        "shown": shown,
-        "date": date,
-        "created_at": entry.get("created_at") or "",
-        "by": note_signature(entry),
-        "shared": len(place & distinctive_terms(text)),
-        "episode": not summary and _is_episode(text),
-        "entry": entry,
-    }
-
-
-def _lesson_item(row: dict[str, Any], place: set[str]) -> dict[str, Any]:
-    text = row.get("content") or ""
-    date, shown = _dated(text, row.get("created_at"))
-    return {
-        "kind": "lesson",
-        "id": row["id"],
-        "text": text,
-        "shown": shown,
-        "date": date,
-        "created_at": row.get("created_at") or "",
-        "by": lesson_signature(row),
-        "shared": len(place & distinctive_terms(text)),
-        "episode": False,
-    }
-
-
-# Many notes begin with their own date ("2026-09-26: Riley said…"), the writer's
-# local day. The line then carries that date once instead of two dates.
-_LEADING_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})\b[,:;]?\s+")
-
-
-def _dated(text: str, created_at: str | None) -> tuple[str, str]:
-    stripped = text.lstrip()
-    match = _LEADING_DATE.match(stripped)
-    if match:
-        return match.group(1), stripped[match.end():]
-    return _date(created_at), text
-
-
-def _lessons(store: "EngramStore", **scope: str) -> list[dict[str, Any]]:
-    rows = store._get_conn().execute(
-        """
-        SELECT id, content, created_at, author_kind FROM engrams
-        WHERE owner_agent_id = ? AND person_id = ? AND project_scope = ?
-          AND state = 'active'
-          AND (tags LIKE '%"lesson"%' OR tags LIKE '%"distilled"%')
-        """,
-        (scope["agent_id"], scope["person_id"], scope["project_scope"]),
-    ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def _standing(store: "EngramStore", scope: dict[str, str]) -> list[dict[str, Any]]:
@@ -754,20 +691,6 @@ def _standing(store: "EngramStore", scope: dict[str, str]) -> list[dict[str, Any
         return store.standing_engrams(**scope)
     except Exception:
         return []
-
-
-def _carrying(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Up to three, by shared words with the place, then newest first. When none
-    of them is an episode, the best-ranked episode takes the last place."""
-    ranked = sorted(
-        candidates, key=lambda item: (item["shared"], item["created_at"]), reverse=True,
-    )
-    chosen = ranked[:_CARRYING_SHOWN]
-    if chosen and not any(item["episode"] for item in chosen):
-        episode = next((item for item in ranked if item["episode"]), None)
-        if episode is not None:
-            chosen = [*chosen[: _CARRYING_SHOWN - 1], episode]
-    return chosen
 
 
 # ── Rendering within the budget ──
@@ -798,22 +721,18 @@ def _render(packet: dict[str, Any], *, max_chars: int) -> tuple[str, dict[str, A
 
 
 def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
-    """What leaves the packet first when it does not fit: news (other sessions'
-    notes, what's carried, the report and episodes), then the foundational
-    notes, then the journal line; the question, beliefs and standing lines
-    go last. The oldest standing mark leaves first: standing says how to work in
-    this session. The person's replies never go: one left out would be marked
-    delivered unread."""
-    carrying = packet.get("carrying") or []
-    episodes = [item for item in carrying if item["episode"]]
-    others = [item for item in carrying if not item["episode"]]
+    """What leaves the packet first when it does not fit: other sessions'
+    notes, then the quiet hour's line, then what has been changing (the oldest
+    first), then what I keep coming back to (the last first), then the journal
+    line; the question, beliefs and standing lines go last. The oldest standing
+    mark leaves first: standing says how to work in this session. The person's
+    replies never go: one left out would be marked delivered unread."""
     standing = (packet.get("standing") or [])[:STANDING_SHOWN]
     return [
         *(("other", entry["id"]) for entry in reversed(packet.get("other_handoffs") or [])),
-        *(("carrying", item["id"]) for item in reversed(others)),
         ("report", ""),
-        *(("carrying", item["id"]) for item in episodes),
-        *(("who", entry["id"]) for entry in reversed(packet.get("foundational") or [])),
+        *(("changing", item["id"]) for item in reversed(packet.get("changing") or [])),
+        *(("returning", ",".join(entry["ids"])) for entry in reversed(packet.get("returning") or [])),
         ("journal", ""),
         ("question", ""),
         *(("belief", belief["id"]) for belief in reversed(packet.get("beliefs") or [])),
@@ -826,7 +745,8 @@ def _compose(
 ) -> tuple[str, dict[str, Any]]:
     shown: dict[str, Any] = {
         "handoffs": [], "standing": [], "notes": [], "questions": [], "report": None,
-        "journal": None, "replies": [],
+        "journal": None, "replies": [], "hour": None,
+        "changing": [], "returning": [], "beliefs": [],
     }
     # What the closing section lists for the tools, in the order shown.
     tools: dict[str, Any] = {
@@ -836,27 +756,25 @@ def _compose(
     # night's events; they are simply themselves, with the people they know,
     # and what happened comes after. Fresh readers said the same (2026-09-30):
     # how they see things "settles in easily", events and task lists "read
-    # more like a briefing". So how I see comes first, then who I'm with,
-    # then where I left off. What leaves first under the budget is unchanged
-    # (``_drop_order``).
+    # more like a briefing". So the full wake is the agent's own words, in
+    # the order a mind wakes: how I see, where I was, what has been changing
+    # in me, what I keep coming back to, who I'm with, one question, and
+    # while I was away. What leaves first under the budget is ``_drop_order``.
     if packet.get("wake") == "light":
         sections = [
-            _format_beliefs(packet, dropped, tools),
+            _format_beliefs(packet, dropped, shown, tools),
             _format_who(packet, chars, dropped, shown, tools),
             _format_left_off(packet, chars, dropped, shown, tools),
         ]
     else:
         sections = [
-            _format_beliefs(packet, dropped, tools),
-            _format_who(packet, chars, dropped, shown, tools),
+            _format_beliefs(packet, dropped, shown, tools),
             _format_where_left(packet, chars, dropped, shown, tools),
-            _format_replies(packet, shown, tools),
-            _format_notes(
-                "what i'm carrying" if packet.get("voice") == SELF else "what this memory is carrying",
-                packet, packet.get("carrying") or [], "carrying", chars, dropped, shown, tools,
-            ),
+            _format_changing(packet, dropped, shown, tools),
+            _format_returning(packet, dropped, shown),
+            _format_who(packet, chars, dropped, shown, tools),
             _format_question(packet, dropped, shown, tools),
-            _format_away(packet, dropped, shown),
+            _format_away(packet, dropped, shown, tools),
         ]
     body = "\n\n".join(section for section in sections if section)
     if not body:
@@ -932,7 +850,7 @@ def _format_left_off(
     reader_session = packet.get("reader_session") or ""
     label, whose = when_left(handoff, reader_model, reader_session)
     relations = {whose}
-    heading = "### where i left off" if whose == _OWN else "### where things were left"
+    heading = "### where i was" if whose == _OWN else "### where things were left"
     text = handoff["content"]
     if packet.get("wake") == "light":
         text, cut = cut_at_sentence(handoff["content"], LIGHT_HANDOFF_CHARS)
@@ -971,7 +889,7 @@ def _format_where_left(
     if left_off and journal:
         return f"{left_off}\n\n{journal}"
     if journal:
-        heading = "### where i left off" if packet.get("voice") == SELF else "### where things were left"
+        heading = "### where i was" if packet.get("voice") == SELF else "### where things were left"
         return f"{heading}\n{journal}"
     return left_off
 
@@ -993,6 +911,10 @@ def _format_journal(
     """
     entry = packet.get("journal")
     if not entry or ("journal", "") in dropped:
+        return ""
+    # The quiet hour's line says this entry already, under while i was away.
+    hour = packet.get("hour") or {}
+    if _hour_shows(packet, dropped) and hour.get("journal_id") == entry.get("id"):
         return ""
     whose, name, age, _session = _whose(
         {
@@ -1017,9 +939,9 @@ def _format_journal(
     return line
 
 
-def _format_replies(
+def _reply_lines(
     packet: dict[str, Any], shown: dict[str, Any], tools: dict[str, Any],
-) -> str:
+) -> list[str]:
     """The person's replies to the agent's notes that have not reached a
     packet yet, each as "<person> replied to my note "<its first line>":
     <reply>".
@@ -1031,17 +953,10 @@ def _format_replies(
     model's is named, and one no one can place is just "a note". Ids and tool
     names stay in the closing section.
     """
-    items = packet.get("replies") or []
-    if not items:
-        return ""
     person = packet.get("person_name") or "the person I'm with"
     reader = packet.get("reader_model") or ""
-    heading = (
-        "### replies to my notes" if packet.get("voice") == SELF
-        else "### replies to this memory's notes"
-    )
-    lines = [heading]
-    for item in items:
+    lines = []
+    for item in packet.get("replies") or []:
         words, cut = cut_at_sentence(item.get("text") or "", _REPLY_CHARS)
         title, _ = cut_at_sentence(_first_line(item.get("reply_to_text") or ""), _REPLIED_NOTE_CHARS)
         about = f' "{title}"' if title else ""
@@ -1051,7 +966,7 @@ def _format_replies(
         tools["replies"].append(item["id"])
         if cut:
             tools["cut"].append(item["id"])
-    return "\n".join(lines)
+    return lines
 
 
 def _whose_note(note_model: object, reader_model: str) -> str:
@@ -1077,14 +992,14 @@ def _format_who(
     shown: dict[str, Any],
     tools: dict[str, Any],
 ) -> str:
-    """Who I'm with: what the agent marked standing, then the foundational
-    notes, under the person's name when the operator gave it.
+    """Who I'm with: what the agent marked standing, under the person's name
+    when the operator gave it.
 
     The standing lines come first, the newest mark first, at most
     ``STANDING_SHOWN``, each the memory's own words on one line, cut at a
     sentence boundary. Their ids, which unmark one or read it whole, and the
     call that lists the rest wait in the closing section for the tools.
-    Without a standing memory the section is the foundational notes alone.
+    Without a standing memory there is no section.
     """
     person = packet.get("person_name") or ""
     standing = packet.get("standing") or []
@@ -1107,15 +1022,6 @@ def _format_who(
             lines.append(f"and {more} more like these.")
         elif more:
             lines.append(f"{more} left out for room.")
-    notes = [
-        _note_item(entry, set()) for entry in packet.get("foundational") or []
-        if ("who", entry["id"]) not in dropped
-    ]
-    if notes and lines:
-        lines.append("also:")
-    for item in notes:
-        lines.append(f"- {_note_head(packet, item)}: {_cut(item, chars, tools, key='shown')}")
-        shown["notes"].append(item["id"])
     heading = f"### {person}" if person else "### who i'm with"
     return "\n".join([heading, *lines]) if lines else ""
 
@@ -1125,59 +1031,6 @@ def standing_words(content: str) -> str:
     capture keeps after them, cut at a sentence boundary."""
     words = (content or "").split(_CONTEXT_MARK, 1)[0]
     return cut_at_sentence(words, STANDING_CHARS)[0]
-
-
-def _format_notes(
-    heading: str,
-    packet: dict[str, Any],
-    items: list[dict[str, Any]],
-    section: str,
-    chars: int,
-    dropped: set[tuple[str, str]],
-    shown: dict[str, Any],
-    tools: dict[str, Any],
-) -> str:
-    lines = []
-    for item in items:
-        if (section, item["id"]) in dropped:
-            continue
-        lines.append(f"- {_note_head(packet, item)}: {_cut(item, chars, tools, key='shown')}")
-        shown["notes"].append(item["id"])
-    return "\n".join([f"### {heading}", *lines]) if lines else ""
-
-
-def _note_head(packet: dict[str, Any], item: dict[str, Any]) -> str:
-    """A note's date and, unless the note is the reader's own, who wrote it.
-
-    Mnemos's own summaries and co-formed notes always say so. A note signed by
-    another model carries that model's name. An unsigned note the agent wrote
-    (before notes were signed) is the resident's own; anyone else is told it
-    is unsigned. A note no one knows the writer of is unsigned to every
-    reader: only the agent's own words are presented as the reader's.
-    """
-    by = _note_by(packet, item)
-    return f"{item['date']}, {by}" if by else item["date"]
-
-
-def _note_by(packet: dict[str, Any], item: dict[str, Any]) -> str:
-    voice = packet.get("voice")
-    reader = packet.get("reader_model") or ""
-    if item.get("kind") == "lesson":
-        tool = (item.get("by") or "") != "lesson"
-        if voice == SELF:
-            return "from a tool, not mine" if tool else "learned"
-        return "from a tool" if tool else "lesson"
-    entry = item.get("entry") or {}
-    if entry.get("authored_by") == "system":
-        return "Mnemos"
-    author = clean_model_id(str(entry.get("author_model") or ""))
-    if author:
-        if reader and same_mind(author, reader):
-            return ""
-        return display_name(author)
-    if entry.get("authored_by") == "coauthored":
-        return "co-formed"
-    return "" if voice == SELF and entry.get("authored_by") == "agent" else "unsigned"
 
 
 def _cut(
@@ -1192,7 +1045,10 @@ def _cut(
 
 
 def _format_beliefs(
-    packet: dict[str, Any], dropped: set[tuple[str, str]], tools: dict[str, Any],
+    packet: dict[str, Any],
+    dropped: set[tuple[str, str]],
+    shown: dict[str, Any],
+    tools: dict[str, Any],
 ) -> str:
     """Each belief once, in its own words: the firm ones, then those still
     forming.
@@ -1221,6 +1077,7 @@ def _format_beliefs(
     if firm and forming:
         lines.append("still forming:")
     lines.extend(f"- {belief['content']}" for belief in forming)
+    shown["beliefs"].extend(belief["id"] for belief in [*firm, *forming])
     tools["beliefs"] = [
         (belief["id"], int(round(float(belief["confidence"]) * 100)))
         for belief in [*firm, *forming]
@@ -1328,23 +1185,82 @@ def question_words(prompt: str) -> str:
     return text
 
 
-def _format_away(
+def _format_changing(
+    packet: dict[str, Any],
+    dropped: set[tuple[str, str]],
+    shown: dict[str, Any],
+    tools: dict[str, Any],
+) -> str:
+    """What has been changing in me: my newest impact lines, newest first, each
+    with its age. Traces, not records: how something changed me, in my words."""
+    del tools  # nothing here is shown by id
+    items = [
+        item for item in packet.get("changing") or []
+        if ("changing", item["id"]) not in dropped
+    ]
+    if not items:
+        return ""
+    heading = (
+        "### what's been changing in me" if packet.get("voice") == SELF
+        else "### what has been changing in this mind"
+    )
+    lines = [heading]
+    for item in items:
+        words = cut_at_sentence(item["text"], _WAKE_LINE_CHARS)[0]
+        lines.append(f"- {words} ({_age_text(item['created_at'])})")
+        shown["changing"].append(item["id"])
+    return "\n".join(lines)
+
+
+def _format_returning(
     packet: dict[str, Any], dropped: set[tuple[str, str]], shown: dict[str, Any],
 ) -> str:
-    report = packet.get("maintenance_report")
-    if not report or ("report", "") in dropped:
+    """What I keep coming back to: the ideas the noticer found in my own words,
+    on how many days, until one becomes a belief."""
+    entries = [
+        entry for entry in packet.get("returning") or []
+        if ("returning", ",".join(entry["ids"])) not in dropped
+    ]
+    if not entries:
         return ""
-    shown["report"] = report["id"]
-    written = _age_text(report.get("last_revised_at") or report.get("created_at"))
-    if packet.get("voice") == SELF:
-        heading, writer = "### while i was away", "My memory's upkeep"
-    else:
-        heading, writer = "### lately, in this memory", "Mnemos's upkeep"
-    return (
-        f"{heading}\n"
-        f"{' '.join(report['content'].split())}\n"
-        f"({writer} wrote this {written}; these aren't my words.)"
-    )
+    lines = ["### what i keep coming back to"]
+    lines.extend(f'- "{entry["quote"]}" ({entry["days"]} days)' for entry in entries)
+    shown["returning"].extend(",".join(entry["ids"]) for entry in entries)
+    return "\n".join(lines)
+
+
+def _format_away(
+    packet: dict[str, Any],
+    dropped: set[tuple[str, str]],
+    shown: dict[str, Any],
+    tools: dict[str, Any],
+) -> str:
+    """While I was away: my own quiet hour, when one ended since the last
+    packet, then the person's replies to my notes. Upkeep's report isn't here:
+    its words aren't mine."""
+    lines = []
+    which = _hour_shows(packet, dropped)
+    if which:
+        hour = packet["hour"]
+        line = f"{which} ({_age_text(hour.get('ended_at'))})"
+        first = hour.get("first_line") or ""
+        if first:
+            line += f": {cut_at_sentence(first, _WAKE_LINE_CHARS)[0]}"
+        lines.append(line)
+        shown["hour"] = hour.get("ended_at")
+    lines.extend(_reply_lines(packet, shown, tools))
+    if not lines:
+        return ""
+    heading = "### while i was away" if packet.get("voice") == SELF else "### lately, in this memory"
+    return "\n".join([heading, *lines])
+
+
+def _hour_shows(packet: dict[str, Any], dropped: set[tuple[str, str]]) -> str:
+    """How the quiet hour's line begins when this wake shows it, else ``""``."""
+    hour = packet.get("hour")
+    if not hour or ("report", "") in dropped:
+        return ""
+    return {"mine": "- my quiet hour", "ours": "- our hour"}.get(hour.get("kind"), "")
 
 
 def _format_tools(packet: dict[str, Any], tools: dict[str, Any]) -> str:
@@ -1440,7 +1356,8 @@ def _record_delivery(
     deliver_replies: bool = True,
 ) -> None:
     """Count what was actually shown: a handoff as delivered, a question as
-    one showing spent, a reply of the person's as delivered, once.
+    one showing spent, a reply of the person's as delivered, once, and a quiet
+    hour as shown (meta ``last_hour_shown``), so it shows once.
 
     A reply is marked only when it was shown, and never by code older than the
     store (``deliver_replies`` False): what delivered means is a rule newer
@@ -1459,12 +1376,11 @@ def _record_delivery(
             store.mark_reflections_surfaced(shown["questions"])
         except Exception:
             pass
+    prefix = f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
     if shown["handoffs"] or shown["notes"] or shown.get("standing"):
-        store.set_meta(
-            f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
-            ":last_context_delivery_at",
-            datetime.now(timezone.utc).isoformat(),
-        )
+        store.set_meta(f"{prefix}:last_context_delivery_at", datetime.now(timezone.utc).isoformat())
+    if shown.get("hour"):
+        store.set_meta(f"{prefix}:last_hour_shown", shown["hour"])
 
 
 def _moment(timestamp: str | None) -> datetime | None:
@@ -1501,6 +1417,160 @@ def _waiting_replies(store: "EngramStore", scope: dict[str, str]) -> list[dict[s
         return store.undelivered_replies(**scope, limit=REPLIES_SHOWN)
     except Exception:
         return []
+
+
+def _changing(
+    store: "EngramStore", scope: dict[str, str], owner: str,
+) -> list[dict[str, Any]]:
+    """What has been changing in the reader: the newest ``CHANGING_SHOWN`` impact
+    lines its own line wrote (``owner`` is the reader, else the resident), newest
+    first, each said once (a lesson and the memory it came from say the same
+    words). Unsigned lines never count. A packet never fails because of them."""
+    items: list[dict[str, Any]] = []
+    try:
+        rows = store._get_conn().execute(
+            """
+            SELECT id, impact, author_model, created_at FROM engrams
+            WHERE owner_agent_id = ? AND person_id = ? AND project_scope = ?
+              AND state = 'active' AND author_kind = 'agent' AND impact_source = 'agent'
+              AND trim(impact) != '' AND standing = 0
+            ORDER BY created_at DESC
+            """,
+            (scope["agent_id"], scope["person_id"], scope["project_scope"]),
+        )
+        newest = []
+        for row in rows:
+            if same_mind(row["author_model"], owner):
+                newest.append(row)
+                if len(newest) == CHANGING_SHOWN:
+                    break
+    except Exception:
+        return []
+    said: set[str] = set()
+    for row in newest:
+        impact = row["impact"].strip()
+        if impact in said:
+            continue
+        said.add(impact)
+        items.append({"id": row["id"], "text": row["impact"], "created_at": row["created_at"]})
+    return items
+
+
+def _returning(
+    store: "EngramStore", scope: dict[str, str], agent_id: str, owner: str,
+) -> list[dict[str, Any]]:
+    """What the reader keeps coming back to: the ideas the noticer found (meta
+    ``ideas_returning``), until one is held. An idea is held once half or more
+    of its memories support an active belief the reader's line signed. One an
+    open question asks about is left out while it is open: the question shows
+    it already. At most ``RETURNING_SHOWN``; none when the meta is missing or
+    unreadable."""
+    try:
+        entries = json.loads(store.get_meta(
+            f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
+            ":ideas_returning",
+            "",
+        ) or "")
+        held: set[str] = set()
+        for belief in store.get_beliefs(agent_id, active_only=True):
+            if same_mind(belief.author_model, owner):
+                held.update(belief.supporting_engram_ids or [])
+        asking = _open_evidence(store, scope)
+        kept = []
+        for entry in entries:
+            ids = [str(engram_id) for engram_id in entry["ids"]]
+            if 2 * sum(engram_id in held for engram_id in ids) >= len(ids):
+                continue
+            if any(2 * len(asked.intersection(ids)) > len(ids) for asked in asking):
+                continue
+            kept.append({"ids": ids, "days": int(entry["days"]), "quote": str(entry["quote"])})
+    except Exception:
+        return []
+    return kept[:RETURNING_SHOWN]
+
+
+# As the noticer writes it (``simple_runtime._EVIDENCE_MARKER``).
+_EVIDENCE = re.compile(r"\[evidence:([A-Za-z0-9_,]+)\]")
+
+
+def _open_evidence(store: "EngramStore", scope: dict[str, str]) -> list[set[str]]:
+    """The memory ids each open evidence question names: an unanswered belief
+    question with ``[evidence:…]`` that hasn't expired or been put too often,
+    on a memory not archived (the noticer's own test for an open ask)."""
+    rows = store._get_conn().execute(
+        "SELECT q.prompt FROM reflection_queue q JOIN engrams e ON e.id = q.target_id "
+        "WHERE q.agent_id = ? AND q.person_id = ? AND q.project_scope = ? "
+        "AND q.kind = 'belief' AND q.answered_at IS NULL "
+        "AND (q.expires_at IS NULL OR q.expires_at > ?) AND instr(q.prompt, '[evidence:') > 0 "
+        "AND e.state != 'archived' AND q.surfaced_count < ?",
+        (scope["agent_id"], scope["person_id"], scope["project_scope"],
+         datetime.now(timezone.utc).isoformat(), store.MAX_SURFACINGS),
+    ).fetchall()
+    return [
+        set(marker.group(1).split(","))
+        for row in rows for marker in _EVIDENCE.finditer(row["prompt"])
+    ]
+
+
+def _latest_hour(
+    store: "EngramStore", scope: dict[str, str], owner: str, woke: datetime,
+) -> dict[str, Any] | None:
+    """The reader's newest quiet hour since the last packet was delivered: a
+    done hour on the live store, run by the reader's line, that ended after the
+    last delivery (with none recorded, in the last ``HOUR_LIVE``) and after
+    the hour a wake last showed (meta ``last_hour_shown``): each hour shows
+    once. Its ``first_line`` is the first line of the first journal entry it
+    wrote that this scope holds, or ``""``, and ``journal_id`` that entry's id.
+    None otherwise, and on any error."""
+    # Imported here, not at the top: the packet doesn't load the hours' runner.
+    from ..life import hours_dir
+
+    try:
+        path = hours_dir(scope["agent_id"]) / "hours.jsonl"
+        if not path.exists():
+            return None
+        prefix = f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
+        since = _moment(store.get_meta(f"{prefix}:last_context_delivery_at", None))
+        last_shown = _moment(store.get_meta(f"{prefix}:last_hour_shown", None))
+        latest: tuple[datetime, dict[str, Any]] | None = None
+        for line in path.read_text(encoding="utf-8").splitlines():
+            try:
+                record = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(record, dict):
+                continue
+            if record.get("status") != "done" or record.get("store") != "live":
+                continue
+            if not same_mind(record.get("model"), owner):
+                continue
+            ended = _moment(record.get("ended_at"))
+            if ended is None:
+                continue
+            if since is not None and ended <= since:
+                continue
+            if since is None and woke - ended >= HOUR_LIVE:
+                continue
+            if last_shown is not None and ended <= last_shown:
+                continue
+            if latest is None or ended > latest[0]:
+                latest = (ended, record)
+        if latest is None:
+            return None
+        record = latest[1]
+        entries = {row["id"]: row for row in store.journal_entries(**scope)}
+        first_line = journal_id = ""
+        for entry_id in record.get("journal_ids") or []:
+            if entry_id in entries:
+                first_line = _first_line(entries[entry_id].get("text") or "")
+                journal_id = entry_id
+                break
+        return {
+            "ended_at": record["ended_at"], "kind": record.get("kind"),
+            "first_line": first_line, "journal_id": journal_id,
+        }
+    except Exception:
+        return None
 
 
 def _graph_recall(

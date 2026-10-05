@@ -54,7 +54,7 @@ def test_exact_handoff_survives_restart_context_correction_and_backup(tmp_path):
         # reader as its own words.
         assert "From your previous session, in your own words" not in packet
         assert "Yours" not in packet
-        assert "### where i left off" not in packet
+        assert "### where i was" not in packet
         assert packet.index("### where things were left") < packet.index("unsigned, ")
         assert packet.index("unsigned, ") < packet.index(text)
         surfaced = second._store.get_latest_handoff(**SCOPE)
@@ -170,9 +170,6 @@ def test_startup_packet_delivers_handoff_first_once_and_marks_delivery(tmp_path)
         assert packet["handoff"]["content"] == text
         assert all(row["entry_kind"] != "handoff" for row in packet["hypomnema"])
         assert packet["prompt"].count(text) == 1
-        assert packet["prompt"].index(text) < packet["prompt"].index(
-            "### what this memory is carrying"
-        )
         delivered = store.get_latest_handoff(**SCOPE)
         assert delivered["surface_count"] == 1
         assert delivered["last_surfaced_at"] is not None

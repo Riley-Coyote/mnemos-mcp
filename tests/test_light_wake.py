@@ -92,12 +92,12 @@ def test_light_names_who_and_where_but_asks_nothing(tmp_path):
     packet = _packet(_hook(db, tmp_path, env={"MNEMOS_WAKE": "light"}))
     assert STANDING in packet
     assert FOUNDATIONAL not in packet
-    assert "### where i left off" in packet
+    assert "### where i was" in packet
     assert "### a question waiting for me" not in packet
     assert "last time I wrote in my journal" not in packet
     assert REPLY not in packet
     body, tools = packet.split("\n\n### for the memory tools\n", 1)
-    handoff = body.split("### where i left off\n", 1)[1].split(":\n", 1)[1]
+    handoff = body.split("### where i was\n", 1)[1].split(":\n", 1)[1]
     assert len(handoff) <= 700
     assert handoff != HANDOFF
     assert handoff.startswith("Where I stopped: the harbour ledger balances.")

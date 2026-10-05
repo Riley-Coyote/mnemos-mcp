@@ -253,16 +253,13 @@ class TestContinuityOnlyPacket:
         assert "[context packet truncated" not in prompt, (
             "the packet still overflows its budget and is being hard-cut"
         )
-        # Every section must survive, not just the ones that sorted first.
-        assert "### who i'm with" in prompt
-        assert "### what this memory is carrying" in prompt
-        # And no note may end mid-word. (The ids and calls for the tools that
+        # No note may end mid-word. (The ids and calls for the tools that
         # close the packet aren't notes; a call's "…" is a placeholder.)
         for line in prompt.split("### for the memory tools", 1)[0].splitlines():
             if line.startswith("- ") and "…" in line:
                 assert " […]" in line, f"clipped mid-word: {line[-40:]!r}"
 
-    def test_dream_journal_notes_are_not_shown_as_continuity(self, tmp_path, monkeypatch):
+    def test_dream_journal_notes_are_not_in_the_wake_and_are_still_written(self, tmp_path, monkeypatch):
         """Consolidation diary is not continuity about the human or the work.
 
         "I connected 148 memories that belong together" was appearing as an
@@ -270,7 +267,7 @@ class TestContinuityOnlyPacket:
         machinery describing itself.
         """
         monkeypatch.setenv("HOME", str(_seed_home(tmp_path)))
-        from mnemos.dream_journal import DREAM_JOURNAL_TAG, write_dream_entry
+        from mnemos.dream_journal import write_dream_entry
         from mnemos.interface.context_packet import build_context_packet
         from mnemos.simple_runtime import MnemosRuntime
         from mnemos.store.sqlite_store import EngramStore
@@ -289,11 +286,17 @@ class TestContinuityOnlyPacket:
         finally:
             store.close()
 
-        for entry in packet["hypomnema"]:
-            assert DREAM_JOURNAL_TAG not in (entry.get("tags") or [])
-        assert "148 memories" in packet["prompt"]
-        assert "### lately, in this memory" in packet["prompt"]
-        assert "these aren't my words" in packet["prompt"]
+        assert "148 memories" not in packet["prompt"], packet["prompt"]
+        assert "these aren't my words" not in packet["prompt"], packet["prompt"]
+        store = EngramStore(db_path)
+        try:
+            reports = store._get_conn().execute(
+                "SELECT content FROM hypomnema_entries "
+                "WHERE entry_kind = 'maintenance_report' AND active = 1"
+            ).fetchall()
+        finally:
+            store.close()
+        assert [row[0] for row in reports] == ["I connected 148 memories."], reports
 
 
 class TestHookInstaller:

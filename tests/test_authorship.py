@@ -576,7 +576,7 @@ def test_identity_is_measured_only_from_what_the_agent_wrote(tmp_path):
 # ── The packet and the hook: signatures that say whose words ──
 
 
-def test_the_packet_says_when_a_lesson_is_a_tools_words(tmp_path, monkeypatch):
+def test_lessons_are_not_carried_in_the_wake_and_recall_finds_them(tmp_path, monkeypatch):
     db = tmp_path / "m.db"
     runtime = _runtime(db)
     try:
@@ -591,15 +591,16 @@ def test_the_packet_says_when_a_lesson_is_a_tools_words(tmp_path, monkeypatch):
         # The same packet, for a reader who knows it is this memory's own.
         monkeypatch.setenv("MNEMOS_AGENT_MODEL", OPUS)
         as_itself = runtime.context()
+        atlas = runtime.recall("rebuild the sprite atlas after palette edits")
+        ferry = runtime.recall("check the live ferry page before calling a fix done")
     finally:
         runtime.close()
 
-    carrying = packet.split("### what this memory is carrying\n", 1)[1].split("###", 1)[0]
-    assert "from a tool: Always rebuild the sprite atlas" in carrying, carrying
-    assert "lesson: Check the live ferry page" in carrying, carrying
-    carrying = as_itself.split("### what i'm carrying\n", 1)[1].split("###", 1)[0]
-    assert "from a tool, not mine: Always rebuild the sprite atlas" in carrying, carrying
-    assert "learned: Check the live ferry page" in carrying, carrying
+    for wake in (packet, as_itself):
+        assert "### what this memory is carrying" not in wake, wake
+        assert "### what i'm carrying" not in wake, wake
+    assert "Always rebuild the sprite atlas after palette edits." in atlas, atlas
+    assert "Check the live ferry page before calling a fix done." in ferry, ferry
 
 
 def test_the_hook_knows_its_reader_from_the_sessions_own_introduction(tmp_path, monkeypatch):
@@ -632,7 +633,7 @@ def test_the_hook_knows_its_reader_from_the_sessions_own_introduction(tmp_path, 
     assert proc.returncode == 0, proc.stderr
     packet = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
     # Its own note, from another session: no "if you are" about it.
-    assert re.search(r"### where i left off\n[^\n]*, in another session:\n", packet), packet
+    assert re.search(r"### where i was\n[^\n]*, in another session:\n", packet), packet
     assert "if I'm not" not in packet and "yours if" not in packet, packet
 
 

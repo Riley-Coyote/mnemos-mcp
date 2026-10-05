@@ -323,12 +323,10 @@ def test_a_capture_marked_standing_is_signed_and_words_never_mark_one(tmp_path):
     assert _standing_ids(db) == {marked}
 
     # ... and read back in another: the next session's briefing opens with it.
-    # The capture whose words only sound like a rule is an ordinary note.
     packet = _hook(db, tmp_path)
     who = _who(packet)
     assert who[0] == LABEL, who
     assert who[1].startswith("- HARD RULE from Riley") and _standing_shown(packet) == [marked], who
-    assert who[2] == "also:" and SOUNDS_STANDING in who[3], who
 
 
 def test_the_tool_descriptions_carry_the_mark_and_the_instructions_do_not():
@@ -498,10 +496,7 @@ def test_the_briefing_opens_with_the_newest_standing_marks(tmp_path):
     assert RULE_CONTEXT not in packet
     assert who[6] == "and 2 more like these.", who
     assert f"; all of it: {LIST_CALL}" in packet, packet
-    # The rest of the section follows, and a standing memory's own note is not
-    # said a second time.
-    assert who[7] == "also:", who
-    assert any(FOUNDATION in line for line in who[8:]), who
+    # A standing memory's own note is not said a second time.
     for rule in RULES[:6]:
         assert packet.count(rule) <= 1, f"said twice: {rule}"
 

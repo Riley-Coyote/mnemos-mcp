@@ -311,13 +311,7 @@ GOLDEN = """\
 - Plain words carry further than clever ones.
 - What's checked against the real thing outranks what's reasoned out.
 
-### Riley
-- 2026-08-20: Riley prefers plain words and short replies.
-- 2026-07-14, Fable 5: Riley works best after midnight and wants to see the result \
-running before he reads any code.
-- 2026-06-01, unsigned: Riley's studio is in Lisbon.
-
-### where i left off
+### where i was
 2 hours ago, this session:
 Where I stopped: the changelog draft for the ferry app is half written.
 Next: ask Riley whether the tone is right.
@@ -331,17 +325,6 @@ tested it twice against staging. […]
 nightly at 02:00 and writes to data/timetable.json.
 A colleague's note is theirs: I take what's useful and don't claim the work.
 
-### what i'm carrying
-- 2026-09-21, learned: Check the live ferry page before calling a fix done.
-- 2026-09-20: The ferry app reads its schedule from one settings file, and \
-every screen takes its times from there. Changing a time in two places caused last \
-month's confusion, so everything goes through that one file now. The settings file is \
-also where the holiday timetable lives, which the app switches to on public holidays. A \
-second file for tests mirrors it, and the two must be kept in step whenever a route \
-changes. […]
-- 2026-09-18: Riley and I fixed the ferry timetable parser in \
-ferry/parse.py; the three failing tests pass now.
-
 ### a question waiting for me
 On 3 different days you wrote something like this:
 - "Riley plans every trip around the ferry timetable." (September 20)
@@ -351,13 +334,9 @@ Is there something you believe here?
 If something true comes, I'll answer it in my own words; if not, I'll leave it, and it \
 fades on its own.
 
-### while i was away
-Mnemos connected 4 memories that belong together.
-(My memory's upkeep wrote this 2 hours ago; these aren't my words.)
-
 ### for the memory tools
 Ids and calls for my memory tools. Never shown to Riley.
-- what was cut short, whole, in order: mnemos_recall("<id>"), mnemos_recall("<id>")
+- what was cut short, whole, in order: mnemos_recall("<id>")
 - beliefs, in order: belief_<id> (40%), belief_<id> (35%)
 - to answer the question: mnemos_reflect(target_id="<id>", text="…", verdict="…"); \
 verdict: hold, decline or not_now"""
@@ -389,7 +368,7 @@ def test_the_hook_and_mnemos_context_give_the_same_packet(tmp_path, monkeypatch)
 
     assert _ids_hidden(from_tool) == _ids_hidden(from_hook)
     assert from_tool.split("\n", 2)[2] == from_hook.split("\n", 2)[2], "only the moment may differ"
-    assert "### where i left off" in from_hook, "premise: a full packet"
+    assert "### where i was" in from_hook, "premise: a full packet"
 
 
 def test_mnemos_context_appends_what_matches_its_query_after_the_packet(tmp_path, monkeypatch):
@@ -475,7 +454,7 @@ def test_a_section_with_nothing_in_it_is_left_out(tmp_path, monkeypatch):
         runtime.close()
 
     for packet in (from_hook, from_tool):
-        assert _headings(packet) == ["### where i left off"], packet
+        assert _headings(packet) == ["### where i was"], packet
         assert "Scope" not in packet and "How To Use" not in packet
 
 
@@ -485,7 +464,7 @@ def test_a_section_with_nothing_in_it_is_left_out(tmp_path, monkeypatch):
 def test_the_readers_own_handoff_comes_first_and_whole(tmp_path):
     db, _ = _briefing_store(tmp_path)
 
-    as_opus = _section(_hook(db, tmp_path), "where i left off")
+    as_opus = _section(_hook(db, tmp_path), "where i was")
     assert as_opus.startswith(f"2 hours ago, this session:\n{OWN_NOTE}\n")
     # The same model in a parallel session is the reader too; another model
     # is a colleague, and only its note carries the line about claiming.
@@ -496,7 +475,7 @@ def test_the_readers_own_handoff_comes_first_and_whole(tmp_path):
 
     # Fable's own note is Fable's, though this memory is mostly Opus 5.5's.
     as_fable = _section(
-        _hook(db, tmp_path, session=FABLE_SESSION, model=FABLE), "where i left off",
+        _hook(db, tmp_path, session=FABLE_SESSION, model=FABLE), "where i was",
     )
     assert as_fable.startswith(f"26 hours ago, this session:\n{FABLE_NOTE}\n")
     assert "- Opus 5.5, a colleague, 2 hours ago: " in as_fable
@@ -524,19 +503,16 @@ def test_a_cut_note_is_recalled_whole_by_its_id(tmp_path, monkeypatch):
     assert LESSON in lesson
     assert SETTINGS_NOTE not in forgotten, "a forgotten note came back by its id"
 
-    # Those are the ids the packet gives for the notes it cut, in the order
-    # it cut them: the other session's handoff, then the settings note.
+    # The packet gives an id for the note it cut.
     assert SETTINGS_NOTE not in packet and SIBLING_NOTE not in packet, "premise: both are cut"
     [cut_line] = [line for line in packet.splitlines() if "what was cut short" in line]
-    assert re.findall(r'mnemos_recall\("([^"]+)"\)', cut_line) == [ids["sibling"], ids["settings"]]
-    assert "Release check" in _section(packet, "where i left off").split(" […]")[0]
-    assert "one settings file" in _section(packet, "what i'm carrying").split(" […]")[0]
+    assert "Release check" in _section(packet, "where i was").split(" […]")[0]
 
 
-# ── What I'm carrying ──
+# ── What I'm carrying (no longer in the wake) ──
 
 
-def test_what_you_are_carrying_follows_the_folder_and_its_repository(tmp_path):
+def test_notes_are_not_carried_in_any_folder_and_recall_finds_them(tmp_path, monkeypatch):
     db = tmp_path / "memory.db"
     store = EngramStore(db)
     try:
@@ -548,16 +524,8 @@ def test_what_you_are_carrying_follows_the_folder_and_its_repository(tmp_path):
     for n, note_id in enumerate(newer):
         _dated(db, note_id, _on(f"2026-09-0{n + 1}"))
 
-    def carrying(folder: Path) -> str:
-        return _section(_hook(db, tmp_path, cwd=folder), "what i'm carrying")
-
-    # Nowhere in particular: the three newest.
-    assert "harbour ledger" not in carrying(_folder(tmp_path, "scratch"))
-    # In a folder named for it, it comes first.
-    assert carrying(_folder(tmp_path, "harbour-ledger")).startswith(
-        "- 2026-08-01: Riley keeps the harbour ledger"
-    )
-    # A worktree and a folder deep in a checkout are named for their repository.
+    # Nowhere in particular, in a folder named for it, and in a worktree and a
+    # folder deep in a checkout (named for their repository).
     repository = tmp_path / "repos" / "harbour"
     (repository / ".git" / "worktrees" / "wt-7").mkdir(parents=True)
     worktree = tmp_path / "trees" / "wt-7"
@@ -565,11 +533,21 @@ def test_what_you_are_carrying_follows_the_folder_and_its_repository(tmp_path):
     (worktree / ".git").write_text(f"gitdir: {repository}/.git/worktrees/wt-7\n")
     deep = repository / "src" / "deep"
     deep.mkdir(parents=True)
-    for folder in (worktree, deep):
-        assert "harbour ledger" in carrying(folder).splitlines()[0], folder
+    for folder in (_folder(tmp_path, "scratch"), _folder(tmp_path, "harbour-ledger"), worktree, deep):
+        packet = _hook(db, tmp_path, cwd=folder)
+        assert "### what i'm carrying" not in packet, folder
+        assert "harbour ledger" not in packet, folder
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", OWN)
+    runtime = _runtime(db)
+    try:
+        found = runtime.recall("harbour ledger")
+    finally:
+        runtime.close()
+    assert "Riley keeps the harbour ledger in ledger/2026.csv." in found, found
 
 
-def test_one_concrete_episode_is_always_carried(tmp_path):
+def test_the_concrete_episode_is_not_carried_and_recall_finds_it(tmp_path, monkeypatch):
     db = tmp_path / "memory.db"
     store = EngramStore(db)
     try:
@@ -586,15 +564,16 @@ def test_one_concrete_episode_is_always_carried(tmp_path):
     _dated(db, summary, _on("2026-09-15"))
     _dated(db, episode, _on("2026-08-02"))
 
-    lines = _section(
-        _hook(db, tmp_path, cwd=_folder(tmp_path, "harbour")), "what i'm carrying",
-    ).splitlines()
-    # Ranked, the three lessons come first. One place goes to what happened.
-    assert lines == [
-        "- 2026-09-22, learned: Harbour work goes better in small steps.",
-        "- 2026-09-21, learned: Ask before changing the harbour schedule.",
-        "- 2026-08-02: Riley and I moved the harbour ledger to ledger/2026.csv.",
-    ]
+    packet = _hook(db, tmp_path, cwd=_folder(tmp_path, "harbour"))
+    assert "### what i'm carrying" not in packet, packet
+
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", OWN)
+    runtime = _runtime(db)
+    try:
+        found = runtime.recall("moved the harbour ledger")
+    finally:
+        runtime.close()
+    assert "Riley and I moved the harbour ledger to ledger/2026.csv." in found, found
 
 
 # ── The budget ──
@@ -624,7 +603,6 @@ def test_the_packet_stays_under_six_thousand_characters(tmp_path):
     assert len(packet) < 6000, len(packet)
     assert len(handoff) > 2500 and handoff in packet, "the reader's handoff was cut"
     cut = [line for line in packet.splitlines() if line.endswith(" […]")]
-    assert len(cut) >= 6, "premise: notes were cut to fit"
     for line in cut:
         kept = line.removesuffix(" […]")
         assert kept.endswith("."), f"cut mid-sentence: …{kept[-50:]}"
@@ -652,7 +630,6 @@ def test_the_latest_report_is_found_however_many_notes_outrank_it(tmp_path):
 
     assert found is not None and found["id"] == first, "the report was not found"
     assert [entry["id"] for entry in active] == [second], "a new report piled up beside the last"
-    assert f"### while i was away\n{REPORT}\n" in _hook(db, tmp_path)
 
 
 def test_a_report_that_changed_nothing_is_not_shown(tmp_path):
@@ -744,10 +721,6 @@ def test_a_session_start_raises_the_stores_code_version(tmp_path):
 
 # ── A use, what was shown, and one budget (review of #84) ──
 
-TRACE = (
-    "SELECT access_count, last_accessed, reconsolidation_count, strength, stability, "
-    "accessibility FROM engrams WHERE id = ?"
-)
 ALL_TRACES = (
     "SELECT id, access_count, reconsolidation_count, strength, stability, accessibility "
     "FROM engrams ORDER BY id"
@@ -789,41 +762,26 @@ def test_recalling_a_memory_by_its_id_is_a_use_once_a_session(tmp_path, monkeypa
     assert _read(db, ALL_TRACES) == before
 
 
-def test_the_packet_showing_a_memory_is_not_a_use(tmp_path, monkeypatch):
-    db, ids = _briefing_store(tmp_path)
+def test_a_lesson_is_not_carried_and_recall_finds_it(tmp_path, monkeypatch):
+    db, _ = _briefing_store(tmp_path)
     folder = _folder(tmp_path, "ferry-app")
-    lesson = ids["lesson"]
-    before = _read(db, TRACE, (lesson,))
-    links = (
-        "SELECT COUNT(*) FROM connections WHERE relation = 'co_activated' "
-        "AND (source_id = ? OR target_id = ?)"
-    )
-    assert _read(db, links, (lesson, lesson)) == [(0,)]
 
-    packets = [
-        _hook(db, tmp_path, cwd=folder),
-        _hook(db, tmp_path, cwd=folder, extra=("--include-graph", "--query", "live ferry page")),
-    ]
+    packets = [_hook(db, tmp_path, cwd=folder)]
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", OWN)
     monkeypatch.chdir(folder)
     runtime = _runtime(db)
     try:
         packets.append(runtime.context())
-        packets.append(runtime.context("live ferry page"))
+        found = runtime.recall("live ferry page")
     finally:
         runtime.close()
 
-    # The hook knows its reader (the resident, who learned it); the runtime
-    # here doesn't, and calls it a lesson.
     for packet in packets:
-        assert re.search(rf"^- 2026-09-21, (learned|lesson): {re.escape(LESSON)}$", packet, re.M), (
-            packet
-        )
-    assert _read(db, TRACE, (lesson,)) == before, "the packet's own pick was reinforced"
-    assert _read(db, links, (lesson, lesson)) == [(0,)]
+        assert "### what i'm carrying" not in packet and LESSON not in packet, packet
+    assert LESSON in found, found
 
 
-def test_what_the_packet_carries_is_not_repeated_after_it(tmp_path, monkeypatch):
+def test_what_the_packet_no_longer_carries_is_found_after_it(tmp_path, monkeypatch):
     db, _ = _briefing_store(tmp_path)
     folder = _folder(tmp_path, "ferry-app")
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", OWN)
@@ -839,10 +797,9 @@ def test_what_the_packet_carries_is_not_repeated_after_it(tmp_path, monkeypatch)
         (asked, '### For "live ferry page"'), (graph, "### Mnemos Graph"),
     ):
         assert heading in packet, "premise: something else was found"
-        carried, after = packet.split(heading, 1)
-        assert LESSON in carried, "premise: the lesson is carried"
-        assert LESSON not in after, f"the carried lesson was repeated under {heading!r}"
-        assert QUESTION_ON in after, "premise: the rest of what the query finds is there"
+        wake, after = packet.split(heading, 1)
+        assert "### what i'm carrying" not in wake and LESSON not in wake, wake
+        assert LESSON in after, f"recall under {heading!r} did not find the lesson"
 
 
 LIGHTHOUSE = "the lighthouse lamp wants a new wick before winter."
@@ -895,8 +852,10 @@ def test_graph_recall_after_the_packet_stays_within_the_budget(tmp_path):
     db, _ = _briefing_store(tmp_path)
     store = EngramStore(db)
     try:
+        # Long enough that the graph's six entries (its own cap) don't all fit:
+        # the carrying section that used to take this room is gone (Ready C).
         store.write_handoff(
-            ("Where I stopped: the harbour ledger, checked page by page. " * 50)[:2700],
+            ("Where I stopped: the harbour ledger, checked page by page. " * 50)[:3700],
             **SCOPE, author_model=OPUS, author_session=OWN,
         )
         found = {
