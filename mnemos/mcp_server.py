@@ -184,13 +184,13 @@ def _scoped(
 
 
 def _init_store(db_path: str = "~/.mnemos/memory.db") -> None:
-    """Initialize the global store, helpers, and auto-detect LLM client."""
+    """Initialize the global store, its helpers, and the chosen provider's client."""
     global _store, _encoder, _retriever, _llm_client, _embedding_index, _shared_pool
     if _store is None:
         _store = EngramStore(db_path)
         # Initialize embedding index (same DB path — gracefully degrades)
         _embedding_index = EmbeddingIndex(db_path=db_path)
-        # Auto-detect LLM client from env vars (before encoder, which uses it)
+        # The provider the person chose for Mnemos, if any (before the encoder, which uses it)
         from .llm import create_client
         _llm_client = create_client()
         # Initialize shared memory pool

@@ -12,8 +12,8 @@ Three implementations:
 - OpenRouterClient: Uses OpenRouter API (any model)
 - MockClient: Returns canned responses (for testing)
 
-Auto-detection: create_client() checks env vars and returns the
-appropriate client, or None if no API keys are found.
+create_client() returns the client for the provider the person chose for
+Mnemos (``chosen_provider``), or None. A key on its own chooses nothing.
 """
 
 from __future__ import annotations
@@ -404,15 +404,61 @@ def _load_openclaw_openrouter_key() -> str:
     return ""
 
 
-def create_client(agent_model_hint: str | None = None) -> "LLMClient | None":
-    """Create an optional provider client, if one is configured.
+# Answers to "which provider?" that mean none, and the providers Mnemos knows.
+_NO_PROVIDER = frozenset({"", "none", "off", "no", "skip", "local", "rule-based"})
+_PROVIDERS = frozenset({"claude-cli", "claude_cli", "subscription", "openrouter", "anthropic", "openai"})
+_WARNED: set[str] = set()
 
-    Provider resolution checks env vars and .env files in order:
-    1. MNEMOS_LLM_PROVIDER env var (openai|anthropic|openrouter) — forces provider
-    2. ANTHROPIC_API_KEY → AnthropicClient
-    3. OPENROUTER_API_KEY → OpenRouterClient
-    4. OPENAI_API_KEY → OpenAIClient
-    5. Neither → None
+
+def _warn_once(message: str) -> None:
+    """A warning a long-running server gives once, not on every client."""
+    if message not in _WARNED:
+        _WARNED.add(message)
+        logger.warning(message)
+
+
+def chosen_provider() -> str:
+    """The model provider the person chose for Mnemos, or "" for none.
+
+    Only a choice made for Mnemos counts: MNEMOS_LLM_PROVIDER, in the
+    environment or a .env file Mnemos reads, or ``llm.provider`` in its
+    config. A key on its own chooses nothing. People keep provider keys in
+    their shells and projects for other tools, and until 2026-10-05 one
+    OPENROUTER_API_KEY was enough for a capture's words to go to openrouter.ai
+    with no Mnemos setting at all. Nothing leaves the machine unless the
+    person configures a provider for Mnemos.
+    """
+    provider = (
+        os.environ.get("MNEMOS_LLM_PROVIDER", "").strip()
+        or _load_env_key("MNEMOS_LLM_PROVIDER")
+    ).lower()
+    if not provider:
+        try:
+            from .config.loader import load_config
+
+            llm = load_config().get("llm")
+        except Exception:
+            llm = None
+        if isinstance(llm, dict):
+            provider = str(llm.get("provider") or "").strip().lower()
+    if provider in _NO_PROVIDER:
+        return ""
+    if provider not in _PROVIDERS:
+        _warn_once(
+            f"Mnemos's provider {provider!r} is not one it knows (claude-cli, "
+            "openrouter, anthropic or openai); no provider is used."
+        )
+        return ""
+    return provider
+
+
+def create_client(agent_model_hint: str | None = None) -> "LLMClient | None":
+    """The client for the provider the person chose for Mnemos, or None.
+
+    The provider is ``chosen_provider()``: claude-cli, openrouter, anthropic
+    or openai. Its key is read from the environment or a .env file Mnemos
+    reads. A chosen provider without its key gives None, never another
+    provider: memory goes only where the person said it may.
 
     None is an ordinary outcome, not a degraded one. Mnemos does not call a
     model to maintain memory: work needing judgement is proposed to the agent
@@ -431,73 +477,49 @@ def create_client(agent_model_hint: str | None = None) -> "LLMClient | None":
     return _create_client_unchecked()
 
 def _create_client_unchecked() -> "LLMClient | None":
-    """Resolve provider/model from environment without the affinity gate."""
-    # Check for model override (env var or .env file)
+    """The chosen provider's client, without the affinity gate."""
+    provider = chosen_provider()
+    if not provider:
+        return None
+
     model_override = os.environ.get("MNEMOS_MODEL", "").strip()
     if not model_override:
         model_override = _load_env_key("MNEMOS_MODEL")
 
-    # Allow forcing a specific provider (e.g., when Anthropic is out of credits)
-    forced = os.environ.get("MNEMOS_LLM_PROVIDER", "").lower()
-    if not forced:
-        forced = _load_env_key("MNEMOS_LLM_PROVIDER").lower()
-
-    if forced in ("claude-cli", "claude_cli", "subscription"):
+    if provider in ("claude-cli", "claude_cli", "subscription"):
         return ClaudeCLIClient(model=model_override or "claude-haiku-4-5-20251001")
 
-    if forced == "openai":
+    if provider == "openai":
         key = _load_env_key("OPENAI_API_KEY")
         if key:
             return OpenAIClient(api_key=key, model=model_override or "gpt-4o-mini")
-        logger.warning(
-            "MNEMOS_LLM_PROVIDER=openai but OPENAI_API_KEY is not set; "
-            "falling back to provider auto-detection."
-        )
-    elif forced == "openrouter":
-        key = _load_env_key("OPENROUTER_API_KEY")
-        if not key:
-            key = _load_openclaw_openrouter_key()
+        logger.warning("Mnemos's provider is openai but OPENAI_API_KEY is not set; no provider is used.")
+        return None
+
+    if provider == "openrouter":
+        key = _load_env_key("OPENROUTER_API_KEY") or _load_openclaw_openrouter_key()
         if key:
             return OpenRouterClient(
                 api_key=key,
                 model=model_override or "anthropic/claude-sonnet-4-5",
             )
-        logger.warning(
-            "MNEMOS_LLM_PROVIDER=openrouter but no OpenRouter key was found; "
-            "falling back to provider auto-detection."
-        )
-    # forced == "anthropic" or empty string → fall through to auto-detect
+        logger.warning("Mnemos's provider is openrouter but no OpenRouter key was found; no provider is used.")
+        return None
 
-    anthropic_key = _load_env_key("ANTHROPIC_API_KEY")
-    if anthropic_key:
+    if provider == "anthropic":
+        key = _load_env_key("ANTHROPIC_API_KEY")
+        if not key:
+            logger.warning("Mnemos's provider is anthropic but ANTHROPIC_API_KEY is not set; no provider is used.")
+            return None
         try:
             import anthropic  # noqa: F401
-            return AnthropicClient(
-                api_key=anthropic_key,
-                model=model_override or "claude-sonnet-4-6",
-            )
         except ImportError:
-            # An operator who forced anthropic must not silently get a
-            # different provider performing the agent's maintenance.
-            if forced == "anthropic":
-                logger.warning(
-                    "MNEMOS_LLM_PROVIDER=anthropic but the 'anthropic' package "
-                    "is not installed (pip install anthropic); falling back to "
-                    "another provider."
-                )
-            else:
-                logger.info(
-                    "ANTHROPIC_API_KEY is set but the 'anthropic' package is "
-                    "not installed; trying other providers."
-                )
-
-    openrouter_key = _load_env_key("OPENROUTER_API_KEY")
-    if openrouter_key:
-        return OpenRouterClient(api_key=openrouter_key)
-
-    openai_key = _load_env_key("OPENAI_API_KEY")
-    if openai_key:
-        return OpenAIClient(api_key=openai_key, model="gpt-4o-mini")
+            logger.warning(
+                "Mnemos's provider is anthropic but the 'anthropic' package is not "
+                "installed (pip install anthropic); no provider is used."
+            )
+            return None
+        return AnthropicClient(api_key=key, model=model_override or "claude-sonnet-4-6")
 
     return None
 

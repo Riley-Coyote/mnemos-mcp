@@ -463,23 +463,13 @@ When you talk to the human, never mention tools, databases, scopes, or model ids
 
 
 def _dedicated_model_requested() -> bool:
-    """Return true only when simple mode has explicit model configuration."""
+    """Whether the person chose a model provider for Mnemos.
 
-    explicit_env = (
-        "MNEMOS_LLM_PROVIDER",
-        "MNEMOS_MODEL",
-        "OPENROUTER_API_KEY",
-        "ANTHROPIC_API_KEY",
-        "OPENAI_API_KEY",
-    )
-    if any(os.environ.get(key) for key in explicit_env):
-        return True
-    try:
-        config = load_config()
-    except Exception:
-        return False
-    llm_config = config.get("llm", {}) if isinstance(config.get("llm"), dict) else {}
-    return bool(llm_config.get("provider") or llm_config.get("model"))
+    A provider key in the environment is not a choice: it is often there for
+    another tool (``llm.chosen_provider``)."""
+    from .llm import chosen_provider
+
+    return bool(chosen_provider())
 
 
 def _classify_kind(content: str) -> str:

@@ -2,6 +2,16 @@
 
 ## 0.3.1 (unreleased)
 
+### A model only when you choose one
+
+A provider key in the environment was enough to turn a model on. With only
+OPENROUTER_API_KEY set (in a shell, or in the `.env` of the project the agent
+worked in), there for some other tool, the second capture's words went to
+openrouter.ai, and the model could move the agent's beliefs. Now Mnemos uses
+a model only when the person chooses one for it, with MNEMOS_LLM_PROVIDER or
+setup's provider question. A key on its own chooses nothing, and a chosen
+provider without its key is no provider, never a fall back to another.
+
 ### Setup keeps the person's words, and speaks for no one
 
 Advanced setup kept nothing. It named a memory source that doesn't exist,

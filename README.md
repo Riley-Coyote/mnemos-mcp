@@ -438,6 +438,12 @@ daemon install` warns when it detects this.
 
 ### Dedicated Model Providers
 
+Mnemos uses a model only when you choose one for it: `MNEMOS_LLM_PROVIDER`,
+or the provider you give setup. A key on its own chooses nothing, so an
+`OPENAI_API_KEY` in your shell or a project's `.env`, there for another tool,
+never sends memory anywhere. A chosen provider without its key is no
+provider, never another one.
+
 OpenRouter:
 
 ```bash
