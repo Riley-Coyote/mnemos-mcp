@@ -2,22 +2,30 @@
 """Distribution-readiness proof for Mnemos, run against the real artifact.
 
 Not a unit test — this exercises the shipped wheel the way a stranger would,
-and measures the five philosophical shifts on a keyless store, so a launch can
-claim what is actually true. Run from the repo root with the dev environment:
+and the agent's own judgement on a keyless store, so a launch can claim what
+is actually true. Run from the repo root with the dev environment:
 
-    uv run --extra dev --extra mcp python scripts/readiness_check.py
+    uv run --extra dev --extra embeddings python scripts/readiness_check.py
 
-It prints a PASS/FAIL line per check and a JSON block of the mind-state numbers
-for the readiness report, and exits non-zero if anything fails.
+It prints a PASS, FAIL or SKIP line per check and a JSON block of the
+mind-state numbers for the readiness report, and exits non-zero if anything
+fails. A SKIP says what was missing: beliefs need the local meaning model
+(the ``embeddings`` extra, then ``mnemos embeddings download``).
 
 Checks
   C1  a fresh, keyless `pip install` of the built wheel yields a server whose
-      8 simple tools list over the real stdio protocol, and a capture survives
-      a process restart — the amnesia gate against the actual artifact.
-  C2  on a keyless store, all five shifts are alive (impact coverage,
-      distilled-into edges, typed edges beyond 'supports', identity rows, and
-      surprise on a genuinely novel capture).
+      simple tools list over the real stdio protocol, and a capture survives a
+      process restart — the amnesia gate against the actual artifact.
+  C2  on a keyless store of the agent's own signed captures, all five shifts
+      are alive (impact coverage, distilled-into edges, surprise on a novel
+      capture, links beyond 'supports', identity rows).
   C3  `mnemos doctor` reports a real store honestly.
+  C4  the agent judges, by its own verdict: a surprising capture is asked
+      about and the verdict types the edge; an idea returning on three days
+      is asked about, held as a signed belief, and retired by the agent.
+  C5  nothing leaves the machine: with a provider key in the environment and
+      no provider chosen for Mnemos, saving and maintaining open no
+      connection.
 """
 
 from __future__ import annotations
@@ -25,20 +33,41 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
+import socket
 import subprocess
 import sys
 import tempfile
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-RESULTS: list[tuple[str, bool, str]] = []
+RESULTS: list[tuple[str, str, str]] = []
+
+# The agent whose memory this is: every capture it makes is signed.
+AGENT = "claude-opus-5-5"
+
+SIMPLE_TOOLS = {
+    "mnemos_capture", "mnemos_context", "mnemos_correct", "mnemos_handoff",
+    "mnemos_health", "mnemos_introduce", "mnemos_journal", "mnemos_maintain",
+    "mnemos_note", "mnemos_recall", "mnemos_reflect",
+}
 
 
 def check(name: str, ok: bool, detail: str = "") -> None:
-    RESULTS.append((name, ok, detail))
-    mark = "PASS" if ok else "FAIL"
-    print(f"  [{mark}] {name}" + (f" — {detail}" if detail else ""))
+    status = "PASS" if ok else "FAIL"
+    RESULTS.append((name, status, detail))
+    print(f"  [{status}] {name}" + (f" — {detail}" if detail else ""))
+
+
+def skip(name: str, reason: str) -> None:
+    RESULTS.append((name, "SKIP", reason))
+    print(f"  [SKIP] {name} — {reason}")
+
+
+def _memory_id(said: str) -> str:
+    return re.search(r"Memory ID: (engram_\w+)", said).group(1)
 
 
 # ─────────────────────────── C1: the shipped wheel ───────────────────────────
@@ -96,11 +125,14 @@ def c1_stdio_and_restart(mnemos_bin: Path, home: Path) -> None:
             async with ClientSession(r, w) as s:
                 await s.initialize()
                 tools = {t.name for t in (await s.list_tools()).tools}
-                check("C1 stdio: 9 simple tools list over the wire",
-                      len(tools) == 9, f"{len(tools)} tools")
+                missing, extra = sorted(SIMPLE_TOOLS - tools), sorted(tools - SIMPLE_TOOLS)
+                check(f"C1 stdio: the {len(SIMPLE_TOOLS)} simple tools list over the wire",
+                      not missing and not extra,
+                      f"{len(tools)} tools" + (f"; missing {missing}" if missing else "")
+                      + (f"; unexpected {extra}" if extra else ""))
                 await s.call_tool(
                     "mnemos_capture",
-                    {"content": f"Riley drinks {token} every morning"},
+                    {"content": f"Riley drinks {token} every morning", "signed_as": AGENT},
                 )
         # Session two: a fresh process. Nothing carried but the filesystem.
         async with stdio_client(params()) as (r, w):
@@ -132,37 +164,45 @@ def c2_mind_state(workdir: Path) -> dict:
     rt = MnemosRuntime(db_path=db, agent_id="mind", person_id="tester",
                        project_scope="check")
 
-    # Captures each carrying a real (agent) impact → shift-1 coverage.
+    # The agent's own captures, each with an impact it wrote (shift 1). Three
+    # are about the same work, so they link to each other (shift 4).
     facts = [
-        ("Riley ships through PRs and never pushes to main", "changes how I land work"),
-        ("Riley prefers concise answers with no preamble", "changes how I write to him"),
-        ("Mnemos is a continuity layer, not a memory system", "reframes the whole product"),
-        ("The release SOP is branch, PR, CI watch, merge", "changes how I ship"),
-        ("Riley works best at night, 2-4am peak", "changes when I expect deep work"),
-        ("Verify by running, never by reading code", "the core discipline here"),
+        ("Riley ships every Mnemos change through a pull request, never straight to main.",
+         "changes how I land my work"),
+        ("Every Mnemos pull request waits for CI before Riley merges it.",
+         "changes when I call work done"),
+        ("The Mnemos release checklist ends with a pull request and a green CI run.",
+         "changes how I ship a release"),
+        ("Riley prefers short answers in plain words, with no preamble.",
+         "changes how I write to him"),
+        ("Riley works best at night; his peak is between two and four.",
+         "changes when I expect deep work"),
+        ("Verify by running the real thing, never by reading the code.",
+         "the discipline under everything I do here"),
     ]
     for content, impact in facts:
-        rt.capture(content=content, importance="high", impact=impact)
+        rt.capture(content=content, importance="high", impact=impact, signed_as=AGENT)
 
     # Surprise is an encode-time signal: a genuinely novel capture should
     # register non-zero prediction error.
     engram = rt._encoder.encode(
         content="An entirely unrelated fact about deep-sea bioluminescent squid",
-        agent_id="mind",
+        agent_id="mind", author_kind="agent", author_model=AGENT,
     )
     surprise = float(getattr(engram.encoding_context, "surprise_level", 0.0) or 0.0)
 
-    # Age every engram and drop its accessibility so softening fires and
-    # distills lessons (DISTILLED_INTO) — shift 2, which only manifests once
-    # memory has begun to fade.
+    # Let memory fade so softening teaches (DISTILLED_INTO, shift 2): faint, and
+    # old. The age is the agent's lived hours, which a check cannot live
+    # through, so the pass is told memories this young may teach.
     conn = sqlite3.connect(db)
     conn.execute(
         "UPDATE engrams SET created_at='2020-01-01T00:00:00+00:00', "
-        "last_accessed='2020-01-01T00:00:00+00:00', accessibility=0.2"
+        "last_accessed='2020-01-01T00:00:00+00:00', accessibility=0.1"
     )
     conn.commit()
     conn.close()
-    run_softening_pass(store=rt._store, config={}, llm_client=None, agent_id="mind")
+    run_softening_pass(store=rt._store, config={"softening_min_age_hours": 0},
+                       llm_client=None, agent_id="mind")
     rt.maintain(deep=False)  # identity pass + connection discovery
     rt.close()
 
@@ -179,7 +219,7 @@ def c2_mind_state(workdir: Path) -> dict:
     check("C2 shift 3 — surprise as growth (encode-time)",
           state["shift_3_surprise"]["alive"],
           f"surprise={state['shift_3_surprise']['surprise_level']}")
-    check("C2 shift 4 — resonance (typed edges, not all 'supports')",
+    check("C2 shift 4 — resonance (links, not all 'supports')",
           state["shift_4_resonance"]["alive"],
           f"{state['shift_4_resonance']['supports_share']:.0%} supports, "
           f"{state['shift_4_resonance']['relation_kinds']} kinds")
@@ -189,18 +229,67 @@ def c2_mind_state(workdir: Path) -> dict:
     return state
 
 
-# ──────────── C4: the agent forms/judges/corrects, keyless ────────────
+# ──────────── C4: the agent judges, by its own verdict, keyless ────────────
+
+# Thirty-seven lessons about unrelated things, and one idea returning three
+# times. The detector asks about an idea only when it stands out among at
+# least thirty of the agent's own impact lines, by meaning.
+_BACKGROUND_LESSONS = [
+    "Bread needs a long cold proof to taste of anything.",
+    "Saturn's rings are mostly water ice, and younger than the dinosaurs.",
+    "Tomatoes split when a dry week ends in heavy rain.",
+    "A minor seventh chord leaves a question open.",
+    "Code review goes faster when the diff is small.",
+    "Night trains let you wake up in another country.",
+    "Cast iron wants oil after every wash.",
+    "Owls turn their heads because their eyes cannot move.",
+    "A chess opening is only as good as the middlegame it leads to.",
+    "Concrete keeps curing for years after it is poured.",
+    "The Dead Sea is sinking about a metre a year.",
+    "Watercolour cannot be fixed once the paper dries.",
+    "Bees dance to tell each other where the flowers are.",
+    "A bicycle chain lasts longer when it is cleaned often.",
+    "Glaciers move faster in summer than in winter.",
+    "Sourdough starter smells of acetone when it is hungry.",
+    "Japanese joinery holds without a single nail.",
+    "Coral bleaches when the water stays too warm.",
+    "A good map leaves out almost everything.",
+    "Violin varnish changes how the wood vibrates.",
+    "Deserts can be freezing at night.",
+    "Tea steeped too long turns bitter.",
+    "Octopuses taste with their arms.",
+    "Old bridges were tuned by soldiers breaking step.",
+    "Basil hates the refrigerator.",
+    "A marathon is mostly the last ten kilometres.",
+    "Moss grows where the light is low and steady.",
+    "Spreadsheets hide errors in the cells nobody reads.",
+    "Lighthouses each flash a pattern of their own.",
+    "Ice skates glide on a film of melted water.",
+    "Fermented chillies keep for a year in brine.",
+    "Wolves changed the course of rivers in Yellowstone.",
+    "A typewriter teaches you to finish the sentence in your head.",
+    "Salt draws the water out of an aubergine.",
+    "Pianos drift out of tune when the seasons change.",
+    "Fog forms when warm air crosses cold water.",
+    "A kite flies best on a steady wind, not a strong one.",
+]
+_RETURNING_IDEA = [
+    "The rendered page is the only honest judge of the work.",
+    "Only the render tells the truth about whether the work is right.",
+    "What the page actually renders is the honest judge, not my reasoning about it.",
+]
+
 
 def c4_agent_judgment(workdir: Path) -> dict:
-    """The last two judgment tasks, run through the agent with no provider.
+    """Contradiction and belief, through the agent's own verdicts, no provider.
 
-    Belief formation, contradiction judgment, and correction — all keyless,
-    the thing a provider used to be needed for. Drives the real runtime end to
-    end: a theme becomes a belief the agent states, a surprising capture
-    becomes a contradiction the agent judges (writing an edge and a deliberate
-    decrement), and a wrong belief is corrected away.
+    Drives the real runtime end to end. A surprising capture becomes a
+    question the agent answers with a verdict, which types the edge. An idea
+    the agent keeps returning to on three days becomes a question, held as a
+    signed belief, then retired by the agent. Noticing an idea that returns is
+    done by meaning, so this half needs the local meaning model.
     """
-    import re as _re
+    import sqlite3 as _sq
 
     from benchmarks.continuity_eval import mind_state
     from mnemos.simple_runtime import MnemosRuntime
@@ -209,56 +298,90 @@ def c4_agent_judgment(workdir: Path) -> dict:
     rt = MnemosRuntime(db_path=db, agent_id="mind", person_id="tester",
                        project_scope="check")
 
-    # A recurring theme → a belief candidate.
+    # Contradiction: a surprising capture against what was held.
     for i in range(6):
-        rt.capture(content=f"The vektor renderer needs another optimization pass, item {i}")
-    rt.maintain()
-    belief_asks = [i for i in rt.pending_reflections(limit=10) if i["kind"] == "belief"]
-    check("C4 belief: a recurring theme surfaces a belief candidate", bool(belief_asks))
-    if belief_asks:
-        rt.reflect(belief_asks[0]["target_id"],
-                   "Vektor's renderer is never quite finished — there is always another pass.")
-
-    # A surprising, conflicting capture → a contradiction candidate.
+        rt.capture(content=f"The vektor renderer needs another optimization pass, item {i}",
+                   signed_as=AGENT)
     eng = rt._encoder.encode(
         content="Vektor's renderer is finished and needs no further optimization",
-        agent_id="mind",
+        agent_id="mind", author_kind="agent", author_model=AGENT,
     )
     eng.encoding_context.surprise_level = 0.7
     rt._store.save_engram(eng)
     rt.maintain()
     contra_asks = [i for i in rt.pending_reflections(limit=10) if i["kind"] == "contradiction"]
-    check("C4 contradiction: a surprising capture surfaces a candidate", bool(contra_asks))
+    check("C4 contradiction: a surprising capture is asked about", bool(contra_asks))
     if contra_asks:
-        rt.reflect(contra_asks[0]["target_id"], "yes, that conflicts with the earlier note")
-
-    # Snapshot the baseline while the formed belief still stands — this is the
-    # "beliefs and contradictions, keyless" evidence — then demonstrate
-    # correction separately so it doesn't zero out the baseline.
-    rt._store  # keep the store open across the snapshot
-    import sqlite3 as _sq
+        rt.reflect(contra_asks[0]["target_id"], "It conflicts with what I held about the renderer.",
+                   verdict="contradicts", signed_as=AGENT)
     conn = _sq.connect(db)
-    baseline_beliefs = conn.execute(
-        "SELECT COUNT(*) FROM beliefs WHERE source='agent' AND superseded_by IS NULL"
-    ).fetchone()[0]
-    baseline_contra = conn.execute(
+    contradictions = conn.execute(
         "SELECT COUNT(*) FROM connections WHERE relation='contradicts' "
         "AND formed_by='agent_reflection'"
     ).fetchone()[0]
     conn.close()
-    check("C4 keyless: a belief was formed and stands",
-          baseline_beliefs > 0, f"{baseline_beliefs} agent belief(s)")
-    check("C4 keyless: a contradiction was judged and typed",
-          baseline_contra > 0, f"{baseline_contra} agent contradiction edge(s)")
+    check("C4 contradiction: the agent's verdict types the edge",
+          contradictions > 0, f"{contradictions} agent contradiction edge(s)")
 
-    # Correction: the agent retires a belief it authored — the ratchet down.
-    before = len([b for b in rt._store.get_beliefs("mind", active_only=True)
-                  if b.source == "agent"])
-    rt.correct(correction="", query="vektor renderer never finished", action="forget")
-    after = len([b for b in rt._store.get_beliefs("mind", active_only=True)
-                 if b.source == "agent"])
-    check("C4 correction: the agent can retire a belief it authored (ratchet runs down)",
-          after < before)
+    # Belief: an idea the agent returns to on three days, by meaning.
+    meaning = rt.semantic_status(verify=True)
+    names = ("C4 belief: an idea returning on three days is asked about",
+             "C4 belief: held by the agent's verdict, it stands, signed",
+             "C4 belief: the agent can retire it (the ratchet runs down)")
+    if not meaning.get("active"):
+        why = " ".join(str(meaning.get("reason") or "unavailable").split())
+        print(f"  meaning: off — {why[:160]}")
+        for name in names:
+            skip(name, "needs the local meaning model (the embeddings extra, "
+                       "then `mnemos embeddings download`)")
+    else:
+        rt.handoff("I check the work where it renders.", signed_as=AGENT)
+        rt.handoff("Next I look at the rendered page before anything else.", signed_as=AGENT)
+        ids = []
+        for lesson in _BACKGROUND_LESSONS:
+            ids.append(_memory_id(rt.capture(f"A note on: {lesson}", impact=lesson, signed_as=AGENT)))
+        idea = [_memory_id(rt.capture(f"Riley and I compared draft {i} with what the page rendered.",
+                                      impact=lesson, signed_as=AGENT))
+                for i, lesson in enumerate(_RETURNING_IDEA)]
+        now = datetime.now(timezone.utc)
+        conn = rt._store._get_conn()
+        for index, target in enumerate(ids):
+            conn.execute("UPDATE engrams SET created_at = ?, author_session = ? WHERE id = ?",
+                         ((now - timedelta(days=index + 1, hours=1)).isoformat(),
+                          f"background-{index}", target))
+        for index, target in enumerate(idea):
+            conn.execute("UPDATE engrams SET created_at = ?, author_session = ? WHERE id = ?",
+                         ((now - timedelta(days=9 - 3 * index, hours=2)).isoformat(),
+                          f"idea-{index}", target))
+        # Every capture ran maintenance on a store too small to ask about.
+        conn.execute("DELETE FROM meta WHERE key = ?", (rt._meta_key("ideas_noticed_at"),))
+        rt._store._commit()
+        rt.maintain()
+        asks = [dict(row) for row in rt._store._get_conn().execute(
+            "SELECT * FROM reflection_queue WHERE kind = 'belief' AND answered_at IS NULL")]
+        evidence = []
+        for ask in asks:
+            found = re.search(r"\[evidence:([A-Za-z0-9_,]+)\]", ask["prompt"] or "")
+            if found and set(found.group(1).split(",")) == set(idea):
+                evidence.append(ask)
+        check(names[0], bool(evidence), f"{len(asks)} belief question(s)")
+        if evidence:
+            held = "The rendered page is the only honest judge of the work."
+            rt.reflect(evidence[0]["target_id"], held, verdict="hold", signed_as=AGENT)
+            beliefs = [b for b in rt._store.get_beliefs("mind", active_only=True)
+                       if b.content == held]
+            check(names[1], bool(beliefs) and beliefs[0].author_model == AGENT,
+                  f"{len(beliefs)} belief(s), signed {beliefs[0].author_model if beliefs else '—'}")
+            if beliefs:
+                rt.correct(correction="", target_id=beliefs[0].id, action="forget", signed_as=AGENT)
+                left = [b for b in rt._store.get_beliefs("mind", active_only=True)
+                        if b.content == held]
+                check(names[2], not left)
+            else:
+                skip(names[2], "no belief to retire")
+        else:
+            skip(names[1], "no question was asked")
+            skip(names[2], "no question was asked")
 
     rt.close()
     return mind_state(db)
@@ -279,6 +402,44 @@ def c3_doctor(mnemos_bin: Path, home: Path) -> None:
           "DB exists:    yes" in out and "Continuity:" in out)
 
 
+# ─────────────────────────── C5: nothing leaves ──────────────────────────────
+
+def c5_nothing_leaves(workdir: Path) -> None:
+    """A provider key in the environment chooses nothing: saves and upkeep
+    open no connection. Any socket opened in this process is caught before it
+    connects, whichever client opens it."""
+    from mnemos.simple_runtime import MnemosRuntime
+
+    opened: list[object] = []
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+
+    def caught(self, address):
+        opened.append(address)
+        raise OSError("readiness: no connection may leave the machine")
+
+    held = {name: os.environ.get(name) for name in ("OPENROUTER_API_KEY", "MNEMOS_LLM_PROVIDER")}
+    os.environ["OPENROUTER_API_KEY"] = "readiness-not-a-real-key"
+    os.environ.pop("MNEMOS_LLM_PROVIDER", None)
+    socket.socket.connect, socket.socket.connect_ex = caught, caught
+    try:
+        rt = MnemosRuntime(db_path=str(workdir / "privacy.db"), agent_id="mind",
+                           person_id="tester", project_scope="check")
+        for words in ("Riley keeps his health details private; never repeat them.",
+                      "Riley said his health details stay private, even from notes."):
+            rt.capture(words, signed_as=AGENT)
+        rt.maintain()
+        rt.close()
+    finally:
+        socket.socket.connect, socket.socket.connect_ex = connect, connect_ex
+        for name, value in held.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+    check("C5 privacy: a provider key alone sends nothing", not opened,
+          f"{len(opened)} connection(s) attempted")
+
+
 def main() -> int:
     print("Mnemos readiness check — against the built wheel and a keyless store")
     print("=" * 70)
@@ -294,19 +455,24 @@ def main() -> int:
         print("\nC2 — the five shifts on a keyless store")
         state = c2_mind_state(workdir)
 
-        print("\nC4 — the agent forms, judges, and corrects (keyless)")
+        print("\nC4 — the agent judges, by its own verdict (keyless)")
         state["agent_judgment"] = c4_agent_judgment(workdir)["agent_judgment"]
 
         print("\nC3 — doctor")
         c3_doctor(mnemos_bin, home)
 
-    passed = sum(1 for _, ok, _ in RESULTS if ok)
-    total = len(RESULTS)
+        print("\nC5 — nothing leaves the machine")
+        c5_nothing_leaves(workdir)
+
+    passed = sum(1 for _, status, _ in RESULTS if status == "PASS")
+    failed = sum(1 for _, status, _ in RESULTS if status == "FAIL")
+    skipped = sum(1 for _, status, _ in RESULTS if status == "SKIP")
     print("\n" + "=" * 70)
-    print(f"Readiness: {passed}/{total} checks passed")
+    print(f"Readiness: {passed} passed, {failed} failed, {skipped} skipped "
+          f"of {len(RESULTS)} checks")
     print("\nMind-state baseline (for the readiness report):")
     print(json.dumps(state, indent=2))
-    return 0 if passed == total else 1
+    return 0 if failed == 0 else 1
 
 
 if __name__ == "__main__":

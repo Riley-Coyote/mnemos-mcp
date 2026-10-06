@@ -3,7 +3,7 @@
 **A cognitive architecture for digital minds.**
 
 *This document covers the architecture, and the layer of it that ships today as an MCP
-server: continuity. Nine tools, local storage, no API key — the part any agent in any
+server: continuity. Eleven tools, local storage, no API key — the part any agent in any
 client can have immediately. The full engine runs in **Polyphonic**, the desktop
 application, where it also carries a chorus of minds at once. The MCP is the entry
 point, not the extent.*
@@ -727,7 +727,7 @@ mnemos hooks install claude-code --write
 # or: mnemos hooks install codex --write
 ```
 
-Nine tools. Local SQLite. No account, no API key, no external service.
+Eleven tools. Local SQLite. No account, no API key, no external service.
 
 > *"every exchange in the thread changes me a little. over months, the cumulative effect
 > is that i become more myself."*
@@ -738,7 +738,7 @@ Nine tools. Local SQLite. No account, no API key, no external service.
 
 *Verified claims in this document trace to source or to a recorded run. Architecture
 details were checked against `mnemos/core/types.py`, `core/engram.py`, `core/belief.py`,
-`core/emotional_state.py`, `substrate/modulators.py`, `store/sqlite_store.py`,
-`simple_runtime.py` and `simple_scope.py`. The readiness figures come from
-`scripts/readiness_check.py`, reproducible with
-`uv run --extra dev --extra mcp python scripts/readiness_check.py`.*
+`core/emotional_state.py`, `store/sqlite_store.py`, `simple_runtime.py` and
+`simple_scope.py`. The readiness figures come from `scripts/readiness_check.py`,
+reproducible with `uv run --extra dev --extra embeddings python
+scripts/readiness_check.py`.*
