@@ -7,8 +7,8 @@ legacy OpenClaw cron generators still scheduled it every 30 minutes,
 contradicting that stance — so a user who installed the legacy jobs got the
 flood the scheduler refuses to schedule.
 
-Indexing stays available as the explicit `mnemos index` command; it just must
-not be on any default automatic schedule.
+The indexer itself was retired in 0.4.0 (`mnemos index` only says so), and
+these keep any generator from scheduling it again.
 """
 
 from __future__ import annotations

@@ -20,8 +20,26 @@ mnemos hooks install claude-code --write
 
 Then start Claude Code: it wakes with its memory, and the memory tools are there.
 
-For Claude Desktop: `mnemos mcp install claude --write`. For Codex, Cursor or
-another client, see [Choose A Setup](#choose-a-setup).
+What setup turns on, and how to turn each thing off:
+
+- **Waking with its memory.** Each session starts with what the agent kept.
+- **The cue.** Each message you send brings up to three memories that may bear
+  on it. Messages Claude Code writes itself, such as a background task's
+  notice, bring nothing. Off: `mnemos hooks install claude-code --no-prompt --write`.
+- **Upkeep between sessions.** Every 4 hours memories fade a little with time
+  and related ones are linked, and a deeper pass runs each night at 03:00.
+  With no model chosen for Mnemos, all of it runs on your machine. Off:
+  `mnemos daemon uninstall --write`, or leave it out with `--no-upkeep`.
+- **Quiet hours, if you say yes.** Setup asks once, and yes is the default:
+  an hour a day that's the agent's own, and half an hour for the day's work.
+  They run Claude on its own and use your Claude plan. Setup run without a
+  terminal (by an agent, say), or with no `claude` command, leaves them off
+  and says how to turn them on: `mnemos daemon install --hours --write`.
+  Off: `mnemos daemon uninstall --hours --write`.
+
+For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
+the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
+[Choose A Setup](#choose-a-setup).
 
 Without the `embeddings` extra, Mnemos still works, but recall matches words
 only, and an idea the agent keeps returning to can't be noticed, so no new
@@ -43,8 +61,7 @@ The distinction matters in practice: Mnemos holds the small number of durable
 things an agent should carry about *you and how you work together* — a
 preference, a correction, a decision, how you like to be spoken to. If you point
 it at a firehose of general recall, that continuity gets buried, and the product
-stops working. It deliberately does not schedule transcript indexing for exactly
-this reason.
+stops working. Its transcript indexer is retired for exactly this reason.
 
 If you want a full cognitive engine with retrieval, a work-memory suite, and
 document ingestion, Mnemos is not that and is not trying to be.
@@ -56,14 +73,15 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Use case | Recommended path | Command |
 |---|---|---|
 | Normal agent continuity | Simple MCP Mode | `mnemos serve` |
-| Claude Code | Simple MCP Mode, plus the SessionStart hook | `mnemos mcp install claude-code --write` then `mnemos hooks install claude-code --write` |
-| Claude Desktop | Simple MCP Mode, written config | `mnemos mcp install claude --write` |
-| Codex | Simple MCP Mode, printed add command | `mnemos mcp install codex` |
+| Claude Code | Simple MCP Mode, plus the hooks, upkeep and quiet hours | `mnemos mcp install claude-code --write` then `mnemos hooks install claude-code --write` |
+| Claude Desktop | Simple MCP Mode, written config, upkeep and quiet hours | `mnemos mcp install claude --write` |
+| Codex | Simple MCP Mode, printed add command, then the hook and upkeep | `mnemos mcp install codex`, then `mnemos hooks install codex --write` |
 | Cursor or another MCP client | Simple MCP Mode, printed JSON | `mnemos mcp install cursor` or `mnemos mcp install generic` |
 | Experimental research prototypes | Source imports only | Not production-supported |
 | Hermes agent with another memory provider | Hermes Sidecar Mode | `mnemos hermes quickstart --agent-safe` |
 | Hermes agent using Mnemos as its provider | Hermes Provider Mode | `mnemos hermes quickstart --provider` |
-| Background memory maintenance | Scheduled upkeep | `mnemos daemon install --write` |
+| Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
+| The agent's quiet hours | Scheduled by setup when you say yes | `mnemos daemon install --hours --write` |
 
 Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
 
@@ -98,7 +116,9 @@ uv run --extra mcp --extra embeddings mnemos doctor
 The MCP and Hermes install helpers should be run from an environment where
 `mnemos` will still exist after restart. For local development, that usually
 means the editable install above or running the helper through `uv` in a checkout
-you plan to keep.
+you plan to keep. On a Mac, a checkout under `~/Documents` can't run the
+background jobs setup schedules; see
+[On a Mac, outside ~/Documents](#on-a-mac-outside-documents).
 
 ### From The Distribution Package
 
@@ -250,6 +270,24 @@ Scope flags pass straight through when one machine hosts several agents:
 mnemos hooks install codex --write --agent-id nova --db-path ~/.mnemos/nova.db
 ```
 
+**The cue (Claude Code).** The Claude Code install also adds a
+`UserPromptSubmit` hook, `mnemos hook prompt`: each message you send brings at
+most three memories that may bear on it, one line each, or nothing, which is
+the usual answer. Messages Claude Code writes itself (a background task's
+notice, a slash command, the `!` shell's input and output) bring nothing; only
+its own tags mark them, so a message of yours that starts with `<` is still
+yours. It never blocks a prompt. To leave it out, or take it out again:
+
+```bash
+mnemos hooks install claude-code --no-prompt --write
+```
+
+`--prompt`, which once asked for it, is still accepted and changes nothing.
+
+With `--write`, the hooks install also schedules upkeep between sessions
+(`--no-upkeep` leaves it out) and, for Claude Code, asks once about quiet
+hours; see [Between Sessions](#between-sessions).
+
 ### See Your Agent's Days
 
 `mnemos log` opens a small page in your browser that shows what your agent
@@ -272,7 +310,8 @@ It finds your agent's memory the way every other command does (`--agent-id`,
 The page only reads: it never changes the memory, it runs on this computer
 alone (127.0.0.1, at an address made fresh each time), and it asks nothing of
 the internet, since its fonts ship with Mnemos. If your agent has no quiet
-hours yet, or nothing is scheduled to run them, the page says so.
+hours yet, or nothing is scheduled to run them, the page says so;
+[Quiet Hours](#quiet-hours) says how to schedule them.
 
 ### Simple Mode With Explicit Scope
 
@@ -415,22 +454,28 @@ More detail lives in [HERMES_INSTALL.md](HERMES_INSTALL.md) and
 
 ---
 
-## Substrate Tick And Maintenance
+## Between Sessions
 
 Mnemos works without background jobs. Normal MCP tool use can capture, recall,
 correct, and run lightweight maintenance.
 
 But memory that only works while a session is open is doing half the job.
 Decay, connection discovery and consolidation are what make continuity feel
-alive between conversations.
+alive between conversations. So setup schedules them, and offers the agent
+time of its own.
 
-### Background Maintenance
+### Upkeep
+
+Setup schedules upkeep for you: `mnemos hooks install claude-code --write`,
+`mnemos hooks install codex --write`, or for Claude Desktop
+`mnemos mcp install claude --write`. Pass `--no-upkeep` to any of them to
+leave it out. By hand:
 
 ```bash
 mnemos daemon install --write
 ```
 
-This schedules maintenance with whatever your machine already provides —
+This schedules upkeep with whatever your machine already provides —
 launchd on macOS, systemd user timers on Linux, plain crontab as a fallback.
 No external agent runner is required.
 
@@ -439,11 +484,17 @@ No external agent runner is required.
 | `maintain` | decay and connection discovery | every 4h |
 | `maintain-deep` | softening, reflection | daily at 03:00 |
 
-The transcript indexer is not scheduled: it writes memories in a model's
-words, not the agent's. They are recorded as a tool's, kept out of identity,
-beliefs and lessons, and `mnemos repair quarantine-tool-written` moves them
-out of recall. It still runs by hand. The substrate is retired; installing
-removes a substrate tick an earlier install scheduled.
+With no model chosen for Mnemos, these are local passes only: nothing leaves
+your machine. With one chosen (see below), upkeep sends it memories to
+classify the links between them, and nothing more.
+
+The transcript indexer is retired. It had a model pull "facts" out of old
+conversations and file them as the agent's memories, and only the agent
+writes its memory; `mnemos index` now just says so. What it wrote is kept as a
+tool's words, out of identity, beliefs and lessons, and
+`mnemos repair quarantine-tool-written` moves it out of recall. The substrate
+is retired too. Installing removes an indexer job or a substrate tick an
+earlier install scheduled.
 
 Preview before committing to anything:
 
@@ -454,13 +505,40 @@ mnemos daemon uninstall --write
 ```
 
 Jobs are namespaced per agent, so several agents can each keep their own
-maintenance on one machine. `mnemos doctor` reports whether background
-maintenance is scheduled.
+upkeep on one machine. `mnemos doctor` reports whether upkeep and the quiet
+hours are scheduled.
 
-On macOS, install Mnemos outside `~/Documents`, `~/Desktop` and `~/Downloads`.
-Scheduled jobs do not inherit Full Disk Access, so a Mnemos living in one of
-those folders runs fine by hand and fails on every scheduled run. `mnemos
-daemon install` warns when it detects this.
+### Quiet Hours
+
+An hour a day that's the agent's own, and half an hour for the day's work.
+Each runs Claude Code on its own (`mnemos life`), with the agent's memory, and
+uses your Claude plan. Nothing is asked of the agent in its own hour. The half
+hour looks at the day's work, and skips a day with none.
+
+Setup asks once, at the terminal, and yes is the default. Run without a
+terminal (by an agent setting Mnemos up for you), or where no `claude` command
+is found, it leaves them off and says how to turn them on:
+
+```bash
+mnemos daemon install --hours --write          # the agent's hour at 08:00, ours at 19:00
+mnemos daemon install --hours --mine-at 07:30 --ours-at 21:00 --write
+mnemos daemon uninstall --hours --write        # off; upkeep stays
+mnemos life --hour mine --dry-run              # what an hour would see, running nothing
+```
+
+Each hour's job carries what a background job lacks: the `claude` command's
+folder on its PATH, and both commands' full paths (`MNEMOS_CLAUDE_BIN`,
+`MNEMOS_LIFE_MNEMOS_BIN`), found when you install. It runs in `~/.mnemos`.
+
+### On a Mac, outside ~/Documents
+
+Install Mnemos outside `~/Documents`, `~/Desktop` and `~/Downloads`. macOS
+doesn't let background jobs read those folders, so a Mnemos living in one of
+them, including a source checkout installed in place (`pip install -e`),
+works by hand and fails on every scheduled run. Setup and
+`mnemos daemon install` warn when they find this. Install from PyPI
+(`pipx install "mnemos-continuity[mcp,embeddings]"`) or from a built wheel
+instead, then run setup again.
 
 ### Dedicated Model Providers
 
@@ -527,15 +605,20 @@ mnemos serve --mode advanced          # Simple mode plus admin tools (less teste
 mnemos mcp install generic            # Print MCP config
 mnemos mcp install claude-code --write  # Register with Claude Code
 mnemos mcp install claude --write     # Merge Claude Desktop config
-mnemos hooks install claude-code      # Preview Claude Code SessionStart hook
-mnemos hooks install claude-code --write
+mnemos hooks install claude-code      # Preview Claude Code's hooks: the wake and the cue
+mnemos hooks install claude-code --write  # Install them, schedule upkeep, ask about quiet hours
+mnemos hooks install claude-code --no-prompt --write  # The same without the cue
 mnemos hooks install codex            # Preview Codex startup + compaction hook
-mnemos hooks install codex --write    # Install, then review with /hooks
+mnemos hooks install codex --write    # Install, schedule upkeep, then review with /hooks
 mnemos hook session-start             # Emit the packet the hook injects
-mnemos daemon install                 # Preview scheduled background maintenance
+mnemos hook prompt                    # Emit the cue for a message (UserPromptSubmit)
+mnemos daemon install                 # Preview scheduled upkeep
 mnemos daemon install --write         # Schedule it (launchd/systemd/crontab)
+mnemos daemon install --hours --write # Schedule upkeep and the quiet hours
 mnemos daemon status                  # What is scheduled right now
-mnemos daemon uninstall --write       # Remove it
+mnemos daemon uninstall --hours --write  # Remove only the quiet hours
+mnemos daemon uninstall --write       # Remove all of it
+mnemos life --hour mine --dry-run     # What a quiet hour would see, running nothing
 
 mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI
@@ -551,8 +634,6 @@ Workspace, identity, and automation commands:
 
 ```bash
 mnemos export --workspace ./memory-export
-mnemos index
-mnemos index --backfill
 mnemos bootstrap --agent-name Nova --workspace ~/nova
 mnemos setup-openclaw --agent main --dry-run
 mnemos identity diff --soul ./SOUL.md
@@ -626,6 +707,7 @@ With no provider key and no extra setup, Mnemos can still run:
 - startup context packet generation
 - optional SVG identity graph snapshots
 - maintenance during normal tool calls
+- upkeep between sessions, once setup has scheduled it
 
 If a dedicated model provider is configured, Mnemos uses it to classify the
 links between memories and to weigh how surprising a new one is. It never

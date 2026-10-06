@@ -22,6 +22,11 @@ words, with its date and its id. Or nothing, which is the usual answer.
   turned away, the word path let back. At 0.50, 17 of the 38 came by it, on
   words like "page" (in 20% of the memories) and "claude" (17%).
   Messages with fewer than ``CUE_MIN_WORDS`` content words get nothing.
+- **Only the person's words.** Claude Code also sends the hook messages it
+  writes itself: a background task's notice, a slash command, the ``!``
+  shell's input and output. Each starts with one of ``GENERATED_TAGS``, and
+  gets nothing. Only those tags count, so a person whose message starts
+  with "<" is still heard.
 - **Never twice in a session.** The session-start hook records what its
   briefing showed (so does ``mnemos_context``, for a session that fetches its
   briefing) and the cue records what it offers, in a small file per session
@@ -170,6 +175,23 @@ JUDGE_CALLS_KEPT = 20
 JUDGE_SAVE_WAIT = 0.25
 
 HEADING = "## Mnemos: from memory, maybe bearing on this message"
+
+# The tags Claude Code puts at the start of the messages it writes itself and
+# sends through the prompt hook as if they were the person's: a background
+# task finishing (task-notification), a slash command (command-name,
+# command-message, command-args), the `!` shell (bash-input, bash-stdout,
+# bash-stderr), a local command's caveat and output (local-command-*), and a
+# CI monitor's event. Those are notices, not the person's words, and the cue
+# answers none of them. Only these tags count: a message that starts with
+# any other "<" is the person's.
+GENERATED_TAGS = frozenset({
+    "task-notification",
+    "command-name", "command-message", "command-args",
+    "bash-input", "bash-stdout", "bash-stderr",
+    "local-command-caveat", "local-command-stdout", "local-command-stderr",
+    "ci-monitor-event",
+})
+_OPENING_TAG = re.compile(r"<([a-z][a-z0-9-]*)[\s>]")
 
 _CONTEXT_MARK = "\n\nContext: "
 _LESSON_TAGS = frozenset({"lesson", "distilled"})
@@ -1098,6 +1120,14 @@ def judge_health(answerer: Any = None, environ: Mapping[str, str] | None = None)
 # ── The hook ──
 
 
+def generated_notice(prompt: str) -> bool:
+    """Whether ``prompt`` is a notice Claude Code wrote itself, not the
+    person's words: it starts, after any blank space, with one of
+    ``GENERATED_TAGS``."""
+    opening = _OPENING_TAG.match(prompt.lstrip())
+    return opening is not None and opening.group(1) in GENERATED_TAGS
+
+
 def prompt_hook(
     payload: Mapping[str, Any],
     *,
@@ -1114,7 +1144,9 @@ def prompt_hook(
     not (it ran out of time, broke, or its judge failed), in the session's
     file (``SeenFile``). Writes nothing to the store.
 
-    ``payload`` is Claude Code's UserPromptSubmit input. ``deadline`` (a
+    ``payload`` is Claude Code's UserPromptSubmit input. A notice Claude Code
+    wrote itself (``generated_notice``) gets nothing, and nothing is recorded
+    for it: it was never the person's message. ``deadline`` (a
     ``time.monotonic()`` value) bounds the work: past it, nothing is printed.
     """
     from .authorship import clean_session_id
@@ -1130,7 +1162,9 @@ def prompt_hook(
     if event is not None and event != "UserPromptSubmit":
         return ""
     text = payload.get("prompt")
-    if not isinstance(text, str) or len(meaningful_words(text)) < CUE_MIN_WORDS:
+    if not isinstance(text, str) or generated_notice(text):
+        return ""  # nothing to answer, or a notice: not the person's words
+    if len(meaningful_words(text)) < CUE_MIN_WORDS:
         return ""
     db = Path(db_path).expanduser()
     if not db.is_file():

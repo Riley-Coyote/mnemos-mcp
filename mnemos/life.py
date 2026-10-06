@@ -153,8 +153,19 @@ def _prompt(kind, agent_id, since, handoffs, captures, questions, latest):
     return words + "\n\n---\n\n" + "\n\n".join(sections)
 
 
+def _there(path) -> bool:
+    """Whether ``path`` exists for this process. A scheduled hour on macOS may
+    not look inside ~/Documents (launchd jobs get no access to it), and
+    there a folder it can't see isn't there, rather than an error that ends
+    the hour."""
+    try:
+        return path.exists()
+    except OSError:
+        return False
+
+
 def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin):
-    read_dirs = [Path.home() / name for name in READ_DIRS if (Path.home() / name).exists()]
+    read_dirs = [Path.home() / name for name in READ_DIRS if _there(Path.home() / name)]
     mcp = {"mcpServers": {"mnemos": {
         "type": "stdio", "command": mnemos_bin,
         "args": ["--db-path", str(store), "--agent-id", scope["agent_id"],

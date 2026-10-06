@@ -90,7 +90,6 @@ select = ["E9", "F63", "F7", "F82"]
 
 [project.scripts]
 mnemos = "mnemos.cli:main"
-mnemos-index-session = "mnemos.indexer.claude_code_adapter:main"
 
 [project.urls]
 Homepage = "https://github.com/Riley-Coyote/mnemos"

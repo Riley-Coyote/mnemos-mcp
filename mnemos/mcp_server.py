@@ -386,10 +386,6 @@ def mnemos_setup(response: str = "") -> str:
     # Step 4: Projects
     if step == 4:
         projects = [p.strip() for p in response.replace(",", "\n").split("\n") if p.strip()]
-        if "indexer" not in config:
-            config["indexer"] = {}
-        config["indexer"]["known_projects"] = projects
-        config["indexer"]["active_projects"] = projects
         config["setup_step"] = 7
         save_config(config)
         _config_invalidate()

@@ -229,11 +229,11 @@ def copy_db(name: str) -> Path:
 
 def phase0(h: Harness) -> None:
     def h0a():
-        import mnemos.indexer.session_indexer as s
+        import mnemos.simple_runtime as s
         p = Path(s.__file__).resolve()
         ok = str(p).startswith(str(REPO.resolve()))
-        return ok, f"session_indexer.__file__={p}"
-    h.check("H0a", "indexer module resolves to live repo", h0a)
+        return ok, f"simple_runtime.__file__={p}"
+    h.check("H0a", "mnemos resolves to live repo", h0a)
 
     def h0b():
         import asyncio
@@ -680,90 +680,6 @@ def phase4_hypomnema(h: Harness) -> None:
         store.close()
 
 
-# ─────────────────────────── Phase 5 ───────────────────────────
-
-def phase5_indexer(h: Harness) -> None:
-    """I19–I21: project resolution in a subprocess with Path.home monkeypatched
-    to a throwaway tmp HOME so NO live config is read or written."""
-    script = r'''
-import json, os, sys, tempfile
-from pathlib import Path
-
-tmp_home = Path(tempfile.mkdtemp(prefix="mnemos_hh_home_"))
-_real_home = Path.home
-Path.home = staticmethod(lambda: tmp_home)  # type: ignore[assignment]
-
-import mnemos.indexer.session_indexer as si
-
-out = {}
-
-# H5a: env-provided known projects, no config arg
-os.environ["MNEMOS_KNOWN_PROJECTS"] = "a,b"
-idx = si.SessionIndexer(agent_id="hh", db_path=str(tmp_home / "hh.db"))
-out["h5a_known"] = idx.known_projects
-del os.environ["MNEMOS_KNOWN_PROJECTS"]
-
-# H5b: no env, no config, empty tmp HOME
-os.environ.pop("MNEMOS_KNOWN_PROJECTS", None)
-os.environ.pop("MNEMOS_ACTIVE_PROJECTS", None)
-idx2 = si.SessionIndexer(agent_id="hh2", db_path=str(tmp_home / "hh2.db"))
-out["h5b_known"] = idx2.known_projects
-out["h5b_active"] = idx2.active_projects
-out["h5b_constructed"] = True
-
-# H5c: malformed JSON at <tmpHOME>/.mnemos/config.json → construction must still succeed
-cfg_dir = tmp_home / ".mnemos"
-cfg_dir.mkdir(parents=True, exist_ok=True)
-(cfg_dir / "config.json").write_text("{ this is not valid json ::: ")
-try:
-    idx3 = si.SessionIndexer(agent_id="hh3", db_path=str(tmp_home / "hh3.db"))
-    out["h5c_constructed"] = True
-    out["h5c_error"] = None
-except Exception as e:
-    out["h5c_constructed"] = False
-    out["h5c_error"] = f"{type(e).__name__}: {e}"
-
-# safety self-check: confirm we never read the live config
-out["home_was_tmp"] = str(Path.home()) == str(tmp_home)
-print("HH_RESULT " + json.dumps(out))
-'''
-    proc = subprocess.run(
-        [str(REPO / ".venv/bin/python"), "-c", script],
-        capture_output=True, text=True, cwd=str(REPO),
-    )
-    payload = None
-    for line in proc.stdout.splitlines():
-        if line.startswith("HH_RESULT "):
-            import json as _json
-            payload = _json.loads(line[len("HH_RESULT "):])
-            break
-
-    if payload is None:
-        ev = f"subprocess produced no result (rc={proc.returncode}); stderr={proc.stderr[-300:]}"
-        for ident, lbl in (("I19", "H5a env known_projects"),
-                            ("I20", "H5b empty HOME → []"),
-                            ("I21", "H5c malformed config still constructs")):
-            h.record(ident, lbl, "FAIL", ev)
-        return
-
-    h.check("I19", "H5a MNEMOS_KNOWN_PROJECTS='a,b' → ['a','b']",
-            lambda: (payload["h5a_known"] == ["a", "b"], f"known_projects={payload['h5a_known']}"))
-    h.check("I20", "H5b no env/config, empty HOME → known=[] active=[] constructs",
-            lambda: (payload["h5b_known"] == [] and payload["h5b_active"] == []
-                     and payload["h5b_constructed"],
-                     f"known={payload['h5b_known']} active={payload['h5b_active']} "
-                     f"constructed={payload['h5b_constructed']} home_tmp={payload['home_was_tmp']}"))
-
-    def i21():
-        ok = payload["h5c_constructed"] is True
-        if not ok:
-            h.anomaly(f"I21: malformed config.json broke SessionIndexer construction: "
-                      f"{payload['h5c_error']}")
-        return ok, (f"constructed={payload['h5c_constructed']} err={payload['h5c_error']} "
-                    f"(regression gate for upcoming load_config change)")
-    h.check("I21", "H5c malformed config.json → SessionIndexer still constructs", i21)
-
-
 # ─────────────────────────── Phase 6 ───────────────────────────
 
 def phase6_consolidation(h: Harness) -> None:
@@ -884,9 +800,6 @@ def main() -> int:
 
     print("\n── Phase 4: hypomnema lifecycle (temp store) ──")
     phase4_hypomnema(h)
-
-    print("\n── Phase 5: indexer project resolution (subprocess, tmp HOME) ──")
-    phase5_indexer(h)
 
     print("\n── Phase 6: consolidation tick (copy of memory.db) ──")
     phase6_consolidation(h)

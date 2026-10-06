@@ -71,6 +71,101 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("MNEMOS_JEV_KEY_FILE", os.devnull)
 
 
+class FakeScheduler:
+    """The machine's schedulers, as the tests see them: what launchd has
+    loaded, which systemd timers are enabled, and the crontab, all in memory.
+    Every call is recorded in ``calls``."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+        self.loaded: set[str] = set()
+        self.enabled: set[str] = set()
+        self.crontab = ""
+
+    def launchctl(self, action, plist, *, allow_missing=False) -> None:
+        from pathlib import Path
+
+        label = Path(plist).stem
+        self.calls.append(("launchctl", action, label))
+        if action == "bootstrap":
+            self.loaded.add(label)
+        else:
+            self.loaded.discard(label)
+
+    def systemctl(self, *args) -> None:
+        self.calls.append(("systemctl", *args))
+        if args[:2] == ("enable", "--now"):
+            self.enabled.add(args[2])
+        elif args[:2] == ("disable", "--now"):
+            self.enabled.discard(args[2])
+
+    def read_crontab(self) -> str:
+        return self.crontab
+
+    def write_crontab(self, text: str) -> bool:
+        self.calls.append(("crontab",))
+        self.crontab = text
+        return True
+
+    def launchd_job_active(self, agent_id, job) -> bool:
+        from mnemos.setup.scheduler import label_for
+
+        return label_for(agent_id, job) in self.loaded
+
+    def systemd_timer_active(self, agent_id, job) -> bool:
+        from mnemos.setup.scheduler import systemd_unit_names
+
+        return systemd_unit_names(agent_id, job)[1] in self.enabled
+
+
+@pytest.fixture(autouse=True)
+def os_scheduler(monkeypatch):
+    """No test schedules anything on the machine that runs it.
+
+    Setup schedules upkeep by default, so every test that installs hooks
+    would otherwise load real launchd jobs (whose plists sit in the test's
+    home), enable real systemd timers, or rewrite the developer's crontab.
+    Every call that reaches the OS scheduler, reading or writing, goes to
+    this fake instead; a test that needs it asks for ``os_scheduler``, and
+    finds the real functions in ``os_scheduler.real``."""
+    from mnemos import cli
+    from mnemos.setup import scheduler
+
+    fake = FakeScheduler()
+    fake.real = {
+        "_launchctl": cli._launchctl,
+        "_systemctl": cli._systemctl,
+        **{name: getattr(scheduler, name) for name in (
+            "read_crontab", "write_crontab", "launchd_job_active", "systemd_timer_active",
+        )},
+    }
+    monkeypatch.setattr("mnemos.cli._launchctl", fake.launchctl)
+    monkeypatch.setattr("mnemos.cli._systemctl", fake.systemctl)
+    monkeypatch.setattr("mnemos.setup.scheduler.read_crontab", fake.read_crontab)
+    monkeypatch.setattr("mnemos.setup.scheduler.write_crontab", fake.write_crontab)
+    monkeypatch.setattr("mnemos.setup.scheduler.launchd_job_active", fake.launchd_job_active)
+    monkeypatch.setattr("mnemos.setup.scheduler.systemd_timer_active", fake.systemd_timer_active)
+    # Anything that still starts a scheduler's own command fails the test
+    # rather than reaching the machine.
+    import subprocess
+    from pathlib import Path
+
+    run = subprocess.run
+
+    def guarded(args, *more, **options):
+        first = args[0] if isinstance(args, (list, tuple)) and args else str(args).split(" ")[0]
+        if Path(str(first)).name in {"launchctl", "systemctl", "crontab"}:
+            raise AssertionError(f"a test reached the machine's scheduler: {args}")
+        return run(args, *more, **options)
+
+    monkeypatch.setattr(subprocess, "run", guarded)
+    # And no test waits on a person: setup asks about the quiet hours only at
+    # a terminal, which a run with `pytest -s` in one would otherwise be. A
+    # test of the question says there is someone there.
+    monkeypatch.setattr("mnemos.cli._can_ask", lambda: False)
+    return fake
+
+
 _EVERY_DAY: list[str] | None = None
 
 

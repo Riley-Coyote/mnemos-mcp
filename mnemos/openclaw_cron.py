@@ -9,11 +9,10 @@ Jobs:
 - mnemos-deep: Daily 3am — deep consolidation (all passes)
 - mnemos-export: Every 2h — export updated workspace files
 
-The transcript indexer is not scheduled here: it writes memories in a model's
-words, not the agent's, and its volume buried the continuity layer. The indexer stays available by hand
-(`mnemos index`); `mnemos substrate-tick` was retired in 0.4.0. Installing
-these jobs replaces every `mnemos-*` job already in jobs.json, so a substrate
-tick an earlier install added goes too.
+Neither the transcript indexer nor the substrate tick is scheduled here: both
+wrote memories in a model's words, not the agent's, and both were retired in
+0.4.0. Installing these jobs replaces every `mnemos-*` job already in
+jobs.json, so an indexer or substrate job an earlier install added goes too.
 """
 
 from __future__ import annotations
@@ -102,11 +101,10 @@ def generate_cron_jobs(
         # words, which are not the agent's (setup/scheduler.py retires it the
         # same way). `mnemos substrate-tick` was retired in 0.4.0.
         #
-        # No session-indexer job. The turnkey scheduler (setup/scheduler.py)
-        # deliberately excludes transcript indexing — on one live store it
+        # No session-indexer job. On one live store the transcript indexer
         # wrote ~7,058 engrams against 13 deliberate captures and buried the
-        # continuity layer — so this generator must not schedule it either.
-        # Indexing stays available as the explicit `mnemos index` command.
+        # continuity layer; it was retired in 0.4.0, and `mnemos index` only
+        # says so.
     ]
 
 

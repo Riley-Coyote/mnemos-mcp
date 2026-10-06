@@ -463,21 +463,40 @@ def test_the_migration_labels_what_a_store_held_and_guesses_nothing(tmp_path):
 # ── Decision 3: only the agent's own words make it who it is ──
 
 
+def _encode_as_the_indexer_did(db: Path) -> None:
+    """Two memories written the way the transcript indexer wrote them before
+    it was retired (0.4.0), as old stores still hold them: a tool's words,
+    tagged session-indexed, its "lesson" carrying its own words as the
+    impact."""
+    from mnemos.core.types import SourceType
+    from mnemos.encoding.encoder import Encoder
+
+    store = EngramStore(str(db))
+    try:
+        encoder = Encoder(store)
+        for extracted_as, content, tags, impact, salience in (
+            ("lesson", "Always rebuild the sprite atlas after palette edits.", ["lesson"],
+             "Always rebuild the sprite atlas after palette edits.", 0.8),
+            ("fact", "The nightly backup cron fires at three in the morning.", [], "", 0.6),
+        ):
+            encoder.encode(
+                content=content, impact=impact, kind="semantic",
+                tags=[*tags, f"trace-type:{extracted_as}", "session-indexed"],
+                source=SourceType.SESSION, session_id="transcript-1", agent_id="nova",
+                override_confidence=salience,
+                override_confidence_source="trace_extraction", author_kind="tool",
+            )
+    finally:
+        store.close()
+
+
 def test_an_indexed_memory_is_a_tools_and_never_becomes_a_lesson(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     (tmp_path / "home" / ".mnemos").mkdir(parents=True)
     from mnemos.consolidation.softening import run_softening_pass
-    from mnemos.indexer.session_indexer import SessionIndexer
 
     db = tmp_path / "m.db"
-    indexer = SessionIndexer(agent_id="nova", db_path=str(db), config={})
-    assert indexer._encode_to_mnemos([
-        # The indexer's "lesson" carries its own words as the impact.
-        {"type": "lesson", "content": "Always rebuild the sprite atlas after palette edits.",
-         "salience": 0.8},
-        {"type": "fact", "content": "The nightly backup cron fires at three in the morning.",
-         "salience": 0.6},
-    ], "transcript-1") == 2
+    _encode_as_the_indexer_did(db)
 
     indexed = _rows(db, "SELECT * FROM engrams")
     assert [row.get("author_kind") for row in indexed] == ["tool", "tool"]
@@ -683,23 +702,6 @@ def test_installing_removes_the_substrate_job_an_earlier_install_left(tmp_path, 
     assert {path.name for path in agents.iterdir()} == {
         "com.mnemos.nova.maintain.plist", "com.mnemos.nova.maintain-deep.plist",
     }
-
-
-def test_running_the_indexer_by_hand_says_so(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("HOME", str(tmp_path))
-
-    class _Stub:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def run(self):
-            return {}
-
-    monkeypatch.setattr("mnemos.indexer.session_indexer.SessionIndexer", _Stub)
-
-    assert main(["--db-path", str(tmp_path / "m.db"), "--agent-id", "nova", "index"]) == 0
-    out = capsys.readouterr().out
-    assert "in a model's words, not the agent's" in out, out
 
 
 # ── Decision 5: moving what a tool wrote out of the way, and back ──

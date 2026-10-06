@@ -31,11 +31,9 @@ _CRON_JOBS = [
             "Keep under 2000 words. Skip cron sessions. Max 3 transcripts."
         ),
     },
-    # No session-indexer job. The turnkey scheduler (setup/scheduler.py)
-    # deliberately excludes transcript indexing — on one live store it wrote
+    # No session-indexer job. On one live store the transcript indexer wrote
     # ~7,058 engrams against 13 deliberate captures and buried the continuity
-    # layer — and this generator must not contradict it. Indexing stays
-    # available as the explicit `mnemos index` command.
+    # layer; it was retired in 0.4.0, and `mnemos index` only says so.
     # No substrate-tick job either: its handlers wrote memories in a model's
     # words, not the agent's (setup/scheduler.py retires it the same way).
     # `mnemos substrate-tick` was retired in 0.4.0.

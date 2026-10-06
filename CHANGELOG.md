@@ -2,6 +2,71 @@
 
 ## 0.3.1 (unreleased)
 
+### What setup turns on
+
+Setup now turns on what a newcomer needs, and says how to turn each thing off.
+`mnemos hooks install claude-code --write`, the last step for Claude Code,
+installs the cue with the wake (`--no-prompt` leaves it out, and takes out one
+an earlier install added; `--prompt` is still accepted and changes nothing),
+and schedules upkeep between sessions (`--no-upkeep` leaves it out).
+`mnemos hooks install codex --write` schedules the upkeep too, and so does
+`mnemos mcp install claude --write`, which is all of Claude Desktop's setup.
+With no model chosen for Mnemos, upkeep runs local passes only: the scheduled
+jobs, run with provider keys in the environment and the network caught, tried
+to reach nothing, and with a model chosen they reached only it.
+
+### Quiet hours, on a schedule
+
+`mnemos life` ran only by hand. `mnemos daemon install --hours` schedules the
+agent's own hour daily at 08:00 and the half hour for the day's work at 19:00
+(`--mine-at` and `--ours-at` move them), and `mnemos daemon uninstall --hours`
+takes off only them. Setup asks once, at a terminal, and yes is the default:
+"Quiet hours give the agent an hour a day that's its own, and half an hour for
+the day's work; they run Claude on its own and use your Claude plan." Without
+a terminal it schedules nothing and says how; without a `claude` command it
+says that. Each hour's job carries what a background job lacks: the `claude`
+command's folder on its PATH, both commands' full paths (`MNEMOS_CLAUDE_BIN`,
+`MNEMOS_LIFE_MNEMOS_BIN`) found at install, and the Claude login the person set
+(`CLAUDE_CONFIG_DIR`), if any. `mnemos daemon status`, `mnemos doctor` and
+`mnemos log` show them; the log now reads a systemd user timer too, which is
+what the hours are where systemd runs.
+
+### The cue hears only the person
+
+Claude Code sends the prompt hook messages it writes itself: a background
+task's notice (`<task-notification>`), a slash command, the `!` shell's input
+and output, a local command's caveat and output, a CI monitor's event. The cue
+answered them as if the person had written them. Now a message that starts
+with one of those tags gets nothing and counts as nothing. Only those tags
+count, so a message of the person's that starts with "<" is still heard.
+
+### Background jobs on a Mac
+
+macOS doesn't let background jobs read `~/Documents`, `~/Desktop` or
+`~/Downloads`. `mnemos daemon install` warned only when the mnemos command
+lived there, so a source checkout there installed in place, with its command
+elsewhere, got no warning while every scheduled run failed. Setup and
+`mnemos daemon install` now warn when the command or the code it runs is in
+one of those folders, and say to install from PyPI or a built wheel. Every job
+runs in `~/.mnemos`, and a quiet hour that can't look into `~/Documents`
+leaves out its folders there instead of failing. Installing upkeep again keeps
+the quiet hours, on a crontab too; `mnemos daemon uninstall` takes off only
+what is there, with the copy an install kept of a plist it replaced; and on a
+crontab `maintain` no longer counts as scheduled because `maintain-deep` is.
+
+### The transcript indexer, retired
+
+`mnemos index` had a model pull "facts" out of old conversations and file them
+as the agent's memories: on one install about 7,000 of them against 13 the
+agent kept itself. Only the agent writes its memory. The indexer
+(mnemos/indexer), its `mnemos-index-session` command, its tests and its docs
+are gone; `mnemos index` says it is retired and why, and exits 1. Installing or
+uninstalling the background jobs removes the indexer job the first
+`mnemos daemon install` scheduled, as it removes the substrate's tick, and
+advanced setup no longer writes a project list for it. What it wrote stays a
+tool's words, and `mnemos repair quarantine-tool-written` still moves it out
+of recall.
+
 ### A small page to watch your agent's days
 
 `mnemos log` opens a page in your browser that shows what the agent does on

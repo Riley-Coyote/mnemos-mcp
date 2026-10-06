@@ -27,6 +27,11 @@ pipx install "mnemos-continuity[mcp]"
 The distribution package is `mnemos-continuity`. The Python import package and CLI
 command are still `mnemos`.
 
+On a Mac, install it outside `~/Documents`, `~/Desktop` and `~/Downloads`, and
+keep a checkout installed in place out of them too. macOS doesn't let background
+jobs read those folders, so the upkeep and quiet hours setup schedules would fail
+there on every run. Setup warns when it finds this.
+
 ---
 
 ## 2. Check Readiness
@@ -49,13 +54,24 @@ No OpenRouter key is required for baseline continuity.
 
 ## 3. Connect an MCP Client
 
+### Claude Code
+
+```bash
+mnemos mcp install claude-code --write
+```
+
+This runs Claude Code's own `claude mcp add`. Then go on to step 4, which
+finishes setup for Claude Code.
+
 ### Claude Desktop
 
 ```bash
 mnemos mcp install claude --write
 ```
 
-Then restart Claude Desktop.
+Then restart Claude Desktop. For Claude Desktop this is all of setup: it also
+schedules upkeep between sessions and asks about quiet hours (step 6).
+`--no-upkeep` leaves the upkeep out.
 
 To preview the config without writing:
 
@@ -103,6 +119,31 @@ Memory is then injected before the agent's first turn. Preview it first with
 
 The hook fails silent by design: empty, unreadable, or missing memory
 contributes nothing and the session starts normally.
+
+That one command turns on everything setup turns on for Claude Code:
+
+- **The wake:** memory before the first turn, and again after compaction.
+- **The cue:** each message you send brings up to three memories that may bear
+  on it, or nothing. Messages Claude Code writes itself, such as a background
+  task's notice, bring nothing.
+- **Upkeep between sessions,** scheduled with your system's scheduler (step 6).
+- **Quiet hours, if you say yes.** It asks once, and yes is the default: an
+  hour a day that's the agent's own, and half an hour for the day's work. They
+  run Claude on its own and use your Claude plan. Run without a terminal, or
+  with no `claude` command, it leaves them off and prints how to turn them on.
+
+To turn each off:
+
+```bash
+mnemos hooks install --no-prompt --write    # the cue
+mnemos daemon uninstall --write             # upkeep, and the quiet hours with it
+mnemos daemon uninstall --hours --write     # only the quiet hours
+```
+
+To set up without scheduling upkeep at all: `mnemos hooks install --no-upkeep --write`.
+
+On Codex, `mnemos hooks install codex --write` installs the wake and schedules
+upkeep. Open `/hooks` in Codex to review the new hook.
 
 ---
 
@@ -185,19 +226,41 @@ or from the CLI:
 mnemos consolidate --deep
 ```
 
-### Background Maintenance
+### Upkeep Between Sessions
 
-To have maintenance happen between sessions rather than only while one is
-open, schedule it with the OS:
+Setup schedules upkeep with your system's scheduler (step 4, or step 3 for
+Claude Desktop), so maintenance happens between sessions rather than only
+while one is open: every 4 hours memories fade a little with time and related
+ones are linked, and a deeper pass runs each night at 03:00. With no model
+chosen for Mnemos, these are local passes only, and nothing leaves your
+machine. By hand:
 
 ```bash
 mnemos daemon install --write     # launchd, systemd, or crontab
 mnemos daemon status
+mnemos daemon uninstall --write   # off
 ```
 
 `mnemos daemon install` with no `--write` prints exactly what it would
 schedule. This requires no external agent runner. `mnemos doctor` reports
-whether background maintenance is active.
+whether upkeep and the quiet hours are scheduled.
+
+### Quiet Hours
+
+An hour a day that's the agent's own (08:00), and half an hour for the day's
+work (19:00, skipped on a day with no work). Each runs Claude Code on its own,
+with the agent's memory, and uses your Claude plan. Setup asks about them
+once; to schedule them yourself, or change their times:
+
+```bash
+mnemos daemon install --hours --write
+mnemos daemon install --hours --mine-at 07:30 --ours-at 21:00 --write
+mnemos daemon uninstall --hours --write     # off; upkeep stays
+```
+
+They need the `claude` command. Its location, and Mnemos's, are written into
+the jobs when you install them, because a background job doesn't get your
+shell's PATH.
 
 ---
 
@@ -270,6 +333,14 @@ decisions, project state, and corrections.
 No dedicated provider is configured. Baseline continuity still works. Add a
 provider key only if you want richer model-mediated maintenance or background
 work.
+
+### Scheduled jobs fail on a Mac, though the same command works by hand
+
+Mnemos is probably installed under `~/Documents`, `~/Desktop` or
+`~/Downloads`, which background jobs can't read; setup and
+`mnemos daemon install` print a warning when it is. Install it from PyPI
+(`pipx install "mnemos-continuity[mcp,embeddings]"`) or from a built wheel,
+then run setup again. Each job's log is in `~/.mnemos/logs`.
 
 ### Multiple agents share a machine
 

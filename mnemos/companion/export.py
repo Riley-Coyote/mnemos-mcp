@@ -22,8 +22,9 @@ What it reads, and never writes:
   practice hour the copy of the store it ran on;
 - the studio, where the hours make things (its pictures are served as they
   are, never copied);
-- whether anything wakes the hours on its own: a LaunchAgent, or a crontab
-  line, that runs ``mnemos … life --hour …`` for this agent.
+- whether anything wakes the hours on its own: a LaunchAgent, a systemd
+  user timer or a crontab line that runs ``mnemos … life --hour …`` for this
+  agent.
 
 None of those has to exist. A store not yet made is said plainly, and a
 machine with no hours, no studio or no schedule gives empty lists, which the
@@ -73,6 +74,8 @@ MOST_STUDIO_FILES = 5000
 RUNS_LIFE = re.compile(r"(?:^|[\s/])mnemos(?:\s+\S+)*?\s+life\s")
 HOUR_KIND = re.compile(r"--hour[\s=](mine|ours)\b")
 NAMED_AGENT = re.compile(r"--agent-id[\s=](\S+)")
+# A systemd timer that fires once a day, at a time of day.
+ON_CALENDAR = re.compile(r"^OnCalendar=\*-\*-\* (\d{1,2}):(\d{2})(?::\d{2})?\s*$", re.MULTILINE)
 
 
 def person_name(given: str | None = None) -> str:
@@ -405,6 +408,18 @@ def _launchd_loaded(label: str) -> bool:
         return False
 
 
+def _systemd_units() -> Path:
+    return Path.home() / ".config" / "systemd" / "user"
+
+
+def _systemd_active(timer: str) -> bool:
+    try:
+        return subprocess.run(["systemctl", "--user", "is-active", "--quiet", timer],
+                              capture_output=True, timeout=5, check=False).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
 def _crontab() -> str:
     """This user's crontab, or ``""``. Not read on macOS, where the hours are
     scheduled with launchd."""
@@ -582,9 +597,10 @@ class Exporter:
         return kind.group(1) if agent == self.scope.agent_id else None
 
     def schedule(self) -> list[dict]:
-        """Whether anything wakes the hours on its own: a LaunchAgent or a
-        crontab line that runs them for this agent. ``when`` is the time of day
-        when the schedule names one, else None."""
+        """Whether anything wakes the hours on its own: a LaunchAgent, a
+        systemd user timer (what `mnemos daemon install --hours` writes where
+        systemd runs) or a crontab line that runs them for this agent. ``when``
+        is the time of day when the schedule names one, else None."""
         found = []
         agents = _launch_agents()
         for plist_path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
@@ -606,6 +622,23 @@ class Exporter:
                     and isinstance(interval.get("Minute", 0), int):
                 at = {"Hour": interval["Hour"], "Minute": interval.get("Minute", 0)}
             found.append({"label": label, "when": at, "kind": kind, "loaded": _launchd_loaded(label)})
+        units = _systemd_units()
+        for service in sorted(units.glob("*.service")) if units.is_dir() else []:
+            try:
+                lines = service.read_text().splitlines()
+            except (OSError, UnicodeDecodeError):
+                continue
+            command = next((line.partition("=")[2] for line in lines if line.startswith("ExecStart=")), "")
+            kind = self._runs_hours_here(command)
+            if not kind:
+                continue
+            timer = service.with_suffix(".timer")
+            try:
+                daily = ON_CALENDAR.search(timer.read_text())
+            except (OSError, UnicodeDecodeError):
+                daily = None
+            at = {"Hour": int(daily.group(1)), "Minute": int(daily.group(2))} if daily else None
+            found.append({"label": timer.name, "when": at, "kind": kind, "loaded": _systemd_active(timer.name)})
         for line in _crontab().splitlines():
             fields = line.split(None, 5)
             if line.lstrip().startswith("#") or len(fields) < 6:

@@ -102,6 +102,17 @@ def _scope_options(
         )
 
 
+def _clock(text: str) -> tuple[int, int]:
+    """A time of day, HH:MM on the 24-hour clock, as (hour, minute)."""
+    hour, colon, minute = text.strip().partition(":")
+    try:
+        if colon and len(minute) == 2 and 0 <= int(hour) <= 23 and 0 <= int(minute) <= 59:
+            return int(hour), int(minute)
+    except ValueError:
+        pass
+    raise argparse.ArgumentTypeError(f"{text!r} is not a time like 08:00 or 19:30")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -166,9 +177,10 @@ def main(argv: list[str] | None = None) -> int:
     p_setup.add_argument("--agent", default="main", help="OpenClaw agent ID")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be registered")
 
-    # ── index ──
-    p_index = sub.add_parser("index", help="Run session indexer")
-    p_index.add_argument("--backfill", action="store_true", help="Index last 24h of sessions")
+    # ── index (retired) ──
+    p_index = sub.add_parser("index", help="Retired: the transcript indexer (says why)")
+    # Accepted so old instructions reach the reason rather than a usage error.
+    p_index.add_argument("--backfill", action="store_true", help=argparse.SUPPRESS)
 
     # ── bootstrap ──
     p_bootstrap = sub.add_parser("bootstrap", help="Bootstrap a turnkey memory stack")
@@ -564,6 +576,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write config where safely supported instead of printing a snippet",
     )
+    p_mcp_install.add_argument(
+        "--no-upkeep",
+        action="store_true",
+        help=(
+            "For Claude Desktop with --write, don't schedule upkeep between "
+            "sessions (on by default)"
+        ),
+    )
 
     # ── hook ──
     p_hook = sub.add_parser(
@@ -610,10 +630,20 @@ def main(argv: list[str] | None = None) -> int:
     _scope_options(p_hook_prompt)
 
     # ── hooks ──
-    p_hooks = sub.add_parser("hooks", help="Install session-start memory injection")
+    p_hooks = sub.add_parser(
+        "hooks", help="Install the hooks that bring memory into each session (setup's last step)",
+    )
     hooks_sub = p_hooks.add_subparsers(dest="hooks_command")
     p_hooks_install = hooks_sub.add_parser(
-        "install", help="Print or write the SessionStart hook config"
+        "install",
+        help="Print or write the hooks that bring memory into each session",
+        description=(
+            "Install the SessionStart hook, which wakes the agent with its memory, "
+            "and for Claude Code the cue (a UserPromptSubmit hook) that brings the "
+            "memories that may bear on each message. With --write it also schedules "
+            "upkeep between sessions, and at a terminal asks once about quiet hours "
+            "(Claude Code)."
+        ),
     )
     p_hooks_install.add_argument(
         "client", nargs="?", default="claude-code", choices=("claude-code", "codex"),
@@ -629,24 +659,34 @@ def main(argv: list[str] | None = None) -> int:
     p_hooks_install.add_argument(
         "--write", action="store_true", help="Write the settings file instead of printing it"
     )
-    p_hooks_install.add_argument(
-        "--prompt",
+    cue_choice = p_hooks_install.add_mutually_exclusive_group()
+    cue_choice.add_argument(
+        "--no-prompt",
         action="store_true",
         help=(
-            "Also install the UserPromptSubmit hook that brings the memories "
-            "that may bear on each message (Claude Code only; off by default)"
+            "Leave out the cue, the UserPromptSubmit hook that brings the memories "
+            "that may bear on each message (Claude Code; on by default). Removes "
+            "one an earlier install added."
         ),
+    )
+    # The cue is on by default now; --prompt stays accepted for instructions
+    # written when it had to be asked for.
+    cue_choice.add_argument("--prompt", action="store_true", help=argparse.SUPPRESS)
+    p_hooks_install.add_argument(
+        "--no-upkeep",
+        action="store_true",
+        help="With --write, don't schedule upkeep between sessions (on by default)",
     )
 
     # ── daemon ──
     p_daemon = sub.add_parser(
-        "daemon", help="Schedule background maintenance with the OS scheduler"
+        "daemon", help="Schedule upkeep and quiet hours with the OS scheduler"
     )
     daemon_sub = p_daemon.add_subparsers(dest="daemon_command")
     for _name, _help in (
-        ("install", "Print or write the scheduled maintenance jobs"),
-        ("status", "Show which maintenance jobs are scheduled"),
-        ("uninstall", "Remove the scheduled maintenance jobs"),
+        ("install", "Print or write the scheduled jobs: upkeep, and with --hours the quiet hours"),
+        ("status", "Show which jobs are scheduled"),
+        ("uninstall", "Remove the scheduled jobs (with --hours, only the quiet hours)"),
     ):
         _p = daemon_sub.add_parser(_name, help=_help)
         _scope_options(_p)
@@ -655,6 +695,30 @@ def main(argv: list[str] | None = None) -> int:
                 "--write",
                 action="store_true",
                 help="Apply the change instead of printing what it would do",
+            )
+        if _name == "install":
+            _p.add_argument(
+                "--hours",
+                action="store_true",
+                help=(
+                    "Also schedule the quiet hours: an hour a day that's the agent's "
+                    "own, and half an hour for the day's work. They run Claude on its "
+                    "own and use your Claude plan."
+                ),
+            )
+            _p.add_argument(
+                "--mine-at", type=_clock, default=None, metavar="HH:MM",
+                help="With --hours: when the agent's own hour starts (default 08:00)",
+            )
+            _p.add_argument(
+                "--ours-at", type=_clock, default=None, metavar="HH:MM",
+                help="With --hours: when the half hour for the day's work starts (default 19:00)",
+            )
+        if _name == "uninstall":
+            _p.add_argument(
+                "--hours",
+                action="store_true",
+                help="Remove only the quiet hours, and keep upkeep",
             )
 
     # ── backup ──
@@ -1001,19 +1065,20 @@ def _scope_args(args: argparse.Namespace) -> tuple[str, ...]:
 
 
 def _cmd_daemon(args: argparse.Namespace) -> int:
-    """Schedule Mnemos maintenance with whatever scheduler the host provides."""
+    """Schedule upkeep, and with ``--hours`` the quiet hours, with whatever
+    scheduler the host provides."""
     command = getattr(args, "daemon_command", None)
     if command not in {"install", "status", "uninstall"}:
         print("Usage: mnemos daemon {install|status|uninstall}", file=sys.stderr)
         return 1
+    hours = bool(getattr(args, "hours", False))
+    mine_at, ours_at = getattr(args, "mine_at", None), getattr(args, "ours_at", None)
+    if (mine_at or ours_at) and not hours:
+        print("--mine-at and --ours-at set the quiet hours' times: add --hours.", file=sys.stderr)
+        return 1
 
-    from .setup import scheduler
-
-    scope = _cli_scope(args)
-    blueprint = scheduler.plan(
-        agent_id=scope.agent_id,
-        mnemos_command=_mnemos_command(),
-        scope_args=_scope_args(args),
+    blueprint = _blueprint(
+        args, hours=command == "install" and hours, mine_at=mine_at, ours_at=ours_at,
     )
     backend = blueprint["backend"]
 
@@ -1030,30 +1095,94 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     if command == "status":
         return _daemon_status(blueprint)
     if command == "uninstall":
-        return _daemon_uninstall(blueprint, write=args.write)
-    return _daemon_install(blueprint, write=args.write)
+        return _daemon_uninstall(blueprint, write=args.write, only_hours=hours)
+    return _daemon_install(blueprint, write=args.write, hours=hours)
 
 
-def _daemon_install(blueprint: dict, *, write: bool) -> int:
+def _blueprint(
+    args: argparse.Namespace,
+    *,
+    hours: bool = False,
+    mine_at: tuple[int, int] | None = None,
+    ours_at: tuple[int, int] | None = None,
+) -> dict:
+    """What would be scheduled for this command's scope (``scheduler.plan``).
+
+    With ``hours``, the quiet hours' environment is found now, the claude
+    command and the Claude login, because a job started in the background
+    finds neither. Without a claude command they can't be scheduled
+    (``hours_ready`` is false)."""
+    from .setup import scheduler
+
+    scope = _cli_scope(args)
+    mnemos_command = _mnemos_command()
+    hour_env = None
+    if hours:
+        claude = scheduler.find_claude()
+        if claude:
+            hour_env = scheduler.hour_environment(
+                claude_bin=claude,
+                mnemos_command=mnemos_command,
+                config_dir=os.environ.get("CLAUDE_CONFIG_DIR") or None,
+            )
+    return scheduler.plan(
+        agent_id=scope.agent_id,
+        mnemos_command=mnemos_command,
+        scope_args=_scope_args(args),
+        hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at),
+        hour_env=hour_env,
+    )
+
+
+# What the quiet hours are, said wherever they're offered or scheduled.
+QUIET_HOURS = (
+    "an hour a day that's its own, and half an hour for the day's work; "
+    "they run Claude on its own and use your Claude plan"
+)
+QUIET_HOURS_QUESTION = f"Quiet hours give the agent {QUIET_HOURS}. Turn them on? [Y/n] "
+_HOURS_ON = "mnemos daemon install --hours --write"
+_HOURS_OFF = "mnemos daemon uninstall --hours --write"
+_NO_CLAUDE = (
+    "they run Claude Code's claude command, and none was found (on your PATH, "
+    "or in MNEMOS_CLAUDE_BIN)"
+)
+
+
+def _print_job(entry: dict) -> None:
+    job = entry["job"]
+    print(f"\n  {job.name} — {job.description}")
+    print(f"    schedule: {entry['schedule']}")
+    print(f"    command:  {entry['command']}")
+    for key, value in (entry.get("environment") or {}).items():
+        print(f"    env:      {key}={value}")
+    print(f"    log:      {entry['log']}")
+
+
+def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int:
+    from .setup import scheduler as _scheduler
+
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
-    entries = blueprint["entries"]
+    entries = list(blueprint["entries"])
+    no_claude = hours and not blueprint["hours_ready"]
 
     print(f"Scheduler:   {backend}")
     print(f"Agent:       {agent_id}")
+    print(f"Folder:      {_scheduler.working_directory()} (where every job runs)")
     for entry in entries:
-        job = entry["job"]
-        print(f"\n  {job.name} — {job.description}")
-        print(f"    schedule: {entry['schedule']}")
-        print(f"    command:  {entry['command']}")
-        print(f"    log:      {entry['log']}")
+        _print_job(entry)
     for job in blueprint["skipped"]:
         print(
             f"\n  {job.name} — skipped: needs a model provider "
             f"(set MNEMOS_LLM_PROVIDER and a key, then reinstall)"
         )
-
-    from .setup import scheduler as _scheduler
+    if no_claude:
+        print(f"\n  The quiet hours are not scheduled: {_NO_CLAUDE}.")
+    elif hours:
+        print(f"\n  Quiet hours give the agent {QUIET_HOURS}.")
+        for entry in blueprint["hours"]:
+            _print_job(entry)
+        entries += blueprint["hours"]
 
     retired = _scheduler.retired_installed(
         blueprint, _read_crontab_safe() if backend == "crontab" else ""
@@ -1070,36 +1199,10 @@ def _daemon_install(blueprint: dict, *, write: bool) -> int:
 
     if not write:
         print("\nThis is a preview. Re-run with --write to schedule these jobs.")
-        return 0
-
-    from .file_security import atomic_write_bytes, atomic_write_text, secure_directory
-
-    secure_directory(Path.home() / ".mnemos" / "logs", force=True)
+        return 1 if no_claude else 0
 
     try:
-        _remove_retired(backend, retired)
-        if backend == "launchd":
-            for entry in entries:
-                path = entry["path"]
-                secure_directory(path.parent)
-                _launchctl("bootout", path, allow_missing=True)
-                atomic_write_bytes(path, entry["content"], backup_existing=True)
-                _launchctl("bootstrap", path)
-        elif backend == "systemd":
-            systemd_dir = None
-            for entry in entries:
-                for path, content in entry["units"].items():
-                    secure_directory(path.parent)
-                    atomic_write_text(path, content, backup_existing=True)
-                    systemd_dir = path.parent
-            if systemd_dir is not None:
-                _systemctl("daemon-reload")
-                for entry in entries:
-                    _systemctl("enable", "--now", entry["timer_name"])
-        else:
-            merged = scheduler_merge_crontab(entries, agent_id)
-            if merged is None:
-                return 1
+        _apply_schedule(blueprint, entries, retired)
     except (OSError, RuntimeError) as exc:
         print(f"Failed to activate background maintenance: {exc}", file=sys.stderr)
         return 1
@@ -1108,74 +1211,124 @@ def _daemon_install(blueprint: dict, *, write: bool) -> int:
     if retired:
         print(f"Removed {len(retired)} job(s) an earlier install scheduled.")
     print("Check them any time with: mnemos daemon status")
-    return 0
+    return 1 if no_claude else 0
 
 
-def _remove_retired(backend: str, retired: list[dict]) -> None:
-    """Unschedule jobs an earlier install scheduled and this one no longer
-    does. A crontab needs nothing: the install rewrites this agent's lines."""
+def _apply_schedule(blueprint: dict, entries: list[dict], retired: list[dict]) -> None:
+    """Schedule ``entries`` on this host, and take off the ``retired`` jobs
+    an earlier install left. Jobs already scheduled are replaced, never
+    stacked; on a crontab every other line stays as it was. Raises OSError or
+    RuntimeError when the scheduler refuses."""
+    from .file_security import atomic_write_bytes, atomic_write_text, secure_directory
+    from .setup import scheduler
+
+    backend = blueprint["backend"]
+    # The logs' folder, and so ~/.mnemos, the folder every job runs in: it
+    # has to be there before any job starts.
+    secure_directory(Path.home() / ".mnemos" / "logs", force=True)
+    _remove_retired(backend, retired)
     if backend == "launchd":
-        for entry in retired:
+        for entry in entries:
+            path = entry["path"]
+            secure_directory(path.parent)
+            _launchctl("bootout", path, allow_missing=True)
+            atomic_write_bytes(path, entry["content"], backup_existing=True)
+            _launchctl("bootstrap", path)
+    elif backend == "systemd":
+        for entry in entries:
+            for path, content in entry["units"].items():
+                secure_directory(path.parent)
+                atomic_write_text(path, content, backup_existing=True)
+        if entries:
+            _systemctl("daemon-reload")
+            for entry in entries:
+                _systemctl("enable", "--now", entry["timer_name"])
+    else:
+        names = [entry["job"].name for entry in entries]
+        names += [job.name for job in scheduler.RETIRED_JOBS]
+        merged = scheduler.merge_cron_lines(
+            scheduler.read_crontab(), [entry["line"] for entry in entries],
+            blueprint["agent_id"], replacing=names,
+        )
+        if not scheduler.write_crontab(merged):
+            raise RuntimeError("the crontab could not be written")
+
+
+def _unschedule(backend: str, entries: list[dict]) -> None:
+    """Take ``entries`` off launchd or systemd: stopped, and their files
+    gone, with the copies an install kept of what it replaced (``.bak``).
+    A crontab is the caller's: its lines go in one merge."""
+    if backend == "launchd":
+        for entry in entries:
             _launchctl("bootout", entry["path"], allow_missing=True)
-            entry["path"].unlink(missing_ok=True)
-    elif backend == "systemd" and retired:
-        for entry in retired:
+            _unlink_with_backup(entry["path"])
+    elif backend == "systemd" and entries:
+        for entry in entries:
             try:
                 _systemctl("disable", "--now", entry["timer_name"])
             except RuntimeError:
                 pass  # already stopped or never enabled; the files still go
             for path in entry["units"]:
-                path.unlink(missing_ok=True)
+                _unlink_with_backup(Path(path))
         _systemctl("daemon-reload")
 
 
-def scheduler_merge_crontab(entries: list[dict], agent_id: str) -> str | None:
-    """Write our crontab entries while preserving everything already there."""
+def _unlink_with_backup(path: Path) -> None:
+    path.unlink(missing_ok=True)
+    path.with_suffix(path.suffix + ".bak").unlink(missing_ok=True)
+
+
+def _remove_retired(backend: str, retired: list[dict]) -> None:
+    """Unschedule jobs an earlier install scheduled and this one no longer
+    does. A crontab needs nothing: its lines go with the merge."""
+    _unschedule(backend, retired)
+
+
+def _scheduled(blueprint: dict, entry: dict, crontab: str) -> bool:
+    """Whether ``entry`` is installed and its scheduler has it."""
     from .setup import scheduler
 
-    existing = scheduler.read_crontab()
-    merged = scheduler.merge_cron_lines(
-        existing, [entry["line"] for entry in entries], agent_id
-    )
-    result = subprocess.run(["crontab", "-"], input=merged, text=True)
-    if result.returncode != 0:
-        print("Failed to write crontab.", file=sys.stderr)
-        return None
-    return merged
+    backend = blueprint["backend"]
+    agent_id = blueprint["agent_id"]
+    job = entry["job"]
+    if backend == "launchd":
+        return entry["path"].exists() and scheduler.launchd_job_active(agent_id, job)
+    if backend == "systemd":
+        return (
+            all(path.exists() for path in entry["units"])
+            and scheduler.systemd_timer_active(agent_id, job)
+        )
+    return scheduler.cron_has(crontab, agent_id, job.name)
 
 
 def _daemon_status(blueprint: dict) -> int:
     from .setup import scheduler
 
     backend = blueprint["backend"]
-    agent_id = blueprint["agent_id"]
+    crontab = _read_crontab_safe() if backend == "crontab" else ""
 
     print(f"Scheduler:   {backend}")
-    print(f"Agent:       {agent_id}")
+    print(f"Agent:       {blueprint['agent_id']}")
 
     installed_any = False
     for entry in blueprint["entries"]:
-        job = entry["job"]
-        if backend == "launchd":
-            installed = entry["path"].exists() and scheduler.launchd_job_active(
-                agent_id, job
-            )
-        elif backend == "systemd":
-            installed = all(path.exists() for path in entry["units"]) and scheduler.systemd_timer_active(
-                agent_id, job
-            )
-        else:
-            installed = f"{scheduler_marker(agent_id)}{job.name}" in _read_crontab_safe()
+        installed = _scheduled(blueprint, entry, crontab)
         installed_any = installed_any or installed
         state = "scheduled" if installed else "not scheduled"
-        print(f"  {job.name:<16} {state:<15} {entry['schedule']}")
+        print(f"  {entry['job'].name:<16} {state:<15} {entry['schedule']}")
 
     for job in blueprint["skipped"]:
         print(f"  {job.name:<16} {'unavailable':<15} needs a model provider")
 
-    for entry in scheduler.retired_installed(
-        blueprint, _read_crontab_safe() if backend == "crontab" else ""
-    ):
+    hours_on = [entry for entry in blueprint["hours"] if _scheduled(blueprint, entry, crontab)]
+    for entry in hours_on:
+        when = scheduler.installed_daily_at(blueprint, entry, crontab)
+        schedule = f"daily at {when[0]:02d}:{when[1]:02d}" if when else "daily"
+        print(f"  {entry['job'].name:<16} {'scheduled':<15} {schedule}")
+    if not hours_on:
+        print(f"  {'quiet hours':<16} {'off':<15} to turn them on: {_HOURS_ON}")
+
+    for entry in scheduler.retired_installed(blueprint, crontab):
         print(
             f"  {entry['job'].name:<16} {'retired':<15} "
             "no longer scheduled; 'mnemos daemon install --write' removes it"
@@ -1187,64 +1340,184 @@ def _daemon_status(blueprint: dict) -> int:
     return 0
 
 
-def scheduler_marker(agent_id: str) -> str:
-    from .setup import scheduler
-
-    return f"{scheduler.CRON_MARKER}:{agent_id}:"
-
-
 def _read_crontab_safe() -> str:
     from .setup import scheduler
 
     return scheduler.read_crontab()
 
 
-def _daemon_uninstall(blueprint: dict, *, write: bool) -> int:
-    from .setup import scheduler as _scheduler
+def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False) -> int:
+    """Remove what is scheduled for this agent: everything, or with
+    ``only_hours`` only the quiet hours."""
+    from .setup import scheduler
 
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
-    entries = blueprint["entries"]
-    retired = _scheduler.retired_installed(
-        blueprint, _read_crontab_safe() if backend == "crontab" else ""
-    )
+    crontab = _read_crontab_safe() if backend == "crontab" else ""
+    targets = list(blueprint["hours"])
+    if not only_hours:
+        targets = [*blueprint["entries"], *targets]
+    found = scheduler.installed(blueprint, targets, crontab)
+    if not only_hours:
+        found += scheduler.retired_installed(blueprint, crontab)
+
+    if not found:
+        if only_hours:
+            print("The quiet hours aren't scheduled.")
+        else:
+            print(f"Nothing is scheduled for {agent_id} ({backend}).")
+        return 0
 
     if not write:
-        print(f"Would remove {len(entries) + len(retired)} scheduled job(s) ({backend}):")
-        for entry in [*entries, *retired]:
+        print(f"Would remove {len(found)} scheduled job(s) ({backend}):")
+        for entry in found:
             print(f"  {entry['job'].name}")
         print("\nRe-run with --write to remove them.")
         return 0
 
-    removed = 0
-    if retired and backend != "crontab":
-        _remove_retired(backend, retired)
-        removed += len(retired)
-    if backend == "launchd":
-        for entry in entries:
-            path = entry["path"]
-            if path.exists():
-                _launchctl("bootout", path)
-                path.unlink()
-                removed += 1
-    elif backend == "systemd":
-        for entry in entries:
-            _systemctl("disable", "--now", entry["timer_name"])
-            for path in entry["units"]:
-                if path.exists():
-                    path.unlink()
-                    removed += 1
-        _systemctl("daemon-reload")
-    else:
-        from .setup import scheduler
+    try:
+        if backend in ("launchd", "systemd"):
+            _unschedule(backend, found)
+        else:
+            names = [entry["job"].name for entry in targets] if only_hours else None
+            merged = scheduler.merge_cron_lines(crontab, [], agent_id, replacing=names)
+            if not scheduler.write_crontab(merged):
+                raise RuntimeError("the crontab could not be written")
+    except (OSError, RuntimeError) as exc:
+        print(f"Failed to remove the scheduled jobs: {exc}", file=sys.stderr)
+        return 1
 
-        existing = scheduler.read_crontab()
-        merged = scheduler.merge_cron_lines(existing, [], agent_id)
-        subprocess.run(["crontab", "-"], input=merged, text=True)
-        removed = len(entries)
-
-    print(f"Removed {removed} scheduled item(s).")
+    print(f"Removed {len(found)} scheduled job(s).")
     return 0
+
+
+def _can_ask() -> bool:
+    """Whether a person is at this terminal to answer a question: input and
+    output both a terminal. An agent's shell, a pipe or a script is not."""
+    try:
+        return sys.stdin.isatty() and sys.stdout.isatty()
+    except (AttributeError, ValueError, OSError):
+        return False
+
+
+def _background_setup(args: argparse.Namespace, *, ask_hours: bool) -> int:
+    """Setup's part between sessions, once its hooks or client config are
+    written: upkeep, scheduled unless ``--no-upkeep``, and for a Claude client
+    the quiet hours, asked about once at a terminal, yes by default, and
+    never scheduled without one. Returns 1 when something it set out to
+    schedule could not be."""
+    from .setup import scheduler
+
+    blueprint = _blueprint(args, hours=ask_hours)
+    backend = blueprint["backend"]
+    print()
+    if backend == "unsupported":
+        print(
+            "Between sessions: this system has no scheduler Mnemos can use (launchd, "
+            "systemd or crontab), so upkeep happens only while a session is open."
+        )
+        return 0
+    warning = scheduler.tcc_warning(_mnemos_command(), backend=backend)
+    if warning:
+        print(warning)
+        print()
+
+    failed = False
+    if getattr(args, "no_upkeep", False):
+        print(
+            "Upkeep between sessions: not scheduled (--no-upkeep). To schedule it: "
+            "mnemos daemon install --write"
+        )
+    else:
+        crontab = _read_crontab_safe() if backend == "crontab" else ""
+        try:
+            _apply_schedule(
+                blueprint, blueprint["entries"], scheduler.retired_installed(blueprint, crontab),
+            )
+        except (OSError, RuntimeError) as exc:
+            print(
+                f"Upkeep between sessions: not scheduled ({exc}). To try again: "
+                "mnemos daemon install --write"
+            )
+            failed = True
+        else:
+            _say_upkeep(blueprint)
+    if ask_hours:
+        failed = _quiet_hours_setup(blueprint) or failed
+    return 1 if failed else 0
+
+
+def _say_upkeep(blueprint: dict) -> None:
+    """What the upkeep just scheduled does, and whether anything leaves the
+    machine: with no model chosen for Mnemos, nothing does."""
+    by_name = {entry["job"].name: entry for entry in blueprint["entries"]}
+    every = by_name["maintain"]["job"].interval_seconds // 3600
+    deep = by_name["maintain-deep"]["schedule"]
+    print(
+        f"Upkeep between sessions is on ({blueprint['backend']}): every {every} hours "
+        f"memories fade a little with time and related ones are linked, and a deeper "
+        f"pass runs {deep}."
+    )
+    provider = ""
+    if blueprint["has_model"]:
+        try:
+            from .llm import chosen_provider, create_client
+
+            provider = chosen_provider() if create_client() is not None else ""
+        except Exception:
+            provider = ""
+    if provider:
+        print(
+            f"  You chose a model for Mnemos ({provider}), so upkeep sends it "
+            "memories, to classify the links between them."
+        )
+    else:
+        print(
+            "  No model is chosen for Mnemos, so these are local passes only: "
+            "nothing leaves this machine."
+        )
+    print("  Turn it off: mnemos daemon uninstall --write")
+
+
+def _quiet_hours_setup(blueprint: dict) -> bool:
+    """Setup's one question about the quiet hours, yes by default, and what
+    the answer does. Without a terminal nothing is asked or scheduled, and the
+    way to turn them on is printed; without a claude command they can't be
+    scheduled, and that is said. Returns whether scheduling them failed."""
+    from .setup import scheduler
+
+    crontab = _read_crontab_safe() if blueprint["backend"] == "crontab" else ""
+    if scheduler.installed(blueprint, blueprint["hours"], crontab):
+        print(f"Quiet hours: on. Turn them off: {_HOURS_OFF}")
+        return False
+    if not blueprint["hours_ready"]:
+        print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {_HOURS_ON}")
+        return False
+    if not _can_ask():
+        print(f"Quiet hours: off. They give the agent {QUIET_HOURS}.")
+        print(f"  To turn them on: {_HOURS_ON}")
+        return False
+    try:
+        answer = input(QUIET_HOURS_QUESTION).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        print()
+        answer = "no"
+    if answer and not answer.startswith("y"):
+        print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
+        return False
+    try:
+        _apply_schedule(blueprint, blueprint["hours"], [])
+    except (OSError, RuntimeError) as exc:
+        print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
+        return True
+    mine, ours = (entry["job"].daily_at for entry in blueprint["hours"])
+    print(
+        f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
+        f"and the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work)."
+    )
+    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM --write")
+    print(f"  Turn them off: {_HOURS_OFF}")
+    return False
 
 
 def _launchctl(action: str, plist: Path, *, allow_missing: bool = False) -> None:
@@ -1300,22 +1573,31 @@ PROMPT_HOOK_TIMEOUT = 2
 
 
 def _cmd_hooks(args: argparse.Namespace) -> int:
-    """Install the SessionStart hook that injects memory before turn one, and,
-    with ``--prompt`` (Claude Code only; off by default), the UserPromptSubmit
-    hook that brings the memories that may bear on each message."""
+    """Install the SessionStart hook that injects memory before turn one, and
+    for Claude Code the cue: the UserPromptSubmit hook that brings the
+    memories that may bear on each message. The cue is on by default;
+    ``--no-prompt`` leaves it out and takes out one an earlier install added
+    (``--prompt`` is still taken, and changes nothing).
+
+    This is the last step of setup for Claude Code and Codex, so with
+    ``--write`` it also schedules upkeep between sessions (``--no-upkeep``
+    leaves it out) and, for Claude Code, asks once about the quiet hours
+    (``_background_setup``)."""
     if getattr(args, "hooks_command", None) != "install":
         print(
-            "Usage: mnemos hooks install [claude-code|codex] [--prompt] [--write]",
+            "Usage: mnemos hooks install [claude-code|codex] [--no-prompt] "
+            "[--no-upkeep] [--write]",
             file=sys.stderr,
         )
         return 1
-    prompt = bool(getattr(args, "prompt", False))
-    if prompt and args.client != "claude-code":
+    if getattr(args, "prompt", False) and args.client != "claude-code":
         print(
-            "The prompt hook is for Claude Code: mnemos hooks install claude-code --prompt",
+            "The prompt hook is for Claude Code: mnemos hooks install claude-code",
             file=sys.stderr,
         )
         return 1
+    claude_code = args.client == "claude-code"
+    prompt = claude_code and not getattr(args, "no_prompt", False)
 
     scope_flags: list[str] = []
     for flag, value in (
@@ -1378,6 +1660,13 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
         ))
         print()
         print(f"Merge this into {path}, or re-run with --write to do it automatically.")
+        between = []
+        if not getattr(args, "no_upkeep", False):
+            between.append("schedules upkeep between sessions (mnemos daemon install shows it)")
+        if claude_code:
+            between.append("asks once about quiet hours")
+        if between:
+            print(f"With --write it also {' and '.join(between)}.")
         return 0
 
     from .file_security import atomic_write_text
@@ -1440,6 +1729,15 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
             listed.remove(stale)
         listed.append(item)
         actions[event] = "Replaced" if existing else "Installed"
+    # The cue left out: the one an earlier install added goes too, and only
+    # that one. Anyone else's prompt hooks stay.
+    dropped = False
+    if claude_code and not prompt and isinstance(hooks.get("UserPromptSubmit"), list):
+        listed = hooks["UserPromptSubmit"]
+        cues = [e for e in listed if is_mnemos_hook(e, "prompt")]
+        for cue_hook in cues:
+            listed.remove(cue_hook)
+        dropped = bool(cues)
 
     atomic_write_text(
         path, json.dumps(settings, indent=2) + "\n", backup_existing=True
@@ -1448,6 +1746,8 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
     for event, item in installing.items():
         print(f"{actions[event]} the Mnemos {event} hook in {path}")
         print(f"  Command: {item['hooks'][0]['command']}")
+    if dropped:
+        print(f"Removed the Mnemos UserPromptSubmit hook (the cue) from {path}")
     if args.client == "codex":
         print(
             "In Codex, open /hooks and complete the normal review before "
@@ -1468,7 +1768,10 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
                 "it, found by meaning once the session's Mnemos server has its "
                 "model loaded, by words until then."
             )
-    return 0
+            print("  Turn it off: mnemos hooks install claude-code --no-prompt --write")
+    if getattr(args, "no_upkeep", False) and not claude_code:
+        return 0
+    return _background_setup(args, ask_hours=claude_code)
 
 
 def _cli_scope(args: argparse.Namespace):
@@ -1959,42 +2262,22 @@ def _cmd_setup_openclaw(args: argparse.Namespace) -> int:
     return 0
 
 
-# Said whenever the command that writes memories in a model's words runs (the
-# transcript indexer). It isn't scheduled (see setup/scheduler.py); running it
-# by hand works.
-_MODEL_TEXT_NOTICE = (
-    "Note: {writer} memories in a model's words, not the agent's. They are "
-    "recorded as a tool's, so they stay out of the agent's identity, beliefs "
-    "and lessons, and 'mnemos repair quarantine-tool-written' moves them out "
-    "of recall."
-)
+# What `mnemos index` says now, in place of indexing.
+INDEX_RETIRED = """\
+mnemos index is retired.
+It had a model pull "facts" out of old conversations and file them as the
+agent's own memories. Only the agent writes its memory, and on one install
+the indexer wrote about 7,000 memories against 13 the agent kept itself.
+What it wrote before is still in the store, marked as a tool's words. To see
+it, and move it out of recall: mnemos repair quarantine-tool-written
+(add --write to move it)."""
 
 
 def _cmd_index(args: argparse.Namespace) -> int:
-    """Run session indexer."""
-    try:
-        from .indexer.session_indexer import SessionIndexer
-
-        indexer = SessionIndexer(
-            agent_id=_resolve_agent_id(args),
-            db_path=_resolve_db_path(args),
-        )
-        print(_MODEL_TEXT_NOTICE.format(writer="the indexer writes"))
-        if args.backfill:
-            print("Running backfill (last 24h)...")
-            result = indexer.backfill()
-        else:
-            print("Running indexer...")
-            result = indexer.run()
-        print(f"Indexed {result.get('sessions_processed', 0)} sessions, "
-              f"{result.get('memories_created', 0)} memories created")
-        return 0
-    except ImportError as e:
-        print(f"Indexer not available: {e}", file=sys.stderr)
-        return 1
-    except Exception as e:
-        print(f"Indexer failed: {e}", file=sys.stderr)
-        return 1
+    """The transcript indexer, retired in 0.4.0: says so and why, and runs
+    nothing."""
+    print(INDEX_RETIRED, file=sys.stderr)
+    return 1
 
 
 def _cmd_bootstrap(args: argparse.Namespace) -> int:
@@ -3425,7 +3708,8 @@ def _print_legacy_status(runtime) -> None:
 
 
 def _print_background_status(scope) -> None:
-    """Tell the user whether memory does anything between sessions.
+    """Tell the user whether memory does anything between sessions: the
+    upkeep, and the quiet hours.
 
     Without a scheduler, Mnemos only maintains itself opportunistically
     while a session happens to be open — which is easy to mistake for a
@@ -3440,26 +3724,23 @@ def _print_background_status(scope) -> None:
             return
 
         jobs = scheduler.jobs_for(has_model=scheduler.model_is_configured())
-        if backend == "launchd":
-            installed = sum(
-                1 for job in jobs
-                if scheduler.launchd_plist_path(scope.agent_id, job).exists()
-                and scheduler.launchd_job_active(scope.agent_id, job)
-            )
-        elif backend == "systemd":
-            installed = sum(
-                1 for job in jobs
-                if (scheduler.systemd_unit_dir()
-                    / scheduler.systemd_unit_names(scope.agent_id, job)[1]).exists()
-                and scheduler.systemd_timer_active(scope.agent_id, job)
-            )
-        else:
-            crontab = scheduler.read_crontab()
-            installed = sum(
-                1 for job in jobs
-                if f"{scheduler.CRON_MARKER}:{scope.agent_id}:{job.name}" in crontab
-            )
+        crontab = scheduler.read_crontab() if backend == "crontab" else ""
 
+        def scheduled(job) -> bool:
+            if backend == "launchd":
+                return (
+                    scheduler.launchd_plist_path(scope.agent_id, job).exists()
+                    and scheduler.launchd_job_active(scope.agent_id, job)
+                )
+            if backend == "systemd":
+                return (
+                    (scheduler.systemd_unit_dir()
+                     / scheduler.systemd_unit_names(scope.agent_id, job)[1]).exists()
+                    and scheduler.systemd_timer_active(scope.agent_id, job)
+                )
+            return scheduler.cron_has(crontab, scope.agent_id, job.name)
+
+        installed = sum(1 for job in jobs if scheduled(job))
         if installed:
             print(f"Background:   {installed} job(s) scheduled via {backend}")
         else:
@@ -3467,6 +3748,10 @@ def _print_background_status(scope) -> None:
                 f"Background:   not scheduled — run 'mnemos daemon install --write' "
                 f"({backend})"
             )
+        if any(scheduled(job) for job in scheduler.HOUR_JOBS):
+            print(f"Quiet hours:  on (mnemos daemon status says when; '{_HOURS_OFF}' ends them)")
+        else:
+            print(f"Quiet hours:  off ('{_HOURS_ON}' turns them on)")
     except Exception:
         print("Background:   unknown")
 
@@ -3519,7 +3804,9 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
         )
         print(f"Installed Mnemos MCP config at {path}")
         print("Restart Claude Desktop to expose the new tools.")
-        return 0
+        # This one command is all of Claude Desktop's setup, so it does
+        # setup's part between sessions too.
+        return _background_setup(args, ask_hours=True)
 
     if args.client == "claude-code":
         # Claude Code keeps its MCP servers in its own config, which its own

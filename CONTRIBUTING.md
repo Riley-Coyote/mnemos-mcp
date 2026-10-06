@@ -40,7 +40,6 @@ Mnemos is organized into these layers:
 - `encoding/` — Memory formation pipeline
 - `retrieval/` — Spreading activation retrieval
 - `consolidation/` — Offline processing (decay, softening, belief review, reflection)
-- `indexer/` — Session transcript → memory extraction
 - `interface/` — The wake-up packet, the Mermaid snapshot, OpenClaw export
 - `multiagent/` — The shared pool and the cross-agent bridge
 - `advanced/` — Self-audit of generated text, for the advanced server

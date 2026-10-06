@@ -4,8 +4,7 @@ LLM client abstraction for Mnemos.
 Provides a simple protocol that any LLM provider can implement.
 A chosen provider classifies the links between memories and weighs how
 surprising a new one is. It never writes in the agent's place: no
-rewording, no lessons, no belief changes. Those are the agent's own. (The
-transcript indexer, run by hand, writes memories as a tool, never as the agent.)
+rewording, no lessons, no belief changes. Those are the agent's own.
 
 Three implementations:
 - AnthropicClient: Uses the Anthropic SDK (Claude models)

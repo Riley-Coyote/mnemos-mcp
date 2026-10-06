@@ -98,7 +98,8 @@ That failure produced the rule this system now runs on:
 > about you and how you work together. Its scarcity is a property to be defended, not a
 > limitation to be grown out of.**
 
-So the MCP deliberately does not schedule transcript indexing. A preference, a decision,
+So the transcript indexer is retired (0.4.0): it filed a model's words as the agent's
+memories, and only the agent writes its memory. A preference, a decision,
 a correction, a fact about your world — these are what belong in the packet an agent
 reads before its first turn. Point a firehose at that layer and you bury it, and it will
 go on reporting success while carrying nothing.
@@ -529,13 +530,16 @@ provides: launchd on macOS, systemd user timers on Linux, plain crontab as a fal
 No external agent runner, no daemon of ours to install and trust.
 
 Jobs are namespaced per agent, so several agents keep separate maintenance on one
-machine. Reinstalling replaces rather than stacks. Nothing is scheduled without an
-explicit `--write`, and the preview prints exactly what it would schedule before it does
-anything.
+machine. Reinstalling replaces rather than stacks. Setup schedules this upkeep by default
+(`--no-upkeep` leaves it out), nothing is scheduled without an explicit `--write`, and the
+preview prints exactly what it would schedule before it does anything. With no model
+chosen for Mnemos, upkeep is local passes only. The quiet hours, the agent's own time
+between sessions, are scheduled the same way, but only when the person says yes: they run
+Claude on its own and use the person's Claude plan.
 
-Two details are there because of specific failures. The model-mediated indexing job is
-omitted entirely unless a provider is configured, rather than waking every thirty
-minutes to do nothing. And on macOS, installation warns if Mnemos lives under
+Two details are there because of specific failures. The transcript indexer, which an
+early install scheduled every thirty minutes, is retired, and installing takes its job
+off. And on macOS, installation warns if Mnemos, or the code it runs, lives under
 `~/Documents`, `~/Desktop` or `~/Downloads` — scheduled jobs do not inherit Full Disk
 Access there, so the same command that works perfectly by hand fails on every scheduled
 run, silently, into a log nobody reads.

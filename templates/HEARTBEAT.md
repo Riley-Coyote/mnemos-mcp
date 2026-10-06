@@ -19,14 +19,12 @@ What systems to monitor and what "healthy" looks like.
 |-------|---------|---------|----------|
 | Active engrams | > 10 | < 10 | 0 |
 | Last consolidation | < 8h ago | < 24h ago | > 24h ago |
-| Last session indexed | < 2h ago | < 6h ago | > 6h ago |
 | Database size | < 500MB | < 1GB | > 1GB |
 
 ### Cron Health
 | Check | Healthy | Warning | Critical |
 |-------|---------|---------|----------|
 | Observer heartbeats | Regular | Missed 2+ | Missed 5+ |
-| Indexer heartbeats | Regular | Missed 2+ | Missed 5+ |
 | Bridge heartbeats | Regular | Missed 3+ | Missed 6+ |
 
 ### Context Freshness

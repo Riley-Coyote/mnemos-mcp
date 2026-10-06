@@ -107,11 +107,11 @@ mnemos setup-openclaw --agent nova
 | morning-brief | Daily 10 AM | Generates morning summary and priorities |
 | daily-debrief | Daily 5 AM | End-of-day recap |
 
-**Transcript indexing is deliberately not scheduled**, by this installer or the
-turnkey one. On one live store it wrote roughly 7,058 engrams against 13
-deliberate captures and buried the continuity layer under harvested noise.
-Indexing remains available as an explicit `mnemos index` command, to be run when
-you actually want it.
+**Transcript indexing is not scheduled**, by this installer or the turnkey one,
+and the indexer itself is retired (0.4.0). It had a model pull "facts" out of old
+conversations and file them as the agent's memories: on one live store roughly
+7,058 of them against 13 deliberate captures, which buried the continuity layer.
+`mnemos repair quarantine-tool-written` moves what it wrote out of recall.
 
 ### 4. Set Up Identity Files
 
@@ -189,12 +189,6 @@ After bootstrap, your workspace looks like:
 ### Observer says HEARTBEAT_OK every time
 
 This is normal when there are no recent sessions. The Observer only updates active-context.md when there's new activity to report.
-
-### Session indexer isn't finding sessions
-
-1. Verify session transcript paths. The indexer looks for `.jsonl` files in OpenClaw's session directories.
-2. Check the indexer state: `mnemos index --backfill` to process the last 24 hours.
-3. Ensure sessions have enough messages (default minimum: 6).
 
 ### Database is getting large
 

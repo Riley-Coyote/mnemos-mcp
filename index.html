@@ -712,7 +712,7 @@ footer a:hover{color:var(--text-soft)}
 <section class="section fade" id="s-included"><div class="container">
   <div class="section-label">What&rsquo;s included</div>
   <h2>Full Architecture</h2>
-  <div class="chapter-sub">Everything that ships in the package&mdash;from the core memory engine to multi-agent coordination and automatic session ingestion.</div>
+  <div class="chapter-sub">Everything that ships in the package&mdash;from the core memory engine to multi-agent coordination and the agent&rsquo;s quiet hours.</div>
 </div><div class="wide">
   <div class="include-grid">
     <div class="include-card">
@@ -732,15 +732,15 @@ footer a:hover{color:var(--text-soft)}
     <div class="include-card">
       <div class="include-icon">&#9679;</div>
       <div class="include-body">
-        <div class="include-name">Consolidation Daemon</div>
-        <div class="include-desc">Shallow cycles (rule-based decay, connection discovery) and deep cycles (LLM-mediated softening, belief review, reflection)</div>
+        <div class="include-name">Upkeep Between Sessions</div>
+        <div class="include-desc">Scheduled by setup: every four hours memories fade with time and related ones link, with a deeper pass each night. Local passes only, unless you choose a model.</div>
       </div>
     </div>
     <div class="include-card">
       <div class="include-icon">&#9679;</div>
       <div class="include-body">
-        <div class="include-name">Session Indexer</div>
-        <div class="include-desc">Automatic memory extraction from conversation transcripts. Adapters for Claude Code (.jsonl), OpenClaw, and custom formats. LLM-powered extraction with deduplication.</div>
+        <div class="include-name">Quiet Hours</div>
+        <div class="include-desc">An hour a day that&rsquo;s the agent&rsquo;s own, and half an hour for the day&rsquo;s work. Claude runs them on its own, on your Claude plan. Setup asks once.</div>
       </div>
     </div>
     <div class="include-card">
@@ -816,15 +816,6 @@ mnemos serve --agent-id my-agent
 
 <span class="cmt"># Or specify a custom database path</span>
 mnemos serve --db-path ~/.mnemos/my-agent.db --agent-id my-agent</code></pre>
-
-  <h3>Ingest existing conversations</h3>
-  <p>Already have conversation history? The session indexer extracts memories from past transcripts automatically:</p>
-  <pre><code><span class="cmt"># Index a Claude Code session</span>
-mnemos-index-session path/to/session.jsonl --agent-id my-agent
-
-<span class="cmt"># Or run the indexer on a directory of sessions</span>
-python -m mnemos.indexer.session_indexer --sessions-dir ~/.claude/projects/</code></pre>
-  <p>The indexer uses LLM extraction to identify facts, decisions, patterns, and lessons from conversations&mdash;then encodes them as proper engrams with connections and confidence scores. Deduplication prevents re-indexing unchanged sessions.</p>
 
   <h3>Multi-agent</h3>
   <pre><code><span class="cmt"># Each agent gets its own instance and database</span>

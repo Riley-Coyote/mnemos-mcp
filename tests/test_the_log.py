@@ -58,8 +58,9 @@ PNG = bytes.fromhex(
 
 @pytest.fixture(autouse=True)
 def no_real_scheduler(monkeypatch):
-    """No test asks the machine's launchd or crontab anything."""
+    """No test asks the machine's launchd, systemd or crontab anything."""
     monkeypatch.setattr(log_export, "_launchd_loaded", lambda label: True)
+    monkeypatch.setattr(log_export, "_systemd_active", lambda timer: True)
     monkeypatch.setattr(log_export, "_crontab", lambda: "")
 
 
