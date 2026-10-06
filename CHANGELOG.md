@@ -479,6 +479,10 @@ yours".
   signed most of the live notes; a guest's own notes are still its own, the
   rest is labelled, and the opening says whose memory it is visiting. A
   reader the harness didn't name is told once, in the opening.
+- The advanced `mnemos_context_packet` finds its reader as the hook and
+  `mnemos_context` do (the model, its session, the folder and the person's
+  name), so it speaks in the same voice instead of telling the resident it may
+  be visiting.
 - `--person-name` on the hook (or `MNEMOS_PERSON_NAME`) names the person, so
   the packet can say "with Riley" and head the section with their name.
 - Handoffs are written in first person, as the next reader's own memory: the

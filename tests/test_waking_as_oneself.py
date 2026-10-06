@@ -286,3 +286,28 @@ def test_a_question_is_read_without_its_answering_instructions():
     # A quotation is the memory's own words, even when it says "verdict".
     quoted = 'Does it contradict an earlier one: "The verdict came in. We won."? Say which.'
     assert question_words(quoted) == quoted
+
+
+# ── Review follow-ups (PR #100) ──
+
+
+def test_the_advanced_context_packet_knows_its_reader(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    (tmp_path / "home" / ".mnemos").mkdir(parents=True)
+    (tmp_path / "home" / ".mnemos" / "config.json").write_text('{"setup_complete": true}')
+    db = _store(tmp_path)
+    monkeypatch.setenv("MNEMOS_DB_PATH", str(db))
+    monkeypatch.setenv("MNEMOS_AGENT_MODEL", OPUS)
+    monkeypatch.setenv("MNEMOS_PERSON_NAME", "Riley")
+
+    import mnemos.mcp_server as server
+
+    monkeypatch.setattr(server, "_store", None)
+    monkeypatch.setattr(server, "_config", None)
+    server._init_store(str(db))
+    packet = server.mnemos_context_packet(query="", **SCOPE)
+
+    # Its own memory, in its own voice, as the hook and mnemos_context give it.
+    assert "### where i was\n" in packet, packet
+    assert "if I'm not" not in packet and "visiting" not in packet, packet
+    assert "with Riley." in packet.split("\n", 2)[1], packet
