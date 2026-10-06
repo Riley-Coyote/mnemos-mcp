@@ -1,0 +1,189 @@
+/* The reading room: the log's page (and, on a raised sheet, a drawer beside another view).
+   Everything a mind holds, clean and readable. Anything you read is set in Inter; the serif is kept for what works
+   as a title: a journal entry's first sentence, and a belief, which is one statement.
+
+   Structure comes from tone and space, never from divider lines (Riley: hairlines make an interface busy, not
+   organized). Three steps of surface: the floor, a card for each section or entry, and a nested card for what sits
+   inside one. On a raised sheet (a drawer) every card steps one tone up, so it still stands out. The only
+   lines left carry meaning: the bar of how firmly a belief is held, and the mark under the open tab. */
+:root{
+  --floor:#060608;--surface-1:#0d0d11;--surface-2:#141419;--surface-3:#1b1b21;--surface-4:#212128;
+  --raised:var(--surface-1);--raised-2:var(--surface-2);
+  --card:var(--surface-1);--card-in:var(--surface-2);--card-hover:var(--surface-2);--card-press:var(--surface-3);
+  /* every grey that carries words passes WCAG AA for small text on every surface here: on the floor 15.4, 8.6, 5.9
+     and 4.8 to 1; on the lightest card no lower than 4.5 to 1 */
+  --ink-1:rgba(236,239,244,.94);--ink-2:rgba(236,239,244,.7);--ink-3:rgba(236,239,244,.57);--ink-4:rgba(236,239,244,.5);
+  --hair:rgba(255,255,255,.08);--hair-2:rgba(255,255,255,.14);--focus:rgba(255,255,255,.5);
+  --signal:#6d93c9;
+  --display:"Inter Tight",system-ui,sans-serif;--sans:"Inter",system-ui,sans-serif;--own:"Cormorant Garamond",Georgia,serif;
+  --t-own-l:19px;--t-own:17.5px;--t-own-s:16.5px;--t-read:15px;--t-read-s:14px;--t-body:13.5px;--t-small:12.5px;--t-micro:11.5px;--t-label:10.5px;
+  --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:72px;
+  --r:14px;--r-s:10px;--quick:.18s;--calm:.45s;--ease:cubic-bezier(.2,.7,.2,1);
+}
+/* on a raised sheet, the cards step up one tone */
+.sheet{--card:var(--surface-2);--card-in:var(--surface-3);--card-hover:var(--surface-3);--card-press:var(--surface-4)}
+.label{font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+
+/* tabs: the categories, one row; the mark under the open one is the only line here */
+.tabs{display:flex;gap:var(--s4);overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{all:unset;cursor:pointer;padding:var(--s2) 0 var(--s3);border-bottom:1px solid transparent;color:var(--ink-3);font-size:var(--t-small);white-space:nowrap;
+  transition:color var(--quick),border-color var(--quick)}
+.tab small{margin-left:5px;color:var(--ink-4);font-size:var(--t-micro);font-variant-numeric:tabular-nums}
+.tab:hover{color:var(--ink-1)}
+.tab:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.tab:active{color:var(--ink-2)}
+.tab[aria-selected="true"]{color:var(--ink-1);border-bottom-color:var(--ink-2)}
+
+/* tools: search, filters, order */
+.tools{padding:var(--s4) 0 var(--s3)}
+.tools.stick{position:sticky;top:calc(-1 * var(--s4));z-index:1;background:var(--surface-1);margin-top:calc(-1 * var(--s4))}
+.search{width:100%;padding:11px 13px;border-radius:var(--r-s);border:1px solid transparent;background:var(--card);color:var(--ink-1);
+  font:400 var(--t-body)/1.2 var(--sans);transition:border-color var(--quick),background var(--quick)}
+.search::placeholder{color:var(--ink-4)}
+.search:hover{background:var(--card-hover)}
+.search:focus{outline:none;border-color:var(--focus);background:var(--card)}
+.chips{display:flex;flex-wrap:wrap;gap:var(--s1) var(--s4);margin-top:var(--s3)}
+.chip{all:unset;cursor:pointer;color:var(--ink-3);font-size:var(--t-micro);padding:3px 0;border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.chip:hover{color:var(--ink-1)}
+.chip:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.chip:active{color:var(--ink-2)}
+.chip[aria-pressed="true"]{color:var(--ink-1);border-bottom-color:var(--ink-3)}
+.chips .sep{color:var(--ink-4);font-size:var(--t-micro)}
+.count{margin-top:var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
+
+/* rows: one card each, the mind's words in the serif */
+.rows{list-style:none;display:grid;gap:6px}
+.rowb{all:unset;box-sizing:border-box;cursor:pointer;display:block;width:100%;padding:14px 16px;border-radius:var(--r-s);background:var(--card);
+  border:1px solid transparent;transition:background var(--quick),border-color var(--quick)}
+.rowb:hover{background:var(--card-hover)}
+.rowb:focus-visible{border-color:var(--focus)}
+.rowb:active{background:var(--card-press)}
+.rowb[disabled]{cursor:default}
+.rowb[disabled]:hover{background:var(--card)}
+.meta{display:flex;flex-wrap:wrap;gap:2px var(--s3);color:var(--ink-4);font-size:var(--t-micro);font-variant-numeric:tabular-nums}
+.meta .k,.meta .k2{color:var(--ink-2)}
+.meta .warm{color:var(--ink-1)}
+.rowb .words{margin-top:6px;font:400 var(--t-read-s)/1.55 var(--sans);color:var(--ink-1);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.rowb .q{margin-top:6px;color:var(--ink-2);font-size:var(--t-body)}
+.rowb .ex{margin-top:6px;font:400 13px/1.5 var(--sans);color:var(--ink-3);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.rowb .ans{margin-top:6px;font:400 var(--t-read-s)/1.55 var(--sans);color:var(--ink-1)}
+.more-rows{height:1px}
+.empty{padding:var(--s6) 0;color:var(--ink-3);max-width:46ch;font-size:var(--t-body)}
+.note-k{margin-top:var(--s4);color:var(--ink-4);font-size:var(--t-micro);line-height:1.5}
+.textlink{color:var(--ink-3);text-decoration:none;border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.textlink:hover{color:var(--ink-1)}
+.textlink:focus-visible{outline:none;color:var(--ink-1);border-bottom-color:var(--focus)}
+.textlink:active{color:var(--ink-2)}
+
+/* one memory, whole */
+.back{all:unset;cursor:pointer;color:var(--ink-3);font-size:var(--t-small);padding:var(--s2) 0;border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.back:hover{color:var(--ink-1)}
+.back:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.back:active{color:var(--ink-2)}
+.detail{padding-top:var(--s3)}
+.detail > .meta{margin-top:var(--s4);color:var(--ink-3);line-height:1.6}
+.detail .words{margin-top:var(--s4);max-width:66ch;font:400 16px/1.7 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
+.detail .changed{margin-top:var(--s5);padding:14px 16px;border-radius:var(--r-s);background:var(--card)}
+.detail .changed p{margin-top:var(--s2);font:400 var(--t-read)/1.65 var(--sans);color:var(--ink-1)}
+.detail h3{margin:var(--s6) 0 var(--s3);font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+.detail .lines{color:var(--ink-2);font-size:var(--t-body);list-style:none;display:grid;gap:6px}
+.detail .lines li{padding:10px 14px;border-radius:var(--r-s);background:var(--card)}
+.detail .lines .a{display:block;margin-top:4px;font:400 var(--t-read-s)/1.55 var(--sans);color:var(--ink-1)}
+.detail .lines .m{display:block;margin-top:2px;color:var(--ink-4);font-size:var(--t-micro)}
+.detail .mindlink{display:inline-block;margin-top:var(--s5);font-size:var(--t-small)}
+
+/* beliefs: each one a card */
+.belief{padding:var(--s5);border-radius:var(--r);background:var(--card)}
+.belief + .belief{margin-top:var(--s2)}
+.note-k + .belief{margin-top:var(--s4)}
+.belief .words{font:400 21px/1.38 var(--own);color:var(--ink-1);max-width:58ch}
+.held{margin-top:var(--s4);height:1px;background:var(--hair-2);position:relative}
+.held i{position:absolute;left:0;top:-1px;height:3px;background:var(--ink-2)}
+.belief .sign{margin-top:var(--s3);color:var(--ink-3);font-size:var(--t-micro);line-height:1.6}
+.belief .rows{margin-top:var(--s4);--card:var(--card-in);--card-hover:var(--surface-3);--card-press:var(--surface-4)}
+
+/* questions: their kinds, counted */
+.kinds{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);margin-top:var(--s4)}
+.kindb{all:unset;cursor:pointer;padding:var(--s3) 14px;border:1px solid transparent;border-radius:var(--r-s);background:var(--card);transition:border-color var(--quick),background var(--quick)}
+.kindb b{display:block;font:250 26px/1 var(--display);letter-spacing:-.02em}
+.kindb span{display:block;margin-top:6px;color:var(--ink-3);font-size:var(--t-micro);line-height:1.35}
+.kindb:hover{background:var(--card-hover)}
+.kindb:focus-visible{border-color:var(--focus)}
+.kindb:active{background:var(--card-press)}
+.kindb[aria-pressed="true"]{background:var(--card-press)}
+.kindb[aria-pressed="true"] span{color:var(--ink-1)}
+.sub-h{display:block;margin:var(--s7) 0 var(--s2)}
+
+/* the journal and notes: whole entries, each a card */
+.jentry{padding:var(--s5);border-radius:var(--r);background:var(--card)}
+.jentry + .jentry{margin-top:var(--s2)}
+.jentry .t-own{margin-top:var(--s3);font:400 23px/1.3 var(--own);color:var(--ink-1);max-width:46ch}
+.jentry .text{margin-top:var(--s3);max-width:66ch;font:400 var(--t-read)/1.7 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
+.fold{all:unset;cursor:pointer;display:inline-block;margin-top:var(--s3);color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.fold:hover{color:var(--ink-1)}
+.fold:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.fold:active{color:var(--ink-2)}
+
+/* the log: a mind's days, newest first. Space separates the days and events. Each event says what kind of thing it
+   was in a small label you can scan. A quiet hour is a card, its writing in nested cards; the rest are quiet lines. */
+.day{margin-top:var(--s7)}
+.day:first-child{margin-top:var(--s4)}
+.dayh{display:flex;align-items:baseline;gap:var(--s3);margin-bottom:var(--s2);
+  font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2)}
+.dayh .date{color:var(--ink-4);letter-spacing:.12em}
+.ev{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:var(--s4);padding:20px 0}
+.ev.slim{padding:18px 0}
+/* between posts, one quiet line across the writing only, so the times stay one clean column; an hour card is set apart
+   by its own surface, so no line runs beside one */
+.ev + .ev::before{content:"";position:absolute;top:0;left:calc(64px + var(--s4));right:0;height:1px;background:var(--hair)}
+.ev.hour + .ev::before,.ev + .ev.hour::before{display:none}
+.ev .t{color:var(--ink-4);font-size:var(--t-micro);font-variant-numeric:tabular-nums;padding-top:1px}
+.kd{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);font:500 var(--t-label)/1.2 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.kd .aside{font:400 var(--t-micro)/1.2 var(--sans);letter-spacing:0;text-transform:none;color:var(--ink-4);text-align:right}
+.kd.small{margin-top:0;color:var(--ink-4);letter-spacing:.12em}
+.ev .line{margin-top:var(--s2);color:var(--ink-2);font-size:var(--t-small)}
+.ev .sub{margin-top:var(--s2);color:var(--ink-2);font-size:var(--t-small);max-width:68ch}
+.ev .sub.one{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.t-own{font:400 21px/1.32 var(--own);color:var(--ink-1);letter-spacing:-.003em}
+.ev .t-own{margin-top:var(--s2);max-width:48ch}
+.ev .text{margin-top:var(--s2);max-width:66ch;font:400 var(--t-read)/1.68 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
+.ev .t-own + .text{margin-top:var(--s3)}
+.ev .text.clamp2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;white-space:normal}
+.ev .qline{margin-top:var(--s2);color:var(--ink-2);font-size:var(--t-body);max-width:68ch}
+.ev .facts{margin-top:var(--s4);display:flex;flex-wrap:wrap;gap:2px var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
+.ev .facts .flag{color:var(--ink-1)}
+.ev .thumbs{margin-top:var(--s4);display:flex;gap:var(--s2);flex-wrap:wrap}
+/* the hour: an object, because it is one: the mind's own time, holding what it wrote and made */
+.ev.hour{padding:var(--s3) 0}
+.ev.hour .b{padding:var(--s4) var(--s5) var(--s5);border-radius:var(--r);background:var(--card)}
+.ev.hour .t{padding-top:calc(var(--s4) + 1px)}
+.ev .inner{margin-top:var(--s3);padding:14px 18px 16px;border-radius:var(--r-s);background:var(--card-in)}
+.ev .thumbs + .inner{margin-top:var(--s4)}
+.temp{display:inline-flex;align-items:center;gap:6px;font:400 var(--t-micro)/1 var(--sans);letter-spacing:0;text-transform:none;color:var(--ink-2)}
+.temp i{width:6px;height:6px;border-radius:50%;--k:0;background:rgba(236,239,244,calc(.25 + .7 * var(--k)));box-shadow:0 0 calc(1px + 8px * var(--k)) rgba(236,239,244,calc(.4 * var(--k)))}
+.thumb{all:unset;cursor:zoom-in;width:96px;height:96px;border:1px solid transparent;border-radius:var(--r-s);overflow:hidden;background:var(--card-in);transition:border-color var(--quick)}
+.thumb img{width:100%;height:100%;object-fit:cover;display:block;opacity:.9;transition:opacity var(--quick)}
+.thumb:hover img{opacity:1}
+.thumb:focus-visible{border-color:var(--focus)}
+.thumb:active img{opacity:.8}
+.ev details{margin-top:var(--s2)}
+.ev summary{list-style:none;cursor:pointer;display:inline-block;color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.ev summary::-webkit-details-marker{display:none}
+.ev summary:hover{color:var(--ink-1)}
+.ev summary:focus-visible{outline:none;color:var(--ink-1);border-bottom-color:var(--focus)}
+.ev details .text.plain{max-width:68ch;margin-top:var(--s3);padding:14px 16px;border-radius:var(--r-s);background:var(--card);font:400 var(--t-small)/1.6 var(--sans);color:var(--ink-2)}
+.ev .rows{margin-top:var(--s3)}
+.ev .fold{margin-top:var(--s2)}
+
+@media (max-width:520px){
+  .kinds{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ev{grid-template-columns:1fr;row-gap:var(--s2)}
+  .ev + .ev::before{left:0}
+  .ev.hour .t{padding-top:0}
+  .ev.hour .b{padding:var(--s4)}
+  .ev .inner{padding:12px 14px 14px}
+  .belief,.jentry{padding:var(--s4)}
+  .thumb{width:72px;height:72px}
+}
+@media (prefers-reduced-motion:reduce){.tab,.chip,.rowb,.kindb,.thumb,.thumb img,.fold,.back,.textlink,.search{transition:none}}

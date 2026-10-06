@@ -66,6 +66,8 @@ jobs:
               "mnemos/setup/scheduler.py",
               "mnemos/setup/templates/SOUL.md",
               "mnemos/setup/templates/IDENTITY.md",
+              "mnemos/companion/page/log/index.html",
+              "mnemos/companion/page/fonts/inter-latin-wght-normal.woff2",
           }
           with zipfile.ZipFile(wheel) as archive:
               names = set(archive.namelist())

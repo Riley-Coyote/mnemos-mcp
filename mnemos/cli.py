@@ -18,6 +18,7 @@ Commands:
     mnemos journal [--last N]    Read the agent's journal
     mnemos notes [--unread]      Read the agent's notes to you
     mnemos notes reply ID TEXT   Reply to one of them, in your own words
+    mnemos log [--no-open]       A page to watch the agent's days (read-only, this machine only)
     mnemos hermes install        Install Mnemos for Hermes Agent
     mnemos hermes quickstart     Safely install Mnemos for Hermes Agent
 """
@@ -267,6 +268,26 @@ def main(argv: list[str] | None = None) -> int:
     _scope_options(p_notes_reply)
     p_notes_reply.add_argument("note_id", help="The id of the note you are answering")
     p_notes_reply.add_argument("text", nargs="+", help="Your reply, in your own words")
+
+    # ── log ──
+    p_log = sub.add_parser(
+        "log", help="A page to watch the agent's days: its quiet hours, journal, notes and memory",
+        description=(
+            "Open the log: a small page, in your browser, of what the agent does on "
+            "its own and what it keeps (its quiet hours, journal, the notes it leaves "
+            "you, what its memory asks it, its beliefs, every memory). It reads the "
+            "memory and never writes it, and it is served on 127.0.0.1 only, so "
+            "nothing leaves this machine. Ctrl-C stops it."
+        ),
+    )
+    _scope_options(p_log)
+    p_log.add_argument(
+        "--person-name", default=None,
+        help="Your name, so the page can say it (default: MNEMOS_PERSON_NAME; without one it says \"you\")",
+    )
+    p_log.add_argument(
+        "--no-open", action="store_true", help="Print the page's address without opening a browser",
+    )
 
     # ── doctor ──
     p_doctor = sub.add_parser("doctor", help="Check Mnemos simple-mode readiness")
@@ -693,6 +714,7 @@ def main(argv: list[str] | None = None) -> int:
         "journal": _cmd_journal,
         "life": _cmd_life,
         "notes": _cmd_notes,
+        "log": _cmd_log,
         "doctor": _cmd_doctor,
         "repair-softening": _cmd_repair_softening,
         "adopt-legacy": _cmd_adopt_legacy,
@@ -2238,6 +2260,21 @@ def _cmd_notes_reply(args: argparse.Namespace) -> int:
     print("Reply kept, in your own words.")
     print(f"Reply ID: {reply_id}")
     return 0
+
+
+def _cmd_log(args: argparse.Namespace) -> int:
+    """Serve the log, a read-only page of the agent's days, on 127.0.0.1 until
+    Ctrl-C. Whose: the scope every other command resolves."""
+    from .companion.server import serve
+
+    return serve(
+        db_path=getattr(args, "db_path", None),
+        agent_id=getattr(args, "agent_id", None),
+        person_id=getattr(args, "person_id", None),
+        project_scope=getattr(args, "project_scope", None),
+        person=args.person_name,
+        open_browser=not args.no_open,
+    )
 
 
 def _cmd_repair_softening(args: argparse.Namespace) -> int:

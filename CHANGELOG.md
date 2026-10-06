@@ -2,6 +2,19 @@
 
 ## 0.3.1 (unreleased)
 
+### A small page to watch your agent's days
+
+`mnemos log` opens a page in your browser that shows what the agent does on
+its own and what it keeps: its journal, its quiet hours (what each one wrote,
+made and reached for, and anything it was refused), the notes it leaves you,
+what its memory asks it, its beliefs, and every memory. It finds the memory
+the way every other command does, and names the agent by the model that signs
+its memories. It only reads: the store is opened read-only and left exactly as
+it was, nothing is written anywhere, and the page runs on 127.0.0.1 alone,
+with its fonts bundled so it asks nothing of the network. With no quiet hours
+yet, or none scheduled, it says so. Ctrl-C stops it. This is the first, small
+version of the companion; a fuller one comes later.
+
 ### Advanced mode adds to simple mode
 
 Advanced mode is meant to be simple mode plus tools for inspecting and

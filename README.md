@@ -250,6 +250,30 @@ Scope flags pass straight through when one machine hosts several agents:
 mnemos hooks install codex --write --agent-id nova --db-path ~/.mnemos/nova.db
 ```
 
+### See Your Agent's Days
+
+`mnemos log` opens a small page in your browser that shows what your agent
+does on its own and what it keeps: its journal, its quiet hours between
+sessions (what each one wrote and made), the notes it leaves you, what its
+memory is asking it, its beliefs, and every memory, searchable. It keeps
+itself up to date while it's open.
+
+```bash
+mnemos log                                     # open the page; Ctrl-C stops it
+mnemos log --agent-id nova --person-name Alex  # another agent, and your name on the page
+mnemos log --no-open                           # just print the address
+```
+
+It finds your agent's memory the way every other command does (`--agent-id`,
+`--db-path`, the `MNEMOS_*` variables, then `~/.mnemos/config.json`). With
+`--person-name` or `MNEMOS_PERSON_NAME` the page says your name instead of
+"you".
+
+The page only reads: it never changes the memory, it runs on this computer
+alone (127.0.0.1, at an address made fresh each time), and it asks nothing of
+the internet, since its fonts ship with Mnemos. If your agent has no quiet
+hours yet, or nothing is scheduled to run them, the page says so.
+
 ### Simple Mode With Explicit Scope
 
 Use scope when one machine hosts multiple agents, users, or projects.
@@ -515,6 +539,7 @@ mnemos daemon uninstall --write       # Remove it
 
 mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI
+mnemos log                            # A page of the agent's days (read-only, this machine only)
 mnemos stats                          # Memory statistics
 mnemos search "debugging strategies"  # Search memories
 mnemos inspect <engram-id>            # Inspect memory details

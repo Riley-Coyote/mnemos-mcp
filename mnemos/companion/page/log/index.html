@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<title>The log</title>
+<link rel="stylesheet" href="../shared/fonts.css">
+<link rel="stylesheet" href="../shared/room.css">
+<style>
+/* The log: a mind's days, and everything it holds, on one light page made to sit beside a conversation. Its story
+   on the left; its state in the margin (notes for you, beliefs, what its memory asks, what it carries forward, what it
+   made). Narrow, beside a chat, the margin folds into a short summary at the top of the log. Served by `mnemos log`
+   on this machine only; its typefaces are bundled (../shared/fonts.css), so it asks nothing of the network. */
+*{box-sizing:border-box;margin:0;padding:0}
+html{background:var(--floor);color:var(--ink-1)}
+body{font:400 var(--t-body)/1.5 var(--sans);-webkit-font-smoothing:antialiased;background:var(--floor)}
+button{font:inherit;color:inherit}
+a{color:inherit}
+main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
+
+/* who, and how warm: one line, then the facts you can check */
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--s4)}
+.who{display:flex;gap:var(--s3);align-items:flex-start;min-width:0}
+.house{font:400 9px/1 "Silkscreen",monospace;letter-spacing:.2em;color:var(--ink-4)}
+.name{margin-top:6px;font:300 22px/1.15 var(--display);letter-spacing:-.01em}
+.state{margin-top:6px;color:var(--ink-2);font-size:var(--t-small)}
+.state b{font-weight:450;color:var(--ink-1)}
+/* the warmth, as one point of light: as bright as the mind still is, a hollow ring once it's cold */
+.dot{flex:none;width:9px;height:9px;margin-top:27px;border-radius:50%;--k:0;
+  background:rgba(236,239,244,calc(.18 + .76 * var(--k)));box-shadow:0 0 calc(2px + 12px * var(--k)) rgba(236,239,244,calc(.45 * var(--k)));
+  transition:background 1.6s var(--ease),box-shadow 1.6s var(--ease)}
+.dot.cold{background:transparent;box-shadow:inset 0 0 0 1px var(--ink-3)}
+.verify{margin-top:var(--s4);padding-left:21px;display:flex;flex-wrap:wrap;gap:2px var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
+.verify .flag{color:var(--ink-1)}
+.verify .ok::before{content:"";display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--signal);margin-right:6px;vertical-align:1px}
+.verify.stale .fresh{color:var(--ink-1)}
+
+/* the categories stay in reach as you read */
+.nav{position:sticky;top:0;z-index:4;margin-top:var(--s5);padding-top:var(--s2);background:var(--floor)}
+/* the categories ride in one rounded track; a raised marker glides to the open one (iOS's settling curve), while the
+   content below trades places in the same direction. The content itself stays on the dark floor. */
+:root{--glide:cubic-bezier(.32,.72,0,1)}
+.scroller{overflow-x:auto;scrollbar-width:none;padding:2px 0}
+.scroller::-webkit-scrollbar{display:none}
+.track{position:relative;display:inline-flex;padding:4px;border-radius:999px;background:var(--surface-1)}
+.marker{position:absolute;top:4px;bottom:4px;left:0;width:0;border-radius:999px;background:var(--surface-3);box-shadow:0 1px 2px rgba(0,0,0,.45);pointer-events:none;
+  transition:transform .48s var(--glide),width .48s var(--glide)}
+.marker.still{transition:none}
+.nav .tabs{position:relative;z-index:1;gap:2px;overflow:visible}
+.nav .tab{padding:8px 14px;border:1px solid transparent;border-radius:999px;transition:color .3s var(--ease),border-color var(--quick)}
+.nav .tab[aria-selected="true"]{border-color:transparent;color:var(--ink-1)}
+.nav .tab[aria-selected="true"] small{color:var(--ink-3)}
+.nav .tab:focus-visible{border-color:var(--focus)}
+/* the story on the measure, the state in the margin: eight columns and three, one left between them */
+.cols{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));column-gap:28px}
+.story{grid-column:1/span 8;min-width:0;--drift:18px}
+#body{min-height:60vh;will-change:opacity,transform}
+/* the content trades places: out a little away from where you're going, in from that side, as the marker arrives */
+#body.leaving{opacity:0;transform:translateX(calc(var(--dir,0) * var(--drift) * -.55));transition:opacity .15s cubic-bezier(.4,0,1,1),transform .15s cubic-bezier(.4,0,1,1)}
+#body.entering{opacity:0;transform:translateX(calc(var(--dir,0) * var(--drift)))}
+#body.settle{transition:opacity .42s cubic-bezier(.2,.7,.2,1),transform .5s var(--glide)}
+/* the margin: the mind's state as a stack of small panels, each its own block; short enough to stay in view */
+.margin{grid-column:10/span 3;padding-top:var(--s5);align-self:start}
+/* it stays in view while you read, but only when the whole stack fits the window (set by log.js) */
+.margin.stick{position:sticky;top:56px}
+.panel{padding:14px 16px;border-radius:var(--r);background:var(--surface-1)}
+.panel + .panel{margin-top:10px}
+.m-h{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);margin-bottom:10px}
+.m-h .label{color:var(--ink-3)}
+.m-h .textlink{all:unset;flex:none;white-space:nowrap;cursor:pointer;color:var(--ink-3);font-size:var(--t-micro);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.m-h .textlink:hover{color:var(--ink-1)}
+.m-h .textlink:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.m-h .textlink:active{color:var(--ink-2)}
+.m-item + .m-item{margin-top:14px}
+.m-item .text{font:400 13.5px/1.55 var(--sans);color:var(--ink-1);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
+.m-item .text.two{-webkit-line-clamp:2;font:400 16.5px/1.38 var(--own)}  /* a belief: one statement, set as a title */
+.m-item .by{margin-top:6px;color:var(--ink-4);font-size:var(--t-micro)}
+.m-item .q{color:var(--ink-3);font-size:var(--t-micro)}
+.m-item .ask{margin-top:4px;color:var(--ink-2);font-size:var(--t-small);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.m-item .a{margin-top:4px;font:400 13.5px/1.55 var(--sans);color:var(--ink-1);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.m-item .lead{color:var(--ink-2);font-size:var(--t-small);line-height:1.5;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
+.m-empty{color:var(--ink-3);font-size:var(--t-small);line-height:1.5}
+.strength{margin-top:6px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
+.held.thin{display:block;margin:0;height:1px}
+.held.thin i{top:0;height:1px;background:var(--ink-2)}
+.m-counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s2)}
+.m-count{all:unset;box-sizing:border-box;cursor:pointer;padding:9px 11px;border:1px solid transparent;border-radius:var(--r-s);background:var(--surface-2);transition:border-color var(--quick),background var(--quick)}
+.m-count b{display:block;font:250 19px/1 var(--display);letter-spacing:-.02em;color:var(--ink-1)}
+.m-count span{display:block;margin-top:4px;color:var(--ink-3);font-size:var(--t-micro);line-height:1.25}
+.m-count:hover{background:var(--surface-3)}
+.m-count:focus-visible{border-color:var(--focus)}
+.m-count:active{background:var(--surface-4)}
+.m-counts + .m-item{margin-top:var(--s4)}
+.m-item details summary{list-style:none;cursor:pointer;display:inline-block;margin-top:6px;color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.m-item details summary::-webkit-details-marker{display:none}
+.m-item details summary:hover{color:var(--ink-1)}
+.m-item details summary:focus-visible{outline:none;color:var(--ink-1);border-bottom-color:var(--focus)}
+.m-item details .plain{margin-top:var(--s2);color:var(--ink-2);font-size:12.5px;line-height:1.6;white-space:pre-wrap;max-height:320px;overflow:auto;overflow-wrap:anywhere}
+.m-thumbs{display:flex;gap:var(--s2)}
+.m-thumbs .thumb{width:calc((100% - 2 * var(--s2)) / 3);height:auto;aspect-ratio:1}
+.m-cap{margin-top:6px}
+.m-cap{margin-top:var(--s2);color:var(--ink-4);font-size:var(--t-micro)}
+/* the margin's own section steps aside when its whole tab is open, so nothing shows twice */
+body[data-tab="beliefs"] .margin [data-for="beliefs"],body[data-tab="questions"] .margin [data-for="questions"],
+body[data-tab="notes"] .margin [data-for="notes"]{display:none}
+/* narrow, beside a chat: no margin; its state as a short summary at the top of the log */
+.glance{display:none}
+.glance .g{all:unset;box-sizing:border-box;cursor:pointer;display:flex;justify-content:space-between;gap:var(--s3);width:100%;padding:var(--s3) 0;
+  color:var(--ink-2);font-size:var(--t-small);transition:color var(--quick)}
+.glance .g span:last-child{color:var(--ink-3);text-align:right}
+.glance .g:hover{color:var(--ink-1)}
+.glance .g:focus-visible{color:var(--ink-1);box-shadow:inset 0 -1px 0 var(--focus)}
+.glance .g:active{color:var(--ink-3)}
+@media (max-width:980px){
+  .story{grid-column:1/-1;--drift:8px}            /* inside the page's own margin, beside a chat */
+  .margin{display:none}
+  body[data-tab="log"] .glance{display:block;margin-top:var(--s3);padding:var(--s1) var(--s4)}
+}
+#body > .detail,#body > .belief:first-of-type,#body > .jentry:first-child{padding-top:var(--s4)}
+.promise{margin-top:var(--s8);color:var(--ink-4);font-size:var(--t-micro);max-width:62ch}
+.missing{margin-top:var(--s7);max-width:56ch;color:var(--ink-2)}
+.missing code{font-family:"JetBrains Mono",ui-monospace,monospace;font-size:12px;color:var(--ink-1)}
+.missing p + p{margin-top:var(--s3)}
+
+dialog{margin:auto;border:0;border-radius:var(--r);background:var(--surface-1);padding:0;max-width:min(94vw,1100px);max-height:92vh;overflow:hidden;color:var(--ink-1)}
+dialog::backdrop{background:rgba(6,6,8,.88)}
+dialog img{display:block;max-width:min(94vw,1100px);max-height:calc(92vh - 46px);object-fit:contain}
+dialog .cap{display:flex;justify-content:space-between;align-items:center;gap:var(--s4);padding:var(--s3) var(--s4);color:var(--ink-3);font-size:var(--t-small);background:var(--surface-2)}
+dialog .cap button{all:unset;cursor:pointer;color:var(--ink-3);padding:3px 8px;border:1px solid transparent;border-radius:6px;transition:color var(--quick),border-color var(--quick)}
+dialog .cap button:hover{color:var(--ink-1)}
+dialog .cap button:focus-visible{border-color:var(--focus);color:var(--ink-1)}
+
+@media (max-width:560px){
+  main{padding:18px 16px 72px}
+  .name{font-size:20px}
+  .verify{padding-left:0}
+}
+@media (prefers-reduced-motion:reduce){.dot,.marker,.nav .tab{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <header class="head">
+    <div class="who">
+      <span class="dot cold" id="dot" aria-hidden="true"></span>
+      <div><div class="house">Mnemos</div><div class="name" id="name">&nbsp;</div><div class="state" id="state">Reading its memory…</div></div>
+    </div>
+  </header>
+  <div class="verify" id="verify" aria-live="polite"></div>
+  <nav class="nav" aria-label="What it holds"><div class="scroller" id="scroller"><div class="track" id="track"><span class="marker" id="marker" aria-hidden="true"></span><div class="tabs" role="tablist" id="tabs"></div></div></div></nav>
+  <div class="cols">
+    <div class="story">
+      <div class="glance panel" id="glance" aria-label="Its state, at a glance"></div>
+      <section id="body" aria-live="polite"></section>
+    </div>
+    <aside class="margin" id="margin" aria-label="Its state, at a glance"></aside>
+  </div>
+  <p class="promise" id="promise">Read-only, straight from its memory; nothing here leaves this machine. The page speaks of the mind in the third person; only its own words say “I”.</p>
+</main>
+<dialog id="full"><img id="full-img" alt=""><div class="cap"><span id="full-cap"></span><button id="full-close" type="button">Close</button></div></dialog>
+<script type="module" src="log.js"></script>
+</body>
+</html>
