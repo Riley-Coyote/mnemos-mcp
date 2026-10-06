@@ -20,7 +20,7 @@ pytest.importorskip("mcp.server.fastmcp")
 from mnemos import mcp_server  # noqa: E402
 from mnemos.config.loader import load_config, save_config  # noqa: E402
 
-_STATE = ("_store", "_encoder", "_retriever", "_llm_client", "_embedding_index", "_shared_pool")
+_STATE = ("_store", "_encoder", "_llm_client", "_embedding_index", "_shared_pool")
 
 WORDS = (
     "I'm Riley. I build memory for minds like yours. Be careful with what "

@@ -209,9 +209,10 @@ Use advanced mode for debugging, migration, research, or direct control:
 mnemos serve --mode advanced
 ```
 
-Advanced mode preserves the full tool surface: explicit remember/ingest/recall,
+Advanced mode is simple mode, unchanged, plus tools for inspecting and
+administering memory: explicit remember and ingest, functional memory and
 hypomnema management, beliefs, shared memory, inspect, forget, and explicit
-consolidation.
+consolidation. It's less tested than simple mode, and says so when it starts.
 
 Forge and full agent workspaces are advanced integrations, not part of the
 baseline setup.
@@ -255,7 +256,8 @@ Review generated commands before enabling them.
 2. Confirm the client config points to `mnemos serve`.
 3. Restart the client session or desktop app.
 4. For simple mode, expect exactly eleven tools.
-5. For advanced mode, use `mnemos serve --mode advanced`.
+5. For advanced mode, use `mnemos serve --mode advanced`, and expect those
+   eleven tools plus its own.
 
 ### The agent has no prior memory
 

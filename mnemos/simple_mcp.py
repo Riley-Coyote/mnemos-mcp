@@ -128,8 +128,9 @@ def _get_runtime() -> MnemosRuntime:
     return _runtime
 
 
-def register_simple_tools(server: FastMCP, *, include_recall: bool = True) -> None:
-    """Register the simple continuity tools on a FastMCP server.
+def register_simple_tools(server: FastMCP) -> None:
+    """Register the simple continuity tools on a FastMCP server: all of them,
+    on either server. Advanced mode serves these unchanged and only adds.
 
     Tools that build their own ``CallToolResult`` must be annotated as
     returning one. FastMCP derives an output schema from the return
@@ -382,58 +383,57 @@ def register_simple_tools(server: FastMCP, *, include_recall: bool = True) -> No
             standing=bool(standing),
         ))
 
-    if include_recall:
-        @server.tool(
-            annotations=_annotations(
-                title="Recall continuity",
-                read_only=False,
-                destructive=False,
-                idempotent=False,
-            )
+    @server.tool(
+        annotations=_annotations(
+            title="Recall continuity",
+            read_only=False,
+            destructive=False,
+            idempotent=False,
         )
-        def mnemos_recall(
-            query: str,
-            max_results: int = 5,
-            include_archived: bool = False,
-            standing: bool = False,
-        ) -> str:
-            """Recall what memory holds for a question: memories, lessons,
-            handoffs and journal entries, found by their words and by their
-            meaning, best first. Each result says how it was found: by
-            meaning (with how close), by the query's words (which ones), or
-            through a link.
+    )
+    def mnemos_recall(
+        query: str,
+        max_results: int = 5,
+        include_archived: bool = False,
+        standing: bool = False,
+    ) -> str:
+        """Recall what memory holds for a question: memories, lessons,
+        handoffs and journal entries, found by their words and by their
+        meaning, best first. Each result says how it was found: by
+        meaning (with how close), by the query's words (which ones), or
+        through a link.
 
-            Each row carries up to 300 characters of its own words, usually
-            enough to use it. To read one whole, pass its id as the query:
-            a memory's, a note's, a handoff's, a journal entry's or a reply
-            to one of your notes, including the ids the packet shows
-            (mnemos_recall("<id>")).
+        Each row carries up to 300 characters of its own words, usually
+        enough to use it. To read one whole, pass its id as the query:
+        a memory's, a note's, a handoff's, a journal entry's or a reply
+        to one of your notes, including the ids the packet shows
+        (mnemos_recall("<id>")).
 
-            Handoffs are searched with the memories: the ones in use and the
-            older ones a newer handoff replaced, each marked with who left
-            it and when. Journal entries are searched too, marked as journal
-            with who wrote them and when. A capture comes back once, as its
-            memory. max_results counts every row, of every kind.
+        Handoffs are searched with the memories: the ones in use and the
+        older ones a newer handoff replaced, each marked with who left
+        it and when. Journal entries are searched too, marked as journal
+        with who wrote them and when. A capture comes back once, as its
+        memory. max_results counts every row, of every kind.
 
-            A memory that has gone quiet comes back when the query matches it
-            well, and wakes. One that faded further, into the archive, comes
-            back only by its id, or when include_archived is true and the
-            query names it; either way it is restored. What you forgot or
-            replaced with a correction stays gone.
+        A memory that has gone quiet comes back when the query matches it
+        well, and wakes. One that faded further, into the archive, comes
+        back only by its id, or when include_archived is true and the
+        query names it; either way it is restored. What you forgot or
+        replaced with a correction stays gone.
 
-            Args:
-                standing: True to list every memory marked standing, how the
-                    human wants you to work in every session: all of them,
-                    whatever max_results says, the ones the query names first.
-                    The query may be empty.
-            """
+        Args:
+            standing: True to list every memory marked standing, how the
+                human wants you to work in every session: all of them,
+                whatever max_results says, the ones the query names first.
+                The query may be empty.
+        """
 
-            return _output(_get_runtime().recall(
-                query=_text("query", query, MAX_QUERY_CHARS, required=not standing),
-                max_results=_count("max_results", max_results, minimum=1, maximum=MAX_RESULTS),
-                include_archived=bool(include_archived),
-                standing=bool(standing),
-            ))
+        return _output(_get_runtime().recall(
+            query=_text("query", query, MAX_QUERY_CHARS, required=not standing),
+            max_results=_count("max_results", max_results, minimum=1, maximum=MAX_RESULTS),
+            include_archived=bool(include_archived),
+            standing=bool(standing),
+        ))
 
     @server.tool(
         annotations=_annotations(

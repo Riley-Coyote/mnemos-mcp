@@ -39,6 +39,15 @@ from .config.loader import load_config
 from .package_version import mnemos_version
 
 
+# Advanced mode is optional: simple mode, unchanged, plus its own tools. It
+# needs no switch to run or install, and says this when it starts or is
+# installed.
+ADVANCED_MODE_NOTE = (
+    "Advanced mode adds tools for inspecting and administering memory, "
+    "and it's less tested than simple mode."
+)
+
+
 def _resolve_default_mode() -> str:
     """Resolve the default tool surface for ``mnemos serve``.
 
@@ -1620,13 +1629,8 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     """Start MCP server."""
     try:
         if getattr(args, "mode", "simple") == "advanced":
-            if os.environ.get("MNEMOS_ENABLE_EXPERIMENTAL") != "1":
-                print(
-                    "Advanced MCP mode is experimental and unsupported in 0.2.x. "
-                    "Use simple mode, or set MNEMOS_ENABLE_EXPERIMENTAL=1 for research use.",
-                    file=sys.stderr,
-                )
-                return 1
+            # stderr: stdout is the MCP protocol's.
+            print(ADVANCED_MODE_NOTE, file=sys.stderr)
             from .mcp_server import run_server
 
             run_server(
@@ -3447,13 +3451,8 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
     if args.mcp_command != "install":
         print("Usage: mnemos mcp install {claude|claude-code|cursor|codex|generic}", file=sys.stderr)
         return 1
-    if args.mode == "advanced" and os.environ.get("MNEMOS_ENABLE_EXPERIMENTAL") != "1":
-        print(
-            "Refusing to install unsupported advanced mode. Use simple mode, or set "
-            "MNEMOS_ENABLE_EXPERIMENTAL=1 for explicit research use.",
-            file=sys.stderr,
-        )
-        return 1
+    if args.mode == "advanced":
+        print(ADVANCED_MODE_NOTE, file=sys.stderr)
 
     snippet = _mcp_server_snippet(
         name=args.name,

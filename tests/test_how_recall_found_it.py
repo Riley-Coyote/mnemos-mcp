@@ -22,7 +22,6 @@ from mnemos.core.engram import Connection, Engram
 from mnemos.core.types import ConnectionRelation
 from mnemos.retrieval.reactive import ReactiveRetriever
 from mnemos.simple_runtime import MnemosRuntime
-from mnemos.store.sqlite_store import EngramStore
 
 from tests.test_recall_by_meaning import concept_vector, meaning  # noqa: F401  (a fixture)
 
@@ -109,19 +108,27 @@ def test_matched_words_are_at_most_three_in_the_cues_order(store):
     assert result.score_breakdown["matched_words"] == ["lighthouse", "pier", "harbour"]
 
 
-def test_the_advanced_recall_prints_a_whole_id_and_how_it_was_found(tmp_path, monkeypatch):
-    store = EngramStore(str(tmp_path / "memory.db"))
-    engram = Engram(content=SAM, kind="semantic", owner_agent_id="nova", person_id="riley",
-                    project_scope="demo")
-    store.save_engram(engram)
-    monkeypatch.setattr(mcp_server, "_setup_gate", lambda: None)
-    monkeypatch.setattr(mcp_server, "_store", store)
-    monkeypatch.setattr(mcp_server, "_retriever", ReactiveRetriever(store))
+def test_the_advanced_server_prints_a_whole_id_and_how_it_was_found(tmp_path, monkeypatch, words_only):
+    """The advanced server's recall is simple mode's. It had one of its own,
+    which cut a row to 150 characters and couldn't look one up by id."""
+    import mnemos.simple_mcp as simple_mcp
 
-    out = mcp_server.mnemos_recall("what is my dog called", **SCOPE)
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    engram_id = _memory_id(rt.capture(SAM))
+    rt.close()
+    monkeypatch.setattr(simple_mcp, "_runtime", None)
+    monkeypatch.setattr(simple_mcp, "_runtime_kwargs", {"db_path": str(db), **SCOPE})
+    recall = mcp_server.mcp._tool_manager.get_tool("mnemos_recall").fn
 
-    assert f"[words: called] {SAM}" in out, out
-    assert f"id={engram.id} kind=" in out, out
+    try:
+        out = recall("what is my dog called")
+    finally:
+        if simple_mcp._runtime is not None:
+            simple_mcp._runtime.close()
+
+    assert f"- [words: called] {SAM}" in out, out
+    assert engram_id in out, out
 
 
 def test_search_says_which_word_found_it_and_no_path(tmp_path, capsys, words_only):

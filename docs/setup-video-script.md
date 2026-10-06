@@ -136,9 +136,9 @@ Use mnemos_health if I ask whether memory is working.
 Do not mention tools unless I ask. Just use the memory system quietly and tell me what you remembered when it matters.
 ```
 
-**Simple vs Advanced mode:** Simple (the default, 8 tools) is right for almost everyone. Need the
-operator access? Use the supported CLI. The older advanced MCP surface is
-experimental and blocked by default in 0.2.x.
+**Simple vs Advanced mode:** Simple (the default, eleven tools) is right for almost everyone. Need
+operator access? Use the supported CLI, or advanced mode: simple mode plus tools for inspecting and
+administering memory, and less tested.
 
 ### 5B · Install Mnemos into a Hermes agent
 
@@ -199,7 +199,7 @@ mnemos mcp install claude --write       # Claude Desktop (writes config)
 mnemos mcp install codex                # prints a `codex mcp add …` command
 mnemos mcp install cursor               # prints JSON to paste
 mnemos mcp install generic              # prints JSON to paste
-MNEMOS_ENABLE_EXPERIMENTAL=1 mnemos serve --mode advanced  # unsupported research only
+mnemos serve --mode advanced            # simple mode plus admin tools (less tested)
 
 # Hermes
 mnemos hermes quickstart --agent-safe   # Sidecar (safe default)

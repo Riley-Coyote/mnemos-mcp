@@ -83,8 +83,6 @@ def _served_instructions(mode: str, folder: Path) -> str:
         "MNEMOS_DISABLE_DOTENV": "1",
         "PYTHONPATH": ":".join(sys.path),
     }
-    if mode == "advanced":
-        env["MNEMOS_ENABLE_EXPERIMENTAL"] = "1"  # advanced mode refuses to start without it
     params = StdioServerParameters(
         command=sys.executable,
         args=["-m", "mnemos.cli", "serve", "--mode", mode,

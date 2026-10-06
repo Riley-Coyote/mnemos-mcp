@@ -67,10 +67,11 @@ document ingestion, Mnemos is not that and is not trying to be.
 
 Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
 
-The older advanced MCP surface and prototype modules are quarantined in 0.2.x.
-They remain importable for research, but unfinished operations fail clearly and
-they are not production-supported. The CLI contains the supported administrative
-operations.
+Advanced MCP Mode (`mnemos serve --mode advanced`) is optional: simple mode,
+unchanged, plus tools for inspecting and administering memory. It's less tested
+than simple mode. The prototype modules remain importable for research, but
+unfinished operations fail clearly and they are not production-supported. The
+CLI contains the supported administrative operations.
 
 Hermes users should start with **Hermes Sidecar Mode** unless they explicitly
 want Mnemos to occupy Hermes' single external `memory.provider` slot.
@@ -294,18 +295,19 @@ Do not mention tools unless I ask. Just use the memory system quietly and tell m
 
 ---
 
-## Experimental Advanced Prototypes
+## Advanced Mode
 
-Advanced mode is retained only for compatibility and research. It is incomplete,
-unsupported, and intentionally blocked by default. Do not install it for users.
+Advanced mode is optional. It is simple mode, unchanged, plus tools for
+inspecting and administering memory: functional memory and hypomnema, explicit
+remember and ingest, beliefs, the shared pool, inspect, forget, and
+consolidation. It's less tested than simple mode, and says so when it starts.
 
 ```bash
-MNEMOS_ENABLE_EXPERIMENTAL=1 mnemos serve --mode advanced
+mnemos serve --mode advanced
+mnemos mcp install claude-code --mode advanced --write
 ```
 
-There is no supported client-install path for advanced mode.
-
-Use simple mode and the CLI for all production continuity and administration.
+Simple mode is what most agents need.
 
 ---
 
@@ -497,7 +499,7 @@ Core commands:
 ```bash
 mnemos doctor                         # Verify simple-mode readiness
 mnemos serve                          # Start simple MCP server
-MNEMOS_ENABLE_EXPERIMENTAL=1 mnemos serve --mode advanced  # unsupported research mode
+mnemos serve --mode advanced          # Simple mode plus admin tools (less tested)
 mnemos mcp install generic            # Print MCP config
 mnemos mcp install claude-code --write  # Register with Claude Code
 mnemos mcp install claude --write     # Merge Claude Desktop config

@@ -1,10 +1,13 @@
 """
-Mnemos MCP Server.
+Mnemos MCP Server, advanced mode.
 
-Exposes Mnemos memory operations as MCP tools that any agent can call.
-Uses the Anthropic MCP Python SDK (FastMCP).
+Advanced mode is simple mode plus tools for inspecting and administering
+memory: every simple tool (``mnemos.simple_mcp``) is served here unchanged,
+with the same server start and shutdown. Uses the Anthropic MCP Python SDK
+(FastMCP).
 
-Tools:
+Tools added to simple mode's:
+    mnemos_setup        — Walk through onboarding
     mnemos_session_start — Start or resume a functional-memory session
     mnemos_functional_update — Store live working context
     mnemos_functional_list — List live working context
@@ -14,7 +17,6 @@ Tools:
     mnemos_visual_snapshot — Generate an inline Mermaid memory map
     mnemos_remember     — Encode a new memory
     mnemos_ingest       — Ingest content from external sources
-    mnemos_recall       — Retrieve relevant memories
     mnemos_hypomnema_write   — Write scoped continuity before promotion
     mnemos_hypomnema_search  — Search scoped continuity
     mnemos_hypomnema_revise  — Revise scoped continuity
@@ -22,8 +24,10 @@ Tools:
     mnemos_hypomnema_candidates — List promotion-ready continuity
     mnemos_hypomnema_promote — Promote stable continuity into Mnemos
     mnemos_inspect      — View full details of a memory
+    mnemos_introspect   — Audit a piece of text for performed vs genuine markers
     mnemos_status       — Get memory system status
     mnemos_beliefs      — List current beliefs
+    mnemos_shared       — Read what other agents shared to the pool
     mnemos_forget       — Archive a specific memory
     mnemos_consolidate  — Trigger a consolidation cycle
 
@@ -49,7 +53,6 @@ from .core.types import EngramKind, SourceType
 from .store.sqlite_store import EngramStore
 from .store.embedding_index import EmbeddingIndex
 from .encoding.encoder import Encoder
-from .retrieval.reactive import ReactiveRetriever
 from .consolidation.daemon import ConsolidationDaemon
 from .interface.openclaw_export import OpenClawExporter
 from .interface.context_packet import build_context_packet
@@ -60,15 +63,13 @@ from .simple_mcp import (
     configure_runtime,
     register_simple_tools,
 )
-from .simple_runtime import how_found
-from .simple_scope import MnemosScope, resolve_tool_scope
+from .simple_scope import MnemosScope, resolve_scope, resolve_tool_scope
 
 logger = logging.getLogger("mnemos.mcp")
 
 # Global state — initialized when server starts
 _store: EngramStore | None = None
 _encoder: Encoder | None = None
-_retriever: ReactiveRetriever | None = None
 _embedding_index: EmbeddingIndex | None = None
 _shared_pool = None
 _llm_client = None
@@ -86,7 +87,11 @@ ADVANCED_INSTRUCTIONS = (
 
 mcp = FastMCP("mnemos", instructions=ADVANCED_INSTRUCTIONS)
 mcp._mcp_server.version = _simple_mcp.mnemos_version()
-register_simple_tools(mcp, include_recall=False)
+# Every simple tool, whole: advanced mode only adds. It once kept an older
+# mnemos_recall of its own, which couldn't look a memory up by id, had no
+# standing filter, cut each row to 150 characters and waited on setup, so the
+# recalls an agent makes at the start of a session found nothing here.
+register_simple_tools(mcp)
 
 
 # ═══════════════════════════════════════════════════
@@ -185,7 +190,7 @@ def _scoped(
 
 def _init_store(db_path: str = "~/.mnemos/memory.db") -> None:
     """Initialize the global store, its helpers, and the chosen provider's client."""
-    global _store, _encoder, _retriever, _llm_client, _embedding_index, _shared_pool
+    global _store, _encoder, _llm_client, _embedding_index, _shared_pool
     if _store is None:
         _store = EngramStore(db_path)
         # Initialize embedding index (same DB path — gracefully degrades)
@@ -202,11 +207,6 @@ def _init_store(db_path: str = "~/.mnemos/memory.db") -> None:
             llm_client=_llm_client,
             shared_pool=_shared_pool,
             config=_get_config().get("encoding"),
-        )
-        _retriever = ReactiveRetriever(
-            _store,
-            embedding_index=_embedding_index,
-            shared_store=_shared_pool._store,
         )
 
 
@@ -684,64 +684,6 @@ def mnemos_ingest(
         f"  Depth: {encoding_depth}\n"
         f"  Tags: {', '.join(engram.tags) or '(none)'}"
     )
-
-
-@mcp.tool()
-def mnemos_recall(
-    query: str,
-    max_results: int = 5,
-    agent_id: str = "default",
-    person_id: str = "user",
-    project_scope: str = "global",
-) -> str:
-    """Retrieve memories relevant to a query.
-
-    Searches across all stored memories using full-text search and
-    connection graph traversal. Results are scored by relevance,
-    recency, strength, connections, and emotional congruence.
-
-    Every recalled memory is reconsolidated — its connections and
-    strength are updated based on this retrieval context.
-
-    Args:
-        query: What to search for. Natural language works best.
-        max_results: Maximum number of results (default: 5).
-        agent_id: Which agent's memory to search. Default: "default".
-    """
-    gate = _setup_gate()
-    if gate:
-        return gate
-    _ensure_store()
-    agent_id, person_id, project_scope = _scoped(
-        agent_id, person_id, project_scope
-    )
-    emotional_state = _store.get_latest_emotional_state(agent_id)  # type: ignore
-
-    results = _retriever.retrieve(  # type: ignore
-        cue=query,
-        agent_id=agent_id,
-        person_id=person_id,
-        project_scope=project_scope,
-        max_results=max_results,
-        emotional_state=emotional_state,
-    )
-
-    if not results:
-        return "No relevant memories found."
-
-    lines = []
-    for r in results:
-        # Prefer impact (the lesson) over content (what happened)
-        display = r.engram.impact if r.engram.impact else r.engram.content
-        if len(display) > 150:
-            display = display[:147] + "..."
-        pct = int(r.engram.source.confidence * 100)
-        lines.append(
-            f"{how_found(r)} {display}\n"
-            f"       id={r.engram.id} kind={r.engram.kind} confidence={pct}%"
-        )
-
-    return f"Found {len(results)} memories:\n\n" + "\n\n".join(lines)
 
 
 @mcp.tool()
@@ -1580,14 +1522,33 @@ def mnemos_consolidate(deep: bool = False, agent_id: str = "default") -> str:
     return "\n".join(lines)
 
 
+def _close_advanced_store() -> None:
+    """Close what ``_init_store`` opened: the meaning index (it holds its own
+    connection to the store, and left open the store's writes stay in the
+    WAL), the store, and the shared pool."""
+    for opened in (_embedding_index, _store, _shared_pool):
+        if opened is None:
+            continue
+        try:
+            opened.close()
+        except Exception:
+            pass
+
+
 def run_server(
-    db_path: str = "~/.mnemos/memory.db",
+    db_path: str | None = None,
     *,
     agent_id: str | None = None,
     person_id: str | None = None,
     project_scope: str | None = None,
 ) -> None:
-    """Start the MCP server in stdio mode."""
+    """Start the advanced MCP server in stdio mode.
+
+    Simple mode's start (``run_simple_server``), with nothing left out: the
+    simple tools' runtime and the prompt hook's cue answerer, stopped and
+    closed at shutdown. Then the advanced tools' own store, on the file the
+    one resolver names, which is the simple runtime's.
+    """
     global _default_agent_id
     if agent_id:
         _default_agent_id = agent_id
@@ -1598,19 +1559,29 @@ def run_server(
         person_id=person_id,
         project_scope=project_scope,
     )
+    # Without it the prompt hook finds memories by their words alone, and its
+    # judge, when switched on, shows nothing.
+    answerer = _simple_mcp.start_cue_answerer()
 
     def _shutdown(signum, frame):
         logger.info("Shutting down MCP server...")
-        if _store:
-            try:
-                _store.close()
-            except Exception:
-                pass
+        if answerer is not None:
+            answerer.stop()
+        if _simple_mcp._runtime is not None:
+            _simple_mcp._runtime.close()
+        _close_advanced_store()
         sys.exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
-    _init_store(db_path)
+    _init_store(
+        resolve_scope(
+            db_path=db_path,
+            agent_id=agent_id,
+            person_id=person_id,
+            project_scope=project_scope,
+        ).db_path
+    )
     logger.info("Mnemos MCP server starting (stdio mode)")
     mcp.run()

@@ -663,9 +663,10 @@ def hook_in_use(*, days: float = RUN_DAYS) -> bool:
 class CueAnswerer:
     """Keeps the embedding model warm and answers cue queries on a unix socket.
 
-    Started by the simple MCP server (``run_simple_server``), in a background
-    thread. Where the prompt hook is in use (it ran in the last week), the
-    thread loads the model first and only then opens the socket, at
+    Started by the MCP server in either mode (``run_simple_server``,
+    ``run_server``), in a background thread. Where the prompt hook is in use
+    (it ran in the last week), the thread loads the model first and only then
+    opens the socket, at
     ``~/.mnemos/run/cue-<Claude Code pid>-<scope key>.sock`` (0600, the folder
     0700): a hook never waits on a model still loading, and until the socket
     is there it answers from words. Where it isn't, loading the model would

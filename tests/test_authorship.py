@@ -911,7 +911,7 @@ def test_the_advanced_tools_record_the_agents_own_words(tmp_path, monkeypatch):
     (home / ".mnemos" / "config.json").write_text(json.dumps({"setup_complete": True}))
     monkeypatch.setenv("HOME", str(home))
     _as_session(monkeypatch, tmp_path, SESSION)
-    for name in ("_store", "_encoder", "_retriever", "_llm_client", "_embedding_index",
+    for name in ("_store", "_encoder", "_llm_client", "_embedding_index",
                  "_shared_pool", "_config"):
         monkeypatch.setattr(server, name, None, raising=False)
     monkeypatch.setattr(server, "_default_agent_id", "nova")

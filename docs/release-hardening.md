@@ -14,7 +14,7 @@ Use this checklist before publishing Mnemos or opening a release PR.
   - `mnemos_reflect`
   - `mnemos_introduce`
   - `mnemos_health`
-- Advanced mode is blocked unless explicitly enabled for research.
+- Advanced mode serves every simple tool, unchanged, plus its own tools.
 - Injected FastMCP context parameters are not exposed in public tool schemas.
 - Baseline tools never request host-model sampling.
 - Tool annotations match local side effects.
@@ -28,7 +28,8 @@ Use this checklist before publishing Mnemos or opening a release PR.
 - `mnemos hooks install codex --write` preserves unrelated hook configuration,
   is idempotent, covers compaction, and directs the user to Codex's trust review.
 - `mnemos serve` defaults to simple mode.
-- `mnemos serve --mode advanced` refuses unless experimental mode is explicit.
+- `mnemos serve --mode advanced` starts with no switch and says, on stderr,
+  that it's less tested than simple mode.
 
 ## Package Readiness
 

@@ -2,6 +2,25 @@
 
 ## 0.3.1 (unreleased)
 
+### Advanced mode adds to simple mode
+
+Advanced mode is meant to be simple mode plus tools for inspecting and
+administering memory, but it switched parts of simple mode off. It served an
+older recall in place of simple mode's: one that couldn't look a memory up by
+id, had no standing filter, cut each row to 150 characters and waited on
+setup, so the recalls an agent makes at the start of a session found nothing.
+It never started the answerer the prompt hook asks, so the hook lost meaning
+search and its judge, and at shutdown it closed only its own store. Now
+advanced mode serves every simple tool unchanged, starts and stops the way
+simple mode does, and only adds its own tools. It no longer needs
+MNEMOS_ENABLE_EXPERIMENTAL=1 to run or to be installed, and it says once, on
+stderr, that it's less tested than simple mode. Its recall no longer takes
+agent_id, person_id or project_scope, or mixes in what other agents shared:
+a server recalls for its own scope, as simple mode does. To read another
+scope, start a server for it (`--agent-id`, `--person-id`,
+`--project-scope`) or use `mnemos_context_packet`, and `mnemos_shared` reads
+the shared pool.
+
 ### A model never writes in the agent's place
 
 The docs already said no outside model softens, reviews or moves what an

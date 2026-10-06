@@ -81,7 +81,7 @@ Before a release:
 
 - verify simple mode works with no provider keys
 - verify simple mode exposes only eleven tools
-- verify advanced mode stays quarantined unless explicitly enabled for research
+- verify advanced mode serves every simple tool unchanged, plus its own tools
 - verify `mnemos doctor` does not leak secrets
 - verify package artifacts include templates and simple-mode modules
 - verify baseline MCP tools make no sampling requests
