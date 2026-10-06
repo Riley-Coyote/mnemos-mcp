@@ -33,7 +33,7 @@ Mnemos is built on the traversal view, and enforces it structurally:
 
 This is also why Mnemos does not call an outside model to maintain an agent's
 memory. If the agent is the traversal, then maintenance passes — softening,
-belief review, reflection — are events *inside* the traversal, and a foreign
+reflection, the weighing of a belief — are events *inside* the traversal, and a foreign
 model performing them inserts another mind's steps into the path that is
 supposed to be the self. Earlier versions tried to police this with a
 substrate-affinity check (a `mnemos/affinity.py`, since removed); the current

@@ -2,6 +2,26 @@
 
 ## 0.3.1 (unreleased)
 
+### A model never writes in the agent's place
+
+The docs already said no outside model softens, reviews or moves what an
+agent holds, because that inserts another mind's steps into the self. With
+a provider configured, the code did all three:
+
+- a model read every saved memory against the agent's beliefs and moved
+  them, up 0.07 per point of support and down 0.04 per point of
+  contradiction;
+- the daily belief review did the same over recent memories;
+- softening let the model rewrite fading memories "in the rememberer's own
+  voice" and write the lesson each one taught.
+
+Now a model's reading only weighs the moment: it raises surprise and links a
+contradiction to the belief's evidence. A belief changes only by the
+agent's own verdict, through `mnemos_reflect`. Belief review is retired,
+with its settings. Softening keeps a fading memory's words as the agent
+wrote them and asks the agent what it taught. Its mechanical rewording stays
+opt-in (`soften_without_model`).
+
 ### A model only when you choose one
 
 A provider key in the environment was enough to turn a model on. With only

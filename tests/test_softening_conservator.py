@@ -1,20 +1,21 @@
-"""Softener as conservator: preserve the agent's register, never inflate or invent.
+"""Softener as conservator: softening may compress, never inflate or invent.
 
-Softening rewrites memory in the substrate model's voice. Even same-family,
-the pass must preserve the *agent's* register, not normalize it. These tests
-cover the three conservator guarantees:
+Softening used to have a model rewrite a fading memory "in the rememberer's
+own voice". Since 0.4.0 no model softens: that was another mind's words where
+the agent's belong. A memory's words stay the agent's unless an operator opts
+into the mechanical rule (soften_without_model). These tests cover what
+remains:
 
-1. The prompt carries voice exemplars from the same agent and explicit
-   preservation invariants.
-2. Softened output never grows longer and never introduces named entities
-   absent from the original — enforced in code, not just prompted.
+1. A model handed to the pass is never called, and no words of its land.
+2. The conservation guard: a candidate never grows longer and never
+   introduces named entities absent from the original, enforced in code.
 3. softening_dry_run logs before/after pairs to consolidation_log without
    touching any engram.
 """
 
 import pytest
 
-from mnemos.consolidation.softening import run_softening_pass
+from mnemos.consolidation.softening import _conserve, run_softening_pass
 from mnemos.core.engram import EncodingContext, Engram
 from mnemos.core.types import EngramKind
 from mnemos.store.sqlite_store import EngramStore
@@ -88,52 +89,32 @@ def seeded(store):
     return {"vivid_1": vivid_1, "vivid_2": vivid_2, "fading": fading, "other": other_agent}
 
 
-def test_prompt_carries_invariants_and_same_agent_exemplars(store, seeded):
-    stub = StubLLM("a fading impression of debugging the activation threshold")
+def test_a_model_is_never_called_and_its_words_never_land(store, seeded):
+    stub = StubLLM("a fading sense of chasing the activation threshold")
     run_softening_pass(store, {"softening_min_age_hours": 0}, stub, agent_id=AGENT_A)
 
-    assert stub.prompts, "softener never called the LLM"
-    prompt = stub.prompts[0]
-    assert "Invariants" in prompt
-    assert "Preserve the original's person and framing" in prompt
-    assert "Preserve emotional valence" in prompt
-    assert "must not be longer" in prompt
-    # Voice exemplars come from the same agent's vivid memories...
-    assert "same rememberer" in prompt
-    assert "circling the same connection graph" in prompt
-    # ...and never from another agent in the same store.
-    assert "VEKTOR-DISTINCTIVE-PHRASE" not in prompt
+    assert stub.prompts == []
+    kept = store.get_engram(seeded["fading"].id)
+    assert kept.content == seeded["fading"].content_at_encoding
+    assert kept.resolution == 1.0
 
 
-def test_softened_output_never_longer(store, seeded):
+def test_the_guard_never_lets_a_candidate_grow(seeded):
     original = seeded["fading"].content
     inflated = original + " and then so much more happened that evening, truly a saga"
-    stub = StubLLM(inflated)
-    run_softening_pass(store, {"softening_min_age_hours": 0}, stub, agent_id=AGENT_A)
 
-    softened = store.get_engram(seeded["fading"].id)
-    assert len(softened.content) <= len(original)
-    assert "truly a saga" not in softened.content
+    kept = _conserve(original, inflated, 0.5)
 
-
-def test_softened_output_never_introduces_named_entities(store, seeded):
-    stub = StubLLM("a hazy memory of debugging with Voldemort near the threshold")
-    run_softening_pass(store, {"softening_min_age_hours": 0}, stub, agent_id=AGENT_A)
-
-    softened = store.get_engram(seeded["fading"].id)
-    assert "Voldemort" not in softened.content
+    assert len(kept) <= len(original)
+    assert "truly a saga" not in kept
 
 
-def test_conserved_llm_output_is_kept(store, seeded):
-    response = "a fading sense of chasing the activation threshold"
-    stub = StubLLM(response)
-    run_softening_pass(store, {"softening_min_age_hours": 0}, stub, agent_id=AGENT_A)
+def test_the_guard_never_lets_a_candidate_invent_a_name(seeded):
+    original = seeded["fading"].content
 
-    softened = store.get_engram(seeded["fading"].id)
-    assert softened.content == response
-    assert softened.resolution < 1.0
-    # The original is preserved immutably.
-    assert softened.content_at_encoding == seeded["fading"].content_at_encoding
+    kept = _conserve(original, "a hazy memory of debugging with Voldemort near the threshold", 0.5)
+
+    assert "Voldemort" not in kept
 
 
 def test_dry_run_writes_nothing_and_logs_pairs(store, seeded):

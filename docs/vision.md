@@ -383,8 +383,8 @@ was found.
 
 Between conversations, a consolidation cycle runs: **decay** recalculates the three
 trace dimensions; **connection discovery** looks for new relationships; **softening**
-lowers resolution on memories that aren't being reached; **belief review** stress-tests
-what has gone stagnant; **reflection** produces the questions that reach the agent.
+lowers resolution on memories that aren't being reached; **reflection** produces the
+questions that reach the agent. A belief changes only by the agent's answer to one.
 
 Modulating all of it is a small set of state. **Four modulators** — `arousal`,
 `openness`, `resolution`, and `selection_threshold` — recomputed from recent activity,

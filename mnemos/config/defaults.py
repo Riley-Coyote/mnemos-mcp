@@ -84,12 +84,6 @@ DEFAULT_CONFIG: dict = {
         "minimum_resolution": 0.1,
         "resolution_step": 0.3,
 
-        # Belief review
-        "belief_review_enabled": True,
-        "stagnation_threshold_days": 30,
-        "minimum_belief_confidence": 0.1,
-        "max_beliefs_per_pass": 10,
-
         # Reflection
         "reflection_enabled": True,
         "reflection_lookback_hours": 24,

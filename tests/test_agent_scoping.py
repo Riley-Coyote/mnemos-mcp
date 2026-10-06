@@ -15,7 +15,6 @@ from mnemos.core.belief import Belief
 from mnemos.core.engram import Engram, EncodingContext
 from mnemos.core.identity import AgentIdentity
 from mnemos.core.types import DEFAULT_AGENT_ID, EngramKind
-from mnemos.consolidation.belief_review import run_belief_review
 from mnemos.consolidation.connection_discovery import run_connection_discovery
 from mnemos.consolidation.decay import run_decay_pass
 from mnemos.consolidation.softening import run_softening_pass
@@ -63,13 +62,6 @@ def test_connection_discovery_default_scope_is_default(two_agent_store):
     assert sig.parameters["agent_id"].default == DEFAULT_AGENT_ID
 
 
-def test_belief_review_default_scope_is_default():
-    import inspect
-
-    sig = inspect.signature(run_belief_review)
-    assert sig.parameters["agent_id"].default == DEFAULT_AGENT_ID
-
-
 def test_connection_discovery_scoped_leaves_other_agent_untouched(two_agent_store):
     before_b = _snapshot(two_agent_store, AGENT_B)
     stats = run_connection_discovery(
@@ -105,23 +97,6 @@ def test_softening_scoped_leaves_other_agent_untouched(two_agent_store):
     b_content_after = {k: v[0] for k, v in after_b.items()}
     assert b_content_after == b_content_before, "agent B's memory content was rewritten"
     assert stats["engrams_evaluated"] > 0, "agent A's engrams were not evaluated"
-
-
-def test_belief_review_scoped_reviews_correct_agent(two_agent_store):
-    for agent in (AGENT_A, AGENT_B):
-        b = Belief(agent_id=agent, content=f"{agent} believes in scoped maintenance", confidence=0.5)
-        two_agent_store.save_belief(b)
-
-    beliefs_b_before = {
-        b.id: (b.confidence, len(b.revision_history))
-        for b in two_agent_store.get_beliefs(AGENT_B, active_only=True)
-    }
-    run_belief_review(two_agent_store, config={}, llm_client=None, agent_id=AGENT_A)
-    beliefs_b_after = {
-        b.id: (b.confidence, len(b.revision_history))
-        for b in two_agent_store.get_beliefs(AGENT_B, active_only=True)
-    }
-    assert beliefs_b_after == beliefs_b_before, "agent B's beliefs were revised during agent A's review"
 
 
 def test_blank_identity_fallback_carries_agent_scope():

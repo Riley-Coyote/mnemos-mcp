@@ -95,7 +95,6 @@ _CHANGE_COUNTERS = {
     ),
     "decay": ("engrams_decayed", "engrams_dormant", "engrams_archived", "dormant_decayed"),
     "softening": ("engrams_softened", "lessons_created", "lessons_reinforced"),
-    "belief_review": ("beliefs_strengthened", "beliefs_weakened"),
     "reflection": ("thoughts_generated", "narrative_updated"),
 }
 

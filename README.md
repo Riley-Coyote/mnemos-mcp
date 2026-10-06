@@ -411,7 +411,7 @@ No external agent runner is required.
 | job | what it does | schedule |
 |---|---|---|
 | `maintain` | decay and connection discovery | every 4h |
-| `maintain-deep` | softening, belief review, reflection | daily at 03:00 |
+| `maintain-deep` | softening, reflection | daily at 03:00 |
 
 The transcript indexer is not scheduled: it writes memories in a model's
 words, not the agent's. They are recorded as a tool's, kept out of identity,
@@ -600,10 +600,12 @@ With no provider key and no extra setup, Mnemos can still run:
 - optional SVG identity graph snapshots
 - maintenance during normal tool calls
 
-If a dedicated model provider is configured, `mnemos_maintain(deep=true)` and
-`mnemos consolidate --deep` can also run richer model-mediated passes such as
-softening, belief review, and reflection. Dedicated providers are optional and
-never required for baseline continuity.
+If a dedicated model provider is configured, Mnemos uses it to classify the
+links between memories and to weigh how surprising a new one is. It never
+writes in the agent's place: it rewords nothing, names no lesson and moves no
+belief. Those are the agent's, answered in its own words through
+`mnemos_reflect`. Dedicated providers are optional and never required for
+baseline continuity.
 
 ### Optional Identity Graph
 

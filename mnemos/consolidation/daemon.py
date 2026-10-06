@@ -5,7 +5,7 @@ Runs cycles either on schedule (cron) or on-demand. Each cycle runs
 enabled passes in a defined order:
 
 Shallow cycle (every 4h): connection_discovery → decay
-Deep cycle (daily):        connection_discovery → decay → softening → belief_review → reflection
+Deep cycle (daily):        connection_discovery → decay → softening → reflection
 
 Order matters — connection discovery runs first because new connections
 affect decay scoring. Decay runs before softening because accessibility
@@ -34,7 +34,6 @@ from .connection_discovery import run_connection_discovery
 from .decay import run_decay_pass
 from .lived import LivedClock
 from .softening import run_softening_pass
-from .belief_review import run_belief_review
 from .reflection import run_identity_pass, run_reflection_pass
 
 
@@ -206,21 +205,8 @@ class ConsolidationDaemon:
 
         # ── DEEP ONLY PASSES ──
         if deep:
-            # ── PASS 5: Belief Review ──
-            if consolidation_config.get("belief_review_enabled", True):
-                try:
-                    belief_stats = run_belief_review(
-                        store=self._store,
-                        config=consolidation_config,
-                        llm_client=self._llm_client,
-                        agent_id=agent_id,
-                        person_id=person_id,
-                        project_scope=project_scope,
-                    )
-                    stats["belief_review"] = belief_stats
-                    stats["passes_run"].append("belief_review")
-                except Exception as e:
-                    stats["belief_review_error"] = str(e)
+            # Belief review is retired (0.4.0): it let a model move the
+            # agent's beliefs. A belief changes only by the agent's verdict.
 
             # ── PASS 5: Reflection ──
             if consolidation_config.get("reflection_enabled", True):

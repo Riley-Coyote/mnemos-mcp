@@ -2,10 +2,10 @@
 LLM client abstraction for Mnemos.
 
 Provides a simple protocol that any LLM provider can implement.
-Mnemos uses LLM calls for:
-- Softening (rewriting memories at lower resolution)
-- Impact extraction (distilling the lasting insight from an experience)
-- Thought generation (synthesizing patterns from recent memories)
+A chosen provider classifies the links between memories and weighs how
+surprising a new one is. It never writes in the agent's place: no
+rewording, no lessons, no belief changes. Those are the agent's own. (The
+transcript indexer, run by hand, writes memories as a tool, never as the agent.)
 
 Three implementations:
 - AnthropicClient: Uses the Anthropic SDK (Claude models)

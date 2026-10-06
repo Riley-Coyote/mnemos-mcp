@@ -54,9 +54,8 @@ class BeliefRevision:
 class Belief:
     """A stable conviction formed from repeated memory patterns.
 
-    Confidence never reaches 1.0 — epistemic humility is built in.
-    Beliefs that go unchallenged for stagnation_threshold_days get
-    flagged for review by the belief_review consolidation pass.
+    Confidence never reaches 1.0 — epistemic humility is built in. It
+    changes only by the agent's own verdict, never by a model's reading.
     """
 
     id: str = field(default_factory=lambda: f"belief_{_gen_ulid()}")

@@ -54,13 +54,6 @@ RELATION_MAP: dict[str, ConnectionRelation] = {
 # Minimum confidence threshold — below this, skip the connection
 MIN_CONFIDENCE = 0.5
 
-# Belief impact multipliers (asymmetric by design: support accrues
-# faster than contradiction erodes, so beliefs are stable but revisable)
-BELIEF_SUPPORT_MULTIPLIER = 0.07
-BELIEF_CONTRADICT_MULTIPLIER = 0.04
-BELIEF_CONFIDENCE_FLOOR = 0.05
-BELIEF_CONFIDENCE_CEILING = 0.95
-
 
 # ---------------------------------------------------------------------------
 # System prompts
@@ -420,46 +413,3 @@ def _parse_belief_response(
             continue
 
     return results
-
-
-def apply_belief_update(
-    belief: "Belief",
-    evaluation: BeliefEvaluation,
-    engram_id: str,
-    store,
-) -> None:
-    """Apply a belief evaluation result to a belief with asymmetric impact.
-
-    Supports strengthen faster (0.07), contradictions weaken slower (0.04).
-    Confidence is clamped to [0.05, 0.95] — beliefs never fully die or
-    become unquestionable.
-
-    Args:
-        belief: The belief to update.
-        evaluation: The evaluation result.
-        engram_id: ID of the engram that triggered this evaluation.
-        store: EngramStore for persisting the updated belief.
-    """
-    if evaluation.relation == "SUPPORTS":
-        delta = evaluation.impact * BELIEF_SUPPORT_MULTIPLIER
-        new_confidence = belief.confidence + delta
-        reason = f"Supported by new evidence (impact {evaluation.impact:.2f}): {evaluation.reasoning}"
-    elif evaluation.relation == "CONTRADICTS":
-        delta = evaluation.impact * BELIEF_CONTRADICT_MULTIPLIER
-        new_confidence = belief.confidence - delta
-        reason = f"Contradicted by new evidence (impact {evaluation.impact:.2f}): {evaluation.reasoning}"
-    else:
-        return  # NO_BEARING — no change
-
-    # Clamp to bounds
-    new_confidence = max(BELIEF_CONFIDENCE_FLOOR, min(BELIEF_CONFIDENCE_CEILING, new_confidence))
-
-    # Only revise if there's an actual change
-    if abs(new_confidence - belief.confidence) > 0.001:
-        old_confidence = belief.confidence
-        belief.revise(new_confidence, reason, trigger_engram_id=engram_id)
-        store.save_belief(belief)
-        log.info(
-            "Belief '%s' updated: %.3f -> %.3f (%s)",
-            belief.id, old_confidence, new_confidence, evaluation.relation,
-        )

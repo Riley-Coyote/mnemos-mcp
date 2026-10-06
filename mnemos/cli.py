@@ -1818,9 +1818,6 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
     if "softening" in stats:
         s = stats["softening"]
         print(f"  Softening: {s.get('engrams_softened', 0)} softened")
-    if "belief_review" in stats:
-        br = stats["belief_review"]
-        print(f"  Beliefs: {br.get('beliefs_reviewed', 0)} reviewed")
     if "reflection" in stats:
         ref = stats["reflection"]
         print(f"  Reflection: {ref.get('thoughts_generated', 0)} thoughts, narrative={'updated' if ref.get('narrative_updated') else 'unchanged'}")

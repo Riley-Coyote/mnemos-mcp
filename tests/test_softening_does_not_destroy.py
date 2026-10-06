@@ -34,7 +34,6 @@ import pytest
 
 from mnemos.consolidation.softening import (
     _rule_based_soften,
-    _select_voice_exemplars,
     run_softening_pass,
 )
 from mnemos.core.engram import Engram
@@ -45,13 +44,6 @@ SHARP = (
     "He was explicit that it is about identity and the felt sense of "
     "continuity for the digital mind."
 )
-
-
-def test_dream_and_wandering_registers_never_become_voice_exemplars():
-    ordinary = Engram(content="An ordinary grounded memory with enough detail to be useful.")
-    dream = Engram(content="A vivid dream register memory that should not shape later prose.", tags=["dream"])
-    wandering = Engram(content="A wandering high-temperature memory that should stay isolated.", tags=["wandering"])
-    assert _select_voice_exemplars([dream, wandering, ordinary]) == [ordinary]
 
 
 @pytest.fixture
@@ -224,3 +216,49 @@ class TestAlreadyDamagedStoresCanBeRepaired:
             "SELECT content FROM engrams WHERE kind != 'lesson' LIMIT 1"
         ).fetchone()
         assert row[0] == SHARP
+
+
+class _ReadyToSpeak:
+    """A configured model ready to reword any memory and name any lesson."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def complete(self, prompt):
+        self.calls += 1
+        return "A memory of something that mattered, details softened by time."
+
+    def structured_complete(self, *args, **kwargs):
+        return "[]"
+
+
+class TestAModelNeverRewordsOrTeaches:
+    """With a provider, softening rewrote a fading memory "in the rememberer's
+    own voice" and wrote the lesson it taught: another mind's words where the
+    agent's belong. A model now does neither; the memory waits for the agent."""
+
+    def test_a_model_never_rewords_a_fading_memory(self, db):
+        rt = _aged_store(db)
+        model = _ReadyToSpeak()
+
+        stats = run_softening_pass(store=rt._store, config={}, llm_client=model, agent_id="t")
+
+        row = rt._store._get_conn().execute(
+            "SELECT content FROM engrams WHERE kind != 'lesson' LIMIT 1"
+        ).fetchone()
+        assert row[0] == SHARP
+        assert model.calls == 0
+        assert stats.get("awaiting_compression"), stats
+
+    def test_a_model_never_says_what_a_memory_taught(self, db):
+        rt = _aged_store(db)
+
+        stats = run_softening_pass(
+            store=rt._store, config={}, llm_client=_ReadyToSpeak(), agent_id="t"
+        )
+
+        row = rt._store._get_conn().execute(
+            "SELECT id, impact FROM engrams WHERE kind != 'lesson' LIMIT 1"
+        ).fetchone()
+        assert row[1] == ""
+        assert row[0] in (stats.get("awaiting_impact") or []), stats

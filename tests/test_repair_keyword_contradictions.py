@@ -139,7 +139,10 @@ def _damaged_store(tmp_path) -> dict:
       revision;
     - "revised": no link of its own, but a revision of the check names it;
     - "unclear": the check's shape, and nothing to say how it was saved;
-    - "model": weighed by a configured model, through the real model path.
+    - "model": weighed by a configured model: the link the model path still
+      writes, and the revision it wrote before 0.4.0, when a model's reading
+      still moved beliefs. Stores keep that revision; it is how a repair tells
+      the model's link from the check's.
     """
     db = tmp_path / "memory.db"
     rt = _runtime(db)
@@ -191,6 +194,12 @@ def _damaged_store(tmp_path) -> dict:
         agent_id="nova", person_id="riley", project_scope="demo",
     )
     ids["model"] = weighed.id
+    belief.revise(
+        belief.confidence - 0.6 * 0.04,
+        "Contradicted by new evidence (impact 0.60): the model weighed it",
+        trigger_engram_id=weighed.id,
+    )
+    store.save_belief(belief)
     # A link a model classified, not of the check's shape.
     store.save_connection(
         weighed.id,

@@ -31,7 +31,6 @@ from ..core.types import (
 from .llm_classifier import (
     classify_connections,
     evaluate_beliefs,
-    apply_belief_update,
 )
 
 if TYPE_CHECKING:
@@ -448,10 +447,10 @@ class Encoder:
         stepping back and NOT controlling" correctly SUPPORTS a belief about
         that user facilitating emergence.
 
-        Belief updates use asymmetric impact:
-        - Supports: +impact * 0.07 (beliefs grow from genuine evidence)
-        - Contradicts: -impact * 0.04 (harder to erode through noise)
-        - Confidence clamped to [0.05, 0.95] — never fully dies, never unquestionable
+        A model's reading only weighs the moment: it raises surprise and links
+        the memory as contradicting a belief's evidence. It never moves the
+        belief. Whether a memory contradicts what is held is the agent's to
+        say (mnemos_reflect), and a belief changes only by that verdict.
 
         Returns surprise level 0.0-1.0. Higher = more surprising.
         Also creates CONTRADICTS connections and fires emotional events.
@@ -502,20 +501,6 @@ class Encoder:
                             strength=0.7,
                             formed_by="encoding",
                         )
-
-                # Apply belief update (with cooldown guard)
-                cooldown_ok = True
-                try:
-                    last_rev = datetime.fromisoformat(belief.last_revised)
-                    if last_rev.tzinfo is None:
-                        last_rev = last_rev.replace(tzinfo=timezone.utc)
-                    if (datetime.now(timezone.utc) - last_rev) < timedelta(hours=6):
-                        cooldown_ok = False
-                except (ValueError, TypeError, AttributeError):
-                    pass  # If parsing fails, allow revision
-
-                if cooldown_ok:
-                    apply_belief_update(belief, evaluation, engram.id, store)
 
         # Without a model nothing here weighs the memory against beliefs. The
         # keyword-and-negation check that stood in lowered a belief by 0.05 and
@@ -740,7 +725,9 @@ def find_keyword_contradictions(store: Any, agent_id: str) -> dict[str, Any]:
     keyword overlap ('encoding_no_llm', which encoding with a model never
     writes), or it triggered one of the check's revisions. One whose memory
     triggered a model-path revision is the model's. Any other is ambiguous.
-    The model's and the ambiguous are only reported. So is every other
+    Since 0.4.0 a model's reading moves no belief and writes no revision, so a
+    link it makes after that is ambiguous. The model's and the ambiguous are
+    only reported. So is every other
     CONTRADICTS link, which lacks the shape: another strength, or not to the
     memory a belief rested on when the link formed.
 

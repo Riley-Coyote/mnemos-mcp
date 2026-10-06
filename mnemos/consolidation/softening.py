@@ -1,16 +1,20 @@
 """
-Softening pass: LLM-mediated lossy compression of fading memories.
+Softening pass: what a fading memory taught is kept before it fades.
 
-When a memory's accessibility drops, its content is rewritten at lower
-resolution — preserving gist and emotional essence while losing specific
-details. This models how human memories naturally lose detail over time.
+The forgetting itself is accessibility decay: a fading memory ranks lower and
+is reached less. Its words stay as the agent wrote them. A configured model
+used to rewrite them at lower resolution, "in the rememberer's own voice", and
+to write the lesson a memory taught. That was another mind's words where the
+agent's belong (docs/identity-model.md), and since 0.4.0 a model does neither.
+Wording is blurred only by the mechanical rule, and only under
+``soften_without_model``.
 
-Shift 1 (Traces): Before softening, the lasting impact/insight is extracted
-and preserved — surviving even when content fades to impressions.
+Shift 1 (Traces): before a memory fades, what it taught is kept as its impact.
+Only the agent can say what that was, so it is asked (``awaiting_impact``).
 
-Shift 2 (Forgetting that teaches): When impact is extracted, a "lesson" engram
-is created (or reinforced). Lessons are procedural engrams with high stability
-that persist as accumulated wisdom. Forgetting feeds forward into learning.
+Shift 2 (Forgetting that teaches): an impact the agent wrote becomes a "lesson"
+engram, created or reinforced. Lessons are procedural engrams with high
+stability that persist as accumulated wisdom.
 
 The original content is always preserved in content_at_encoding (immutable).
 """
@@ -33,41 +37,6 @@ if TYPE_CHECKING:
 
 # How many active memories one softening pass reads, the least accessible first.
 SOFTENING_LIMIT = 5000
-
-
-# ── LLM Prompts (softener lineage: Anima; conservator invariants added) ──
-
-SOFTENER_PROMPT = """You are a memory conservator. Given a sharp memory, rewrite it at lower resolution — in the rememberer's own voice, not yours.
-
-Keep the emotional tone and core meaning. Remove specific timestamps, exact quotes, and precise details. Replace them with impressions and feelings. The result should feel like a memory that's naturally fading — the way the same mind remembers something from months ago. The gist remains. The specifics blur. The voice stays.
-
-Invariants — violating any of these destroys the memory's integrity:
-- Preserve the original's person and framing: if it says "I", the softened version says "I".
-- Preserve emotional valence: do not brighten, darken, or neutralize the feeling.
-- Never add interpretation, names, places, or facts that are not in the original.
-- The softened version must not be longer than the original.
-
-{voice_exemplars}Current sharpness: {current_sharpness}
-Target sharpness: {target_sharpness}
-
-Memory:
-{content}
-
-Write ONLY the softened version. Nothing else."""
-
-VOICE_EXEMPLARS_BLOCK = """These are vivid memories from the same rememberer. Match their voice and register:
-{exemplars}
-
-"""
-
-DEEP_SOFTENER_PROMPT = """Reduce this memory to its emotional essence. One or two phrases maximum. What feeling remains when all detail is gone?
-
-This is not a summary. It's an impression — like catching a scent that reminds you of something you can't quite place. Keep the rememberer's framing and valence; add nothing that was not there.
-
-Memory:
-{content}
-
-Write ONLY the impression. One or two phrases. Nothing else."""
 
 
 def _gen_log_id(prefix: str) -> str:
@@ -96,15 +65,13 @@ def _teach(
     store: EngramStore,
     stats: dict,
     *,
-    llm_client: Any | None,
-    max_llm_calls: int,
     invent_impact: bool,
 ) -> None:
     """Settle what a memory that has faded taught, once.
 
     Shift 1: before its detail goes, what it meant is kept as its impact.
-    With no provider and no licence to invent one, the agent is asked
-    (``awaiting_impact``); the server never guesses. Shift 2: an impact the
+    Without a licence to invent one, the agent is asked (``awaiting_impact``);
+    neither the server nor a model says it for the agent. Shift 2: an impact the
     agent wrote becomes a lesson, linked back by ``distilled_into``. Which
     lesson is the helper's to judge (``_create_or_reinforce_lesson`` reuses a
     linked lesson only when it says the same thing), so a stale or misfiled
@@ -113,12 +80,7 @@ def _teach(
     """
     changed = False
     if not engram.impact:
-        if llm_client and stats["llm_calls"] < max_llm_calls:
-            engram.impact = _extract_impact(engram.content, llm_client)
-            engram.impact_source = "model"
-            stats["llm_calls"] += 1
-            changed = True
-        elif invent_impact:
+        if invent_impact:
             engram.impact = _rule_based_impact(engram.content)
             engram.impact_source = "template"
             changed = True
@@ -157,7 +119,7 @@ def run_softening_pass(
     project_scope: str | None = None,
     invent_impact: bool = False,
 ) -> dict[str, Any]:
-    """Rewrite memories that have dropped below the resolution threshold.
+    """Settle what faded memories taught, and blur wording only where licensed.
 
     Args:
         store: The engram store.
@@ -170,8 +132,9 @@ def run_softening_pass(
             softening_dry_run=True to compute and log before/after pairs
             to consolidation_log (pass_name "softening_dry_run") without
             rewriting any engram — audit the conservator before enabling.
-        llm_client: LLM client with complete(prompt) -> str method.
-            If None, content is left intact — see soften_without_model.
+        llm_client: Kept for the daemon's call; never called. A model's
+            rewording or lesson would be another mind's words in the agent's
+            memory.
         config: also honours ``soften_without_model`` (default False). With no
             provider, rewriting prose means `_rule_based_soften`, which
             replaces a memory with "An impression related to <first word>...
@@ -188,7 +151,6 @@ def run_softening_pass(
     """
     softening_threshold = config.get("softening_threshold", 0.15)
     minimum_resolution = config.get("minimum_resolution", 0.1)
-    max_llm_calls = config.get("max_llm_calls_per_cycle", 50)
     dry_run = bool(config.get("softening_dry_run", False))
     soften_without_model = bool(config.get("soften_without_model", False))
     started_at = datetime.now(timezone.utc).isoformat()
@@ -198,7 +160,6 @@ def run_softening_pass(
         "engrams_softened": 0,
         "lessons_created": 0,
         "lessons_reinforced": 0,
-        "llm_calls": 0,
         "avg_resolution_before": 0.0,
         "avg_resolution_after": 0.0,
         "dry_run": dry_run,
@@ -206,19 +167,10 @@ def run_softening_pass(
 
     # Faded first: what this pass teaches and blurs is what has faded, and on a
     # store with more active memories than the limit, the faded were the ones cut.
-    # The voice exemplars are the most vivid, read apart.
     all_engrams = store.get_active_engrams(
         agent_id=agent_id, person_id=person_id, project_scope=project_scope,
         limit=SOFTENING_LIMIT, least_accessible_first=True,
     )
-
-    # Conservator: the softener should preserve the agent's register, not
-    # normalize it into the substrate model's voice. The most vivid
-    # memories of the SAME agent serve as style exemplars.
-    exemplar_pool = _select_voice_exemplars(store.get_active_engrams(
-        agent_id=agent_id, person_id=person_id, project_scope=project_scope,
-        limit=200,
-    ))
 
     total_res_before = 0.0
     total_res_after = 0.0
@@ -248,8 +200,8 @@ def run_softening_pass(
         # without this a day-old memory "faded": its meaning was copied into a
         # lesson and it was asked what it taught. softening_threshold was read and
         # never used. What a memory taught is settled here, before the exits
-        # below, which are about its wording: with a model (or
-        # soften_without_model) a memory is blurred step by step as it fades,
+        # below, which are about its wording: under soften_without_model a
+        # memory is blurred step by step as it fades,
         # and one already blurred near its floor must still teach when it fades.
         if engram.accessibility >= softening_threshold:
             stats["not_faded"] = stats.get("not_faded", 0) + 1
@@ -258,8 +210,7 @@ def run_softening_pass(
                 # How the person wants the agent to work is never taught.
                 stats["standing"] = stats.get("standing", 0) + 1
             else:
-                _teach(engram, store, stats, llm_client=llm_client,
-                       max_llm_calls=max_llm_calls, invent_impact=invent_impact)
+                _teach(engram, store, stats, invent_impact=invent_impact)
 
         if engram.resolution <= minimum_resolution:
             continue  # Already at minimum resolution
@@ -282,19 +233,10 @@ def run_softening_pass(
         # Cap at minimum resolution
         target = max(minimum_resolution, target)
 
-        exemplars_block = _format_exemplars(exemplar_pool, exclude_id=engram.id)
-
         if dry_run:
             # Audit mode: compute what softening WOULD do, log the
             # before/after pair, and leave the engram untouched.
-            if llm_client and stats["llm_calls"] < max_llm_calls:
-                candidate = _llm_soften(
-                    engram.content, engram.resolution, target, llm_client,
-                    exemplars_block,
-                )
-                stats["llm_calls"] += 1
-            else:
-                candidate = _rule_based_soften(engram.content, target)
+            candidate = _rule_based_soften(engram.content, target)
             softened_content = _conserve(engram.content, candidate, target)
             dry_run_pairs.append(
                 {
@@ -310,21 +252,15 @@ def run_softening_pass(
 
         # SOFTEN content (impact is preserved separately)
         candidate = None
-        if llm_client and stats["llm_calls"] < max_llm_calls:
-            candidate = _llm_soften(
-                engram.content, engram.resolution, target, llm_client,
-                exemplars_block,
-            )
-            stats["llm_calls"] += 1
-        elif soften_without_model:
+        if soften_without_model:
             candidate = _rule_based_soften(engram.content, target)
         else:
-            # No provider, and no licence to guess. Compressing prose requires
-            # reading it; `_rule_based_soften` does not read, it truncates, and
-            # the result is unrecoverable through any product path. Record that
-            # the wording is still owed — the memory keeps fading through
-            # accessibility either way, and the lesson request that goes to the
-            # agent now shows text the agent can actually read.
+            # No licence to guess, and no model rewords the agent's memory.
+            # Compressing prose requires reading it; `_rule_based_soften` does
+            # not read, it truncates, and the result is unrecoverable through
+            # any product path. Record that the wording is still owed — the
+            # memory keeps fading through accessibility either way, and the
+            # lesson request that goes to the agent shows text it can read.
             stats["awaiting_compression"] = stats.get("awaiting_compression", 0) + 1
 
         if candidate is not None:
@@ -389,33 +325,6 @@ def _calculate_target_resolution(accessibility: float) -> float:
         return 0.0
 
 
-def _select_voice_exemplars(all_engrams: list, k: int = 4) -> list:
-    """Pick the most vivid engrams to anchor the softener in the agent's voice.
-
-    Vividness = resolution (sharpness), tie-broken by strength. The pool is
-    already agent-scoped by the caller — exemplars must come from the same
-    agent whose memories are being rewritten.
-    """
-    excluded_registers = {"dream", "wandering"}
-    candidates = [
-        e for e in all_engrams
-        if e.content and len(e.content) >= 20
-        and not (excluded_registers & {str(tag).lower() for tag in e.tags})
-    ]
-    candidates.sort(key=lambda e: (e.resolution, e.strength), reverse=True)
-    return candidates[:k]
-
-
-def _format_exemplars(pool: list, exclude_id: str, limit: int = 3) -> str:
-    exemplars = [e for e in pool if e.id != exclude_id][:limit]
-    if not exemplars:
-        return ""
-    lines = "\n".join(
-        f'{i}. "{e.content[:240]}"' for i, e in enumerate(exemplars, 1)
-    )
-    return VOICE_EXEMPLARS_BLOCK.format(exemplars=lines)
-
-
 def _new_named_entities(original: str, softened: str) -> set[str]:
     """Capitalized mid-sentence tokens in the softened text absent from the original."""
     orig_tokens = {t.lower() for t in re.findall(r"[A-Za-z][\w'’-]*", original)}
@@ -455,49 +364,6 @@ def _conserve(original: str, candidate: str, target_resolution: float) -> str:
     if _is_conserved(original, fallback):
         return fallback
     return original
-
-
-def _llm_soften(
-    content: str,
-    current_resolution: float,
-    target_resolution: float,
-    llm_client: Any,
-    voice_exemplars: str = "",
-) -> str:
-    """Soften memory content using LLM, in the agent's own register."""
-    if target_resolution >= 0.4:
-        prompt = SOFTENER_PROMPT.format(
-            current_sharpness=current_resolution,
-            target_sharpness=target_resolution,
-            content=content,
-            voice_exemplars=voice_exemplars,
-        )
-    else:
-        prompt = DEEP_SOFTENER_PROMPT.format(content=content)
-
-    try:
-        result = llm_client.complete(prompt)
-        return result.strip() if result else _rule_based_soften(content, target_resolution)
-    except Exception:
-        return _rule_based_soften(content, target_resolution)
-
-
-IMPACT_EXTRACTION_PROMPT = """What is the one lasting insight from this memory? Not what happened — what it taught. What understanding remains when the details are gone?
-
-Memory:
-{content}
-
-Write ONE sentence capturing the lasting impact. Nothing else."""
-
-
-def _extract_impact(content: str, llm_client: Any) -> str:
-    """Extract the lasting impact/lesson from content before it gets softened."""
-    prompt = IMPACT_EXTRACTION_PROMPT.format(content=content)
-    try:
-        result = llm_client.complete(prompt)
-        return result.strip() if result else _rule_based_impact(content)
-    except Exception:
-        return _rule_based_impact(content)
 
 
 def _rule_based_impact(content: str) -> str:
