@@ -227,7 +227,7 @@ def test_a_question_is_not_stalled_before_a_day_or_once_answered(tmp_path):
     _ask(db, "impact", memory, created=_ago(hours=5), shown=3)
     _ask(db, "belief", memory, created=_ago(days=3), shown=3, answered=True)
     # Past its lifetime a question is gone, whatever happened to it.
-    _ask(db, "contradiction", memory, created=_ago(days=40), shown=3, expires=_ago(days=10))
+    _ask(db, "lesson", memory, created=_ago(days=40), shown=3, expires=_ago(days=10))
 
     card, data = _card(db)
 

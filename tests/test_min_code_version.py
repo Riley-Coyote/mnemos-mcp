@@ -735,6 +735,8 @@ def test_older_reflect_leaves_belief_and_contradiction_questions_open(tmp_path):
     """Stale code cannot take the verdict current code reads from these
     answers, so answering there would spend the question. The words are kept
     as a signed note naming the question, and the question waits."""
+    from datetime import datetime, timezone
+
     from mnemos.core.belief import Belief
 
     db = tmp_path / "memory.db"
@@ -764,6 +766,15 @@ def test_older_reflect_leaves_belief_and_contradiction_questions_open(tmp_path):
     conn = sqlite3.connect(str(db))
     try:
         conn.execute("DELETE FROM reflection_queue")
+        # The contradiction question is retired and is never queued now; a
+        # store from before still holds the ones it was asked.
+        conn.execute(
+            "INSERT INTO reflection_queue (id, agent_id, person_id, project_scope, kind, "
+            "target_id, prompt, created_at) VALUES ('ask-contradiction', 'nova', 'riley', "
+            "'demo', 'contradiction', ?, ?, ?)",
+            (contradiction, f"Do these contradict? [ref:{other}]",
+             datetime.now(timezone.utc).isoformat()),
+        )
         conn.commit()
     finally:
         conn.close()
@@ -773,7 +784,6 @@ def test_older_reflect_leaves_belief_and_contradiction_questions_open(tmp_path):
         for kind, target, prompt in (
             ("belief", formation, "Is there a belief here? [theme:ferry]"),
             ("belief", reaffirmation, f'You hold "Riley loves the ferry". Still true? [belief:{held.id}]'),
-            ("contradiction", contradiction, f"Do these contradict? [ref:{other}]"),
         ):
             store._store.enqueue_reflection(
                 kind, target, prompt, agent_id="nova", person_id="riley", project_scope="demo",

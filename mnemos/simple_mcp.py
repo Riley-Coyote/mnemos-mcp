@@ -531,15 +531,11 @@ def register_simple_tools(server: FastMCP) -> None:
           firmly), retire (you no longer hold it: it stops shaping your
           context and is kept, with your words, in its history), decline
           (leave it as it is), not_now.
-        - Does it contradict an earlier memory? contradicts (the two are
-          linked as contradicting, and nothing else changes: neither memory
-          is weakened), compatible (they are not; only a contradiction link
-          from this memory to that one is removed), unsure (nothing changes).
         - What did it change, or teach? answer (your words become what the
           memory means), skip (nothing true comes; the memory is left as it
           is). Without a verdict, these words are taken as the answer.
-        A belief or contradiction question answered without a verdict keeps
-        your words and stays open, and nothing is formed, retired or linked.
+        A belief question answered without a verdict keeps your words and
+        stays open, and nothing is formed or retired.
 
         Args:
             target_id: The memory id the question gave, among the ids for the memory tools.

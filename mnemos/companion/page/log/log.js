@@ -97,7 +97,7 @@ function glanceHTML() {
   const line = (attrs, a, b) => `<button class="g" type="button" ${attrs}><span>${a}</span><span>${b}</span></button>`;
   const rows = [line('data-goto="notes"', who.person ? `For ${esc(who.person)}` : 'For you', notes.length ? (unread ? `${unread} not yet read` : plural(notes.length, 'note')) : 'no notes yet')];
   if (life.beliefs.length) rows.push(line('data-goto="beliefs"', 'Beliefs', `${life.beliefs.length}, held at ${life.beliefs.map((b) => `${Math.round(b.confidence * 100)}%`).join(', ')}`));
-  if (Q.open) rows.push(line('data-goto="questions"', 'What its memory asks', `${Q.open.toLocaleString('en-US')} open${Q.byKind.contradiction ? ` · ${Q.byKind.contradiction} ${Q.byKind.contradiction === 1 ? 'contradiction' : 'contradictions'}` : ''}`));
+  if (Q.open) rows.push(line('data-goto="questions"', 'What its memory asks', `${Q.open.toLocaleString('en-US')} open`));
   const made = madeLately()[0];
   if (made) rows.push(line(`data-pic="${esc(made.picture)}" data-cap="${esc(made.path)}"`, 'Made lately', esc(made.path.split('/').pop())));
   return rows.join('');

@@ -1190,7 +1190,7 @@ def format_questions(items: list[dict[str, Any]]) -> str:
 
     A question that takes a verdict shows the call with its verdicts, so an
     agent copying it gives the verdict that decides the question: answered
-    without one, a belief or contradiction question forms nothing.
+    without one, a belief question forms nothing.
     """
     if not items:
         return ""
@@ -1232,7 +1232,7 @@ _VERDICT_WORD = re.compile(r"\bverdict\b", re.IGNORECASE)
 def question_words(prompt: str) -> str:
     """A question as the reader holds it: its words up to the first sentence
     that says how to give a verdict ("If it is, state it in one line with
-    verdict hold…", "Verdict contradicts, compatible or unsure…"). How to
+    verdict hold…", "Verdict hold if it is, retire if…"). How to
     answer waits with the call, among the ids for the memory tools; a fresh
     reader found the question "reads like a form I'm being asked to fill in"
     with it (2026-09-30). A sentence inside a quotation is the memory's own

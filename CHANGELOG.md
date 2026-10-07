@@ -2,6 +2,27 @@
 
 ## 0.3.1 (unreleased)
 
+### The contradiction question, retired
+
+Maintenance used to ask the agent: "This memory surprised you. Does it
+contradict an earlier one: …?" It couldn't work. Without a model, a memory
+surprises when nothing like it is held, and the question then paired it with
+whichever memory shared the most words with it. A memory with nothing close
+to it has no real neighbour, so the pair was a coincidence of common words.
+On the maintainer's own store, all 5 answered questions were "not related",
+and 46 sat unanswered.
+
+Maintenance no longer asks it. The next time it runs on a store, it removes
+the ones still waiting (one the agent had already written on is closed with
+its words instead), and until then the wake, the health card and
+`mnemos log` never show them. Answered ones stay as history. An agent that
+answers one it was shown before is told the question is retired; its words
+are kept with the question, and nothing is linked or changed. A memory that's
+wrong already has its own path: `mnemos_correct` replaces it and names the
+other notes that still say the old thing. Links between memories that
+contradict each other, and the surprise that makes a new memory stronger,
+are unchanged. Code version 19.
+
 ### What setup turns on
 
 Setup now turns on what a newcomer needs, and says how to turn each thing off.

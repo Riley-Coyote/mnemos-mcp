@@ -1,8 +1,7 @@
 """Beliefs change only for real reasons.
 
 A belief is something the agent said yes to. It should fall when the agent
-retires it, rise when the agent holds to it, and a contradiction should be
-recorded when the agent judges one. The server guessed instead:
+retires it and rise when the agent holds to it. The server guessed instead:
 
 - any answer to a belief question formed a belief, a declined one included;
 - "Now more than ever" retired a belief, because it begins with "no";
@@ -153,16 +152,6 @@ def _graph(db) -> dict[str, list[tuple]]:
     }
 
 
-def _between(db, a: str, b: str) -> list[tuple]:
-    return _all(
-        db,
-        "SELECT source_id, target_id, relation, formed_by FROM connections "
-        "WHERE (source_id = ? AND target_id = ?) OR (source_id = ? AND target_id = ?) "
-        "ORDER BY source_id, relation",
-        (a, b, b, a),
-    )
-
-
 def _link(rt: MnemosRuntime, source: str, target: str, relation: str, formed_by: str) -> None:
     from mnemos.core.engram import Connection
 
@@ -178,6 +167,21 @@ def _claim_for_newer_code(db, version: int = 999) -> None:
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('min_code_version', ?)",
             (str(version),),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _old_contradiction_ask(db, target: str, other: str) -> None:
+    """A contradiction question, as a store from before its retirement holds one."""
+    conn = sqlite3.connect(str(db))
+    try:
+        conn.execute(
+            "INSERT INTO reflection_queue (id, agent_id, person_id, project_scope, kind, "
+            "target_id, prompt, created_at) VALUES (?, ?, ?, ?, 'contradiction', ?, ?, ?)",
+            (f"ask-contradiction-{target}", SCOPE["agent_id"], SCOPE["person_id"],
+             SCOPE["project_scope"], target, f"Do these contradict? [ref:{other}]", _days_ago(1)),
         )
         conn.commit()
     finally:
@@ -259,39 +263,12 @@ def test_now_more_than_ever_does_not_retire(tmp_path, filed_as):
     assert json.loads(history)[-1]["reason"] == "reaffirmed by the agent: Now more than ever."
 
 
-def test_no_they_dont_contradict_records_no_contradiction(tmp_path):
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        a = _memory(rt, "Riley ships every change through a pull request.")
-        b = _memory(rt, "Riley pushed a one-line fix straight to main last night.")
-        _link(rt, a, b, "co_activated", "encoding_no_llm")
-        _clear_asks(rt)
-        ask_id = _ask(rt, "contradiction", a, f"Do these contradict? [ref:{b}]")
-        graph = _graph(db)
-
-        unsure = rt.reflect(a, "No, they don't contradict: the fix was an emergency.")
-        assert _graph(db) == graph, "an answer containing 'contradict' changed the graph"
-        assert "stays open" in unsure
-
-        said = rt.reflect(
-            a, "No, they don't contradict: the fix was an emergency.", verdict="compatible",
-        )
-    finally:
-        rt.close()
-
-    assert "not a contradiction" in said
-    assert _graph(db) == graph, "compatible changed a graph with no contradiction in it"
-    assert _ask_row(db, ask_id)["answered_at"] is not None
-
-
 # ── No verdict: the words are kept, the question waits, nothing changes ──
 
 
 @pytest.mark.parametrize("kind,words", [
     ("belief", "Yes. Riley builds every trip around the ferry."),
     ("reaffirm", "no"),
-    ("contradiction", "yes"),
 ])
 def test_no_verdict_changes_nothing(tmp_path, kind, words):
     db = tmp_path / "memory.db"
@@ -306,7 +283,6 @@ def test_no_verdict_changes_nothing(tmp_path, kind, words):
         prompt = {
             "belief": THEME_ASK,
             "reaffirm": f"Still true? [belief:{belief_id}]",
-            "contradiction": f"Do these contradict? [ref:{other}]",
         }[kind]
         ask_id = _ask(rt, "belief" if kind == "reaffirm" else kind, target, prompt)
         beliefs, graph, asks = _beliefs(db), _graph(db), _asks(db)
@@ -328,13 +304,12 @@ def test_no_verdict_changes_nothing(tmp_path, kind, words):
 @pytest.mark.parametrize("kind,verdicts", [
     ("belief", "hold, decline or not_now"),
     ("reaffirm", "hold, decline, retire or not_now"),
-    ("contradiction", "contradicts, compatible or unsure"),
     ("impact", None),
 ])
 def test_the_packet_shows_the_verdict_a_question_takes(tmp_path, builder, kind, verdicts):
     """An agent copies the call the packet shows. Without a verdict a belief
-    or contradiction answer forms nothing, so both paths (the runtime's and
-    the session-start hook's) show it, with the verdicts that kind takes.
+    answer forms nothing, so both paths (the runtime's and the session-start
+    hook's) show it, with the verdicts that kind takes.
     An impact question's words are its answer, and its call takes no verdict.
     Both paths render the question with the one packet builder, so the call
     reads the same in each."""
@@ -344,13 +319,11 @@ def test_the_packet_shows_the_verdict_a_question_takes(tmp_path, builder, kind, 
     rt = _runtime(db)
     try:
         target = _memory(rt, "Riley plans every trip around the ferry timetable.")
-        other = _memory(rt, "Riley now avoids the ferry in winter.")
         belief_id = _belief(rt, target, "Riley's trips bend to the ferry.")
         _clear_asks(rt)
         _ask(rt, kind, target, {
             "belief": _evidence_ask(target),
             "reaffirm": f"Still true? [belief:{belief_id}]",
-            "contradiction": f"Do these contradict? [ref:{other}]",
             "impact": "What did this change in how you understand things? One sentence.",
         }[kind])
         if builder == "runtime":
@@ -468,108 +441,6 @@ def test_not_now_leaves_the_question_waiting(tmp_path):
     assert row["answer"] == "I want to see a winter first."
     assert row["surfaced_count"] == 2, "not_now spent or reset a showing"
     assert shown_again and "Still true?" in shown_again
-
-
-# ── Contradiction questions: contradicts, compatible, unsure ──
-
-
-def test_compatible_keeps_other_edges(tmp_path):
-    """Only the edge the question proposes may go: a contradiction from this
-    memory to the other. A "no" used to delete every link between them."""
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        a = _memory(rt, "Riley ships every change through a pull request.")
-        b = _memory(rt, "Riley pushed a one-line fix straight to main last night.")
-        _link(rt, a, b, "co_activated", "encoding_no_llm")
-        _link(rt, a, b, "temporal_after", "encoding")
-        _link(rt, b, a, "co_activated", "consolidation_no_llm")
-        _link(rt, b, a, "contradicts", "encoding")
-        _link(rt, a, b, "contradicts", "agent_reflection")
-        _clear_asks(rt)
-        _ask(rt, "contradiction", a, f"Do these contradict? [ref:{b}]")
-        before = _between(db, a, b)
-
-        rt.reflect(a, "no")  # the old way to say it
-        assert _between(db, a, b) == before, "an answer without a verdict removed a link"
-
-        said = rt.reflect(a, "They fit: the fix was an emergency.", verdict="compatible")
-    finally:
-        rt.close()
-
-    assert "removed" in said
-    assert _between(db, a, b) == [
-        edge for edge in before if edge != (a, b, "contradicts", "agent_reflection")
-    ]
-
-
-@pytest.mark.parametrize("already", [None, "contradicts-back"])
-def test_contradicts_leaves_exactly_one_contradiction_between_the_pair(tmp_path, already):
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        a = _memory(rt, "Riley ships every change through a pull request.")
-        b = _memory(rt, "Riley pushed a one-line fix straight to main last night.")
-        _link(rt, a, b, "co_activated", "encoding_no_llm")
-        if already:
-            _link(rt, b, a, "contradicts", "encoding")
-        _clear_asks(rt)
-        _ask(rt, "contradiction", b, f"Do these contradict? [ref:{a}]")
-        said = rt.reflect(b, "Yes: he changed how he ships.", verdict="contradicts")
-    finally:
-        rt.close()
-
-    assert "Contradiction recorded" in said
-    contradictions = [edge for edge in _between(db, a, b) if edge[2] == "contradicts"]
-    expected = (b, a, "contradicts", "encoding" if already else "agent_reflection")
-    assert contradictions == [expected]
-    assert (a, b, "co_activated", "encoding_no_llm") in _between(db, a, b)
-
-
-def test_contradicts_changes_nothing_but_the_link(tmp_path):
-    """The verdict says the two conflict, not which one is wrong. Lowering
-    the earlier memory's strength assumed the newer one wins."""
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        earlier = _memory(rt, "Riley ships every change through a pull request.")
-        later = _memory(rt, "Riley pushed a one-line fix straight to main last night.")
-        _link(rt, later, earlier, "co_activated", "encoding_no_llm")
-        _clear_asks(rt)
-        _ask(rt, "contradiction", later, f"Do these contradict? [ref:{earlier}]")
-        graph, beliefs = _graph(db), _beliefs(db)
-        memories = _all(db, "SELECT * FROM engrams ORDER BY id")
-        said = rt.reflect(later, "Yes: he changed how he ships.", verdict="contradicts")
-    finally:
-        rt.close()
-
-    after = _graph(db)
-    assert after["strengths"] == graph["strengths"], "a memory was weakened"
-    assert _all(db, "SELECT * FROM engrams ORDER BY id") == memories
-    assert "neither is weakened" in said
-    assert _beliefs(db) == beliefs
-    added = [edge for edge in after["connections"] if edge not in graph["connections"]]
-    assert added == [(later, earlier, "contradicts", 0.7, "agent_reflection")]
-    assert [edge for edge in graph["connections"] if edge not in after["connections"]] == []
-
-
-def test_unsure_changes_nothing(tmp_path):
-    db = tmp_path / "memory.db"
-    rt = _runtime(db)
-    try:
-        a = _memory(rt, "Riley ships every change through a pull request.")
-        b = _memory(rt, "Riley pushed a one-line fix straight to main last night.")
-        _link(rt, a, b, "contradicts", "agent_reflection")
-        _clear_asks(rt)
-        ask_id = _ask(rt, "contradiction", a, f"Do these contradict? [ref:{b}]")
-        graph = _graph(db)
-        said = rt.reflect(a, "I can't tell yet.", verdict="unsure")
-    finally:
-        rt.close()
-
-    assert "Nothing was changed" in said
-    assert _graph(db) == graph
-    assert _ask_row(db, ask_id)["answer"] == "I can't tell yet."
 
 
 # ── A capture never moves a belief without a model ──
@@ -829,10 +700,12 @@ def test_older_code_applies_no_verdict(tmp_path):
         _clear_asks(rt)
         _ask(rt, "belief", formation, THEME_ASK)
         _ask(rt, "reaffirm", held, f"Still true? [belief:{belief_id}]")
-        _ask(rt, "contradiction", surprising, f"Do these contradict? [ref:{earlier}]")
-        _ask(rt, "contradiction", earlier, f"Do these contradict? [ref:{surprising}]")
     finally:
         rt.close()
+    # The contradiction question is retired and is never queued now; a store
+    # from before still holds the ones it was asked.
+    _old_contradiction_ask(db, surprising, earlier)
+    _old_contradiction_ask(db, earlier, surprising)
 
     _claim_for_newer_code(db)
     beliefs, graph, asks = _beliefs(db), _graph(db), _asks(db)

@@ -20,9 +20,10 @@ Checks
       are alive (impact coverage, distilled-into edges, surprise on a novel
       capture, links beyond 'supports', identity rows).
   C3  `mnemos doctor` reports a real store honestly.
-  C4  the agent judges, by its own verdict: a surprising capture is asked
-      about and the verdict types the edge; an idea returning on three days
-      is asked about, held as a signed belief, and retired by the agent.
+  C4  the agent judges, by its own verdict: an idea returning on three days
+      is asked about, held as a signed belief, and retired by the agent. And
+      maintenance no longer asks whether a surprising capture contradicts
+      the memory sharing its words (the contradiction question, retired).
   C5  nothing leaves the machine: with a provider key in the environment and
       no provider chosen for Mnemos, saving and maintaining open no
       connection.
@@ -281,13 +282,15 @@ _RETURNING_IDEA = [
 
 
 def c4_agent_judgment(workdir: Path) -> dict:
-    """Contradiction and belief, through the agent's own verdicts, no provider.
+    """Belief, through the agent's own verdicts, no provider; and the
+    contradiction question, retired.
 
-    Drives the real runtime end to end. A surprising capture becomes a
-    question the agent answers with a verdict, which types the edge. An idea
-    the agent keeps returning to on three days becomes a question, held as a
-    signed belief, then retired by the agent. Noticing an idea that returns is
-    done by meaning, so this half needs the local meaning model.
+    Drives the real runtime end to end. An idea the agent keeps returning to
+    on three days becomes a question, held as a signed belief, then retired
+    by the agent. Noticing an idea that returns is done by meaning, so this
+    half needs the local meaning model. A surprising capture that shares its
+    words with what was held is no longer asked about: without a model the
+    pair was a coincidence of common words.
     """
     import sqlite3 as _sq
 
@@ -298,7 +301,7 @@ def c4_agent_judgment(workdir: Path) -> dict:
     rt = MnemosRuntime(db_path=db, agent_id="mind", person_id="tester",
                        project_scope="check")
 
-    # Contradiction: a surprising capture against what was held.
+    # A surprising capture that shares its words with what was held.
     for i in range(6):
         rt.capture(content=f"The vektor renderer needs another optimization pass, item {i}",
                    signed_as=AGENT)
@@ -309,19 +312,13 @@ def c4_agent_judgment(workdir: Path) -> dict:
     eng.encoding_context.surprise_level = 0.7
     rt._store.save_engram(eng)
     rt.maintain()
-    contra_asks = [i for i in rt.pending_reflections(limit=10) if i["kind"] == "contradiction"]
-    check("C4 contradiction: a surprising capture is asked about", bool(contra_asks))
-    if contra_asks:
-        rt.reflect(contra_asks[0]["target_id"], "It conflicts with what I held about the renderer.",
-                   verdict="contradicts", signed_as=AGENT)
     conn = _sq.connect(db)
-    contradictions = conn.execute(
-        "SELECT COUNT(*) FROM connections WHERE relation='contradicts' "
-        "AND formed_by='agent_reflection'"
+    contradiction_asks = conn.execute(
+        "SELECT COUNT(*) FROM reflection_queue WHERE kind = 'contradiction'"
     ).fetchone()[0]
     conn.close()
-    check("C4 contradiction: the agent's verdict types the edge",
-          contradictions > 0, f"{contradictions} agent contradiction edge(s)")
+    check("C4 contradiction: a surprising capture is not asked about (retired)",
+          contradiction_asks == 0, f"{contradiction_asks} contradiction question(s)")
 
     # Belief: an idea the agent returns to on three days, by meaning.
     meaning = rt.semantic_status(verify=True)

@@ -385,9 +385,9 @@ def _idea_prompt(target):
 def test_an_idea_question_on_a_memory_with_an_older_open_question_can_be_answered(runtime, monkeypatch):
     group = _idea_store(runtime, monkeypatch)
     newest = group[-1]
-    other = group[0]
     runtime._store.enqueue_reflection(
-        "contradiction", newest, f"Does this contradict the other? [ref:{other}]", **SCOPE,
+        "lesson", newest, "This is fading. What did it teach you? The lesson outlives the details.",
+        **SCOPE,
     )
     runtime.maintain()
     [idea] = [ask for ask in _idea_asks(runtime) if "[evidence:" in ask["prompt"]]
@@ -489,18 +489,16 @@ def test_another_models_belief_is_not_put_to_a_reader_as_its_own(runtime):
         + sonnet["prompt"][sonnet["prompt"].find("You hold"):][:120])
 
 
-def test_a_noticer_failure_leaves_the_contradiction_pass_running(runtime, monkeypatch):
+def test_a_noticer_failure_is_noted_and_maintenance_finishes(runtime, monkeypatch):
     _idea_store(runtime, monkeypatch)
 
     def broken(impacts):
         raise struct.error("unpack requires a buffer of 16 bytes")
 
     monkeypatch.setattr(runtime._embedding_index, "impact_vectors", broken)
-    called = []
-    monkeypatch.setattr(runtime, "_enqueue_contradiction_reflections", lambda limit=1: called.append(limit) or 0)
-    runtime.maintain()
-    assert called, "maintain() never reached the contradiction pass"
-    assert runtime._get_meta("ideas_noticed_at", "")
+    said = runtime.maintain()
+    assert "Completed: local deterministic maintenance completed" in said, said
+    assert runtime._get_meta("ideas_noticed_at", ""), "the failure was not noted, so it is retried every cycle"
 
 
 # ── Answers the review's questions asked for ──

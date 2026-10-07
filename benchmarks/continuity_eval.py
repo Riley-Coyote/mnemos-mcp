@@ -278,6 +278,8 @@ def mind_state(db_path: str) -> dict:
     relation_kinds = q("SELECT COUNT(DISTINCT relation) FROM connections")
     # Judgement the agent alone can do, now available keyless: beliefs it
     # stated, and contradiction edges it typed. Both were provider-only before.
+    # The question that typed those edges is retired; the ones a store holds
+    # still count.
     try:
         agent_beliefs = q(
             "SELECT COUNT(*) FROM beliefs WHERE source = 'agent' "

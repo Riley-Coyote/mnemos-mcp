@@ -66,10 +66,11 @@ from .store.embedding_index import WRITE_EMBED_SECONDS, EmbeddingIndex
 from .core.engram import Engram
 from .core.placeholders import TEMPLATED_IMPACTS, is_templated
 from .store.archive import resharpen
-from .store.fts import distinctive_terms, fts_words, meaningful_words, or_query, search_words
+from .store.fts import distinctive_terms, fts_words, meaningful_words, search_words
 from .store.sqlite_store import (
     EARLY_LESSON_ARCHIVE_REASON,
     RECALLABLE_ARCHIVE_REASONS,
+    RETIRED_REFLECTION_KINDS,
     EngramStore,
     ReadOnlyEngramStore,
     handoff_retirement,
@@ -633,11 +634,6 @@ def _idea_similarities(values: list[list[float]]) -> tuple[Any, float, float]:
     return similarities, similar, cohesive
 
 
-# Only captures whose encoding registered real surprise (they did not fit what
-# was already held) are offered as contradiction candidates. Keeps the ask rare
-# and tied to genuine tension, not mere topical overlap.
-_CONTRADICTION_MIN_SURPRISE = 0.4
-
 # The marker a reaffirmation carries: which belief it asks about.
 _BELIEF_MARKER = re.compile(r"\[belief:(belief_[A-Za-z0-9]+)\]")
 
@@ -652,11 +648,20 @@ _REAFFIRM_AFTER_DAYS = 30
 _VERDICTS: dict[str, tuple[str, ...]] = {
     "belief": ("hold", "decline", "not_now"),
     "reaffirm": ("hold", "decline", "retire", "not_now"),
-    "contradiction": ("contradicts", "compatible", "unsure"),
     "impact": ("answer", "skip"),
     "lesson": ("answer", "skip"),
 }
 VERDICTS = frozenset(v for verdicts in _VERDICTS.values() for v in verdicts)
+
+# The contradiction question is retired (RETIRED_REFLECTION_KINDS): maintenance
+# no longer asks whether a memory that surprised the agent contradicts an
+# earlier one. An agent may still answer one it was shown before, with the
+# verdicts it took, and is told so plainly. A memory that is wrong is corrected
+# with mnemos_correct, which also names the notes that still say the old thing.
+_RETIRED_KINDS = frozenset(RETIRED_REFLECTION_KINDS)
+_RETIRED_VERDICTS = frozenset({"contradicts", "compatible", "unsure"})
+_RETIRED_QUESTION = "Mnemos no longer asks whether a memory contradicts an earlier one"
+_RETIRED_FIX = "If a memory is wrong, correct it with mnemos_correct."
 
 # The questions whose words are themselves the answer asked for: what one
 # memory changed or taught, which land on that memory. Without a verdict these
@@ -675,17 +680,12 @@ _VERDICT_HELP = {
         "hold (it still holds), retire (you no longer hold it), decline "
         "(leave it as it is) or not_now (ask again later)"
     ),
-    "contradiction": (
-        "contradicts (they conflict: one link says so, and nothing else "
-        "changes), compatible (they do not) or unsure (you cannot tell)"
-    ),
     "impact": "answer (your words become what it meant) or skip (nothing true comes)",
     "lesson": "answer (your words become what it taught) or skip (nothing true comes)",
 }
 _VERDICT_GUIDE = (
     "Is it a belief you hold: hold, decline or not_now. Still true: hold, "
-    "retire, decline or not_now. A contradiction: contradicts, compatible or "
-    "unsure. A lesson or what a memory changed: answer or skip."
+    "retire, decline or not_now. A lesson or what a memory changed: answer or skip."
 )
 
 
@@ -704,9 +704,9 @@ def verdict_call_lines(ask: Mapping[str, Any]) -> list[str] | None:
 
     Both packet builders show these (the runtime's and the session-start
     hook's), so an agent copying the call gives the verdict that decides the
-    question: answered without one, a belief or contradiction question forms
-    nothing. None for a question whose words are the answer (impact, lesson)
-    or of a kind this code does not know; those keep their own template.
+    question: answered without one, a belief question forms nothing. None for
+    a question whose words are the answer (impact, lesson) or of a kind this
+    code does not ask; those keep their own template.
     """
     kind = _question_kind(ask)
     verdicts = _VERDICTS.get(kind)
@@ -3031,84 +3031,6 @@ class MnemosRuntime:
                 return 1
         return 0
 
-    def _enqueue_contradiction_reflections(self, limit: int = 1) -> int:
-        """Ask the agent to judge a genuine tension it just encountered.
-
-        Contradiction is the highest-value edge — it is how wrong memory gets
-        corrected — but detecting one needs judgement no keyword heuristic has.
-        So maintenance only surfaces a *candidate*: a capture whose encoding
-        registered real surprise (it did not fit what was already held) paired
-        with its nearest existing neighbour. The agent decides whether they
-        actually conflict. Rare by construction — most captures aren't
-        surprising — so this is not a chore stream.
-        """
-        self._ensure_init()
-        assert self._store is not None
-
-        already = {
-            r[0] for r in self._store._get_conn().execute(
-                "SELECT target_id FROM reflection_queue WHERE agent_id = ? "
-                "AND person_id = ? AND project_scope = ? AND answered_at IS NULL",
-                (self.scope.agent_id, self.scope.person_id, self.scope.project_scope),
-            ).fetchall()
-        }
-
-        recent = self._store.get_active_engrams(agent_id=self.scope.agent_id, limit=25)
-        for engram in recent:
-            if engram.id in already:
-                continue
-            surprise = float(
-                getattr(engram.encoding_context, "surprise_level", 0.0) or 0.0
-            )
-            if surprise < _CONTRADICTION_MIN_SURPRISE:
-                continue
-            neighbor = self._nearest_neighbor(engram)
-            if neighbor is None:
-                continue
-            # Skip if the pair is already typed as contradicting.
-            if any(
-                c.target_id == neighbor.id
-                and str(getattr(c.relation, "value", c.relation)) == "contradicts"
-                for c in engram.connections
-            ):
-                continue
-            excerpt = " ".join((neighbor.content or "").split())[:120]
-            if self._store.enqueue_reflection(
-                "contradiction",
-                engram.id,
-                f'This memory surprised you. Does it contradict an earlier one: '
-                f'"{excerpt}"? Verdict contradicts, compatible or unsure, and say '
-                f"why. [ref:{neighbor.id}]",
-                agent_id=self.scope.agent_id,
-                person_id=self.scope.person_id,
-                project_scope=self.scope.project_scope,
-            ):
-                return 1
-        return 0
-
-    def _nearest_neighbor(self, engram: Any) -> Any:
-        """The most topically-overlapping other active engram, or None.
-
-        Reuses the FTS OR-query neighbour pattern the encoder uses, so a
-        contradiction candidate is found the same cheap way connections are.
-        """
-        assert self._store is not None
-        words = fts_words(engram.content or "", min_len=4)
-        if not words:
-            return None
-        query = or_query(words[:8])
-        try:
-            results = self._store.search_fts(query, limit=5)
-        except (ValueError, OSError):
-            return None
-        for r in results:
-            if r.id == engram.id:
-                continue
-            neighbor = self._store.get_engram(r.id)
-            if neighbor is not None and neighbor.owner_agent_id == self.scope.agent_id:
-                return neighbor
-        return None
-
     def pending_reflections(self, limit: int = 2) -> list[dict[str, Any]]:
         self._ensure_init()
         assert self._store is not None
@@ -3131,8 +3053,14 @@ class MnemosRuntime:
         decides what happens. The words are kept exactly as written and never
         read for a yes or a no. A lesson or impact question asks for the words
         themselves, so without a verdict they are its answer, as before. A
-        belief or contradiction question answered without one keeps the words
-        and stays open, and nothing is formed, retired or linked.
+        belief question answered without one keeps the words and stays open,
+        and nothing is formed or retired.
+
+        The contradiction question is retired (``RETIRED_REFLECTION_KINDS``).
+        One the agent was shown before, still waiting, is closed with the
+        agent's words on it, whatever the verdict, and nothing else changes.
+        Its verdicts are still understood, so answering one that is gone is
+        told that plainly, not that the verdict is unknown.
 
         The answer is the agent's, signed with ``signed_as`` when the agent
         gives its model id: a note it adds to, an answer kept open, and a
@@ -3169,7 +3097,10 @@ class MnemosRuntime:
                     "prompt": f'You hold this belief: "{content}". [belief:{belief.id}]',
                 }
                 direct = True
-        if not direct and decided and decided not in VERDICTS:
+        retired = ask is not None and _question_kind(ask) in _RETIRED_KINDS
+        if not direct and not retired and decided and decided not in VERDICTS:
+            if decided in _RETIRED_VERDICTS:
+                return f"Nothing recorded: {_RETIRED_QUESTION}, so nothing was linked or changed. {_RETIRED_FIX}"
             return f"Nothing recorded: {verdict.strip()!r} is not a verdict. {_VERDICT_GUIDE}"
         if ask is None:
             return (
@@ -3241,6 +3172,8 @@ class MnemosRuntime:
         # stays open for a current session instead. So does a question of a
         # kind this code does not know.
         older = self._older_than_store() is not None
+        if retired and not older:
+            return self._close_retired_question(ask, answer)
         if kind not in _ANSWERED_BY_WORDS and (older or allowed is None):
             return self._keep_answer_open(ask, answer, decided, author=author)
         if kind not in _ANSWERED_BY_WORDS and decided in ("", "not_now"):
@@ -3266,8 +3199,6 @@ class MnemosRuntime:
             return self._apply_belief_reflection(item, answer, decided, author=author)
         if kind == "reaffirm":
             return self._apply_reaffirmation(item, answer, decided, author=author)
-        if kind == "contradiction":
-            return self._apply_contradiction_reflection(item, answer, decided)
 
         if decided == "skip":
             return (
@@ -3475,67 +3406,19 @@ class MnemosRuntime:
             "with your words, in its history."
         )
 
-    def _apply_contradiction_reflection(self, item: dict[str, Any], answer: str, verdict: str) -> str:
-        """Record the agent's judgement of a candidate contradiction.
-
-        contradicts leaves exactly one CONTRADICTS edge between the pair, and
-        does nothing else: it writes one from this memory to the other, marked
-        `agent_reflection` so it is distinguishable and correctable, unless the
-        pair already has one either way. The verdict says the two conflict,
-        not which one is wrong, so neither memory is weakened. compatible
-        removes only the edge the question proposes, a CONTRADICTS edge from
-        this memory to the other, if one was written; every other link between
-        them stays. unsure changes nothing.
-        """
+    def _close_retired_question(self, ask: dict[str, Any], answer: str) -> str:
+        """Close a waiting question of a kind no longer asked, with the
+        agent's words on it, so they stay as its history. Nothing else
+        changes: no link is made or removed, and no memory is touched."""
         assert self._store is not None
-        from .core.engram import Connection
-        from .core.types import ConnectionRelation
-
-        m = re.search(r"\[ref:(engram_[A-Za-z0-9]+)\]", item.get("prompt") or "")
-        if not m:
-            return "Recorded."
-        other_id = m.group(1)
-        source = self._store.get_engram(item["target_id"])
-        other = self._store.get_engram(other_id)
-        if source is None or other is None:
-            return "Recorded, but one of the memories is no longer there."
-        if verdict == "unsure":
-            return "Noted as unsure. Nothing was changed."
-
-        contradicts = ConnectionRelation.CONTRADICTS.value
-        if verdict == "compatible":
-            removed = self._store.remove_connections([(source.id, other.id, contradicts)])
-            if removed:
-                self._traced_write(source.id)
-                return (
-                    "Noted: not a contradiction. The contradiction link between "
-                    "them was removed; every other link stays."
-                )
-            return "Noted: not a contradiction. No conflict recorded."
-
-        linked = any(
-            c.target_id == other.id and str(getattr(c.relation, "value", c.relation)) == contradicts
-            for c in self._store.get_connections(source.id)
-        ) or any(
-            c.target_id == source.id and str(getattr(c.relation, "value", c.relation)) == contradicts
-            for c in self._store.get_connections(other.id)
+        self._store.answer_reflection(
+            ask["target_id"], answer, reflection_id=ask["id"],
+            agent_id=ask["agent_id"], person_id=ask["person_id"],
+            project_scope=ask["project_scope"],
         )
-        if not linked:
-            self._store.save_connection(
-                source.id,
-                Connection(
-                    target_id=other.id,
-                    relation=contradicts,
-                    strength=0.7,
-                    formed_by="agent_reflection",
-                ),
-            )
-            self._traced_write(source.id)
         return (
-            "Contradiction recorded.\n"
-            f"  {' '.join((source.content or '').split())[:70]}\n"
-            f"  vs {' '.join((other.content or '').split())[:70]}\n"
-            "They are linked as contradicting; neither is weakened."
+            f"That question is retired: {_RETIRED_QUESTION}. Your words are kept "
+            f"with the question, and nothing was linked or changed. {_RETIRED_FIX}"
         )
 
     #: How a reflection is labelled inside a continuity note. Stable, because
@@ -5979,12 +5862,15 @@ class MnemosRuntime:
             # Hygiene first: a store written before excerpts were dropped can
             # still hold a frozen copy of a memory the human asked to forget.
             self._store.purge_stale_reflections()
+            # And a question no longer asked (the contradiction question)
+            # stops waiting, so it never holds a memory's one place in line.
+            self._store.purge_retired_reflections()
             self._enqueue_lesson_reflections(stats.get("softening") or {})
             self._enqueue_impact_reflections(limit=2)
             # Judgement the agent alone can do, proposed rarely: whether a
-            # recurring theme is a belief, and whether a surprising capture
-            # contradicts what was already held. The packet's ≤2 cap and the
-            # per-cycle limit of 1 each keep these from ever becoming a chore.
+            # belief it holds still holds, and whether an idea it keeps
+            # returning to is one. The packet's ≤2 cap and one question per
+            # cycle each keep these from ever becoming a chore.
             self._enqueue_belief_reflections(limit=1)
             try:
                 self._enqueue_returning_idea()
@@ -5995,7 +5881,6 @@ class MnemosRuntime:
                     "No returning idea was noticed: %s: %s", type(exc).__name__, exc,
                 )
                 self._set_meta("ideas_noticed_at", datetime.now(timezone.utc).isoformat())
-            self._enqueue_contradiction_reflections(limit=1)
         except Exception:
             if self._host_mutation_active:
                 raise

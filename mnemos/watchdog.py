@@ -33,7 +33,7 @@ from .cue import JUDGE_CALLS_KEPT, JUDGE_CALLS_KEY, judged_calls, offered_summar
 from .dream_journal import compose_dream_narrative, latest_dream_entry
 from .jev import switched_on as judge_switched_on
 from .store.embedding_index import NETWORK_TIMEOUT, text_hash
-from .store.sqlite_store import AUTHORS_LABELED_KEY, EngramStore
+from .store.sqlite_store import AUTHORS_LABELED_KEY, RETIRED_REFLECTION_KINDS, EngramStore
 
 # How long something may sit still before it is flagged.
 STALL = timedelta(days=1)
@@ -220,14 +220,20 @@ def continuity_moments(
 
 
 def _questions(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -> dict:
-    """Questions shown as often as they ever will be, still unanswered."""
+    """Questions shown as often as they ever will be, still unanswered.
+
+    A question no longer asked (``RETIRED_REFLECTION_KINDS``) that still waits
+    is left out: maintenance clears it, and nothing asks the agent to answer
+    it. Answered, it counts like any other."""
     shown_max = EngramStore.MAX_SURFACINGS
-    rows = _rows(store._get_conn(), """
+    retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
+    rows = _rows(store._get_conn(), f"""
         SELECT target_id, kind, prompt, surfaced_count, created_at, expires_at, answered_at
         FROM reflection_queue
         WHERE agent_id = ? AND person_id = ? AND project_scope = ?
+          AND (answered_at IS NOT NULL OR kind NOT IN ({retired}))
         ORDER BY created_at ASC
-    """, _scope_tuple(scope))
+    """, (*_scope_tuple(scope), *RETIRED_REFLECTION_KINDS))
     total = len(rows)
     answered = sum(1 for row in rows if row["answered_at"])
     ever = [
@@ -266,10 +272,10 @@ def _questions(store: EngramStore, scope: dict[str, str], now: datetime, index: 
 def _answer_call(rows: Sequence[Any], target: str) -> str:
     """The call that answers the question asked about ``target``, as the
     briefing shows it. A question past its showings can still be answered by
-    its id, and mnemos_reflect answers the oldest open one about it. A belief,
-    reaffirmation or contradiction question is settled only by a verdict:
-    answered without one, its words are kept and it stays open, and so would
-    the flag. So those get the verdict-bearing call (``verdict_call_lines``)."""
+    its id, and mnemos_reflect answers the oldest open one about it. A belief
+    or reaffirmation question is settled only by a verdict: answered without
+    one, its words are kept and it stays open, and so would the flag. So
+    those get the verdict-bearing call (``verdict_call_lines``)."""
     from .simple_runtime import verdict_call_lines  # the runtime imports this module
 
     ask = next(row for row in rows if row["target_id"] == target and not row["answered_at"])

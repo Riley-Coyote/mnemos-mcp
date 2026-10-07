@@ -88,13 +88,14 @@ export function tempWord(k, h) {
 export const KIND = { mine: 'Its own hour', ours: 'Our hour' };
 export const KIND_LONG = { mine: 'Its own hour', ours: 'Our hour, for the day’s work' };
 export const ASK = {
-  contradiction: ['A contradiction?', 'Two memories that may disagree.'],
   lesson: ['What did it teach?', 'Memories fading, asked what they taught before they go.'],
   impact: ['What did it change?', 'Memories kept without saying what they changed.'],
   belief: ['A belief?', 'Asked from how often a word recurs. Kept out of its hours until they are grounded in meaning.'],
   reaffirm: ['Still true?', 'Beliefs it holds, asked again each month.'],
+  // no longer asked; named only where an answered one stays in the history
+  contradiction: ['A contradiction?', 'Two memories that may disagree. No longer asked.'],
 };
-export const ASK_ORDER = { contradiction: 0, lesson: 1, impact: 2, belief: 3, reaffirm: 4 };
+export const ASK_ORDER = { lesson: 0, impact: 1, belief: 2, reaffirm: 3 };
 export const RELATION = { co_activated: 'came back together', distilled_into: 'a lesson distilled from it', supports: 'supports it', contradicts: 'may contradict it' };
 
 /* what an hour did, in a sentence, from its own record */

@@ -55,6 +55,7 @@ from urllib.parse import quote
 
 from ..authorship import display_name
 from ..simple_scope import MnemosScope, resolve_scope
+from ..store.sqlite_store import RETIRED_REFLECTION_KINDS
 
 logger = logging.getLogger(__name__)
 
@@ -216,8 +217,10 @@ class _Reading:
         asked: set[str] = set()
         if self.has("reflection_queue"):
             q_clause, q_scope = self.scoped("reflection_queue")
+            retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
             asked = {r[0] for r in self.c.execute(
-                f"SELECT target_id FROM reflection_queue WHERE {q_clause} AND answered_at IS NULL", q_scope)}
+                f"SELECT target_id FROM reflection_queue WHERE {q_clause} AND answered_at IS NULL "
+                f"AND kind NOT IN ({retired})", (*q_scope, *RETIRED_REFLECTION_KINDS))}
         recalls: dict[str, int] = {}
         if self.has("session_reinforcements"):
             for (engram_id,) in self.c.execute("SELECT engram_id FROM session_reinforcements"):
@@ -263,12 +266,18 @@ class _Reading:
         return out, digest.hexdigest()[:12]
 
     def questions(self) -> list[dict]:
+        """Every question its memory asked it, newest first. One of a kind no
+        longer asked (the contradiction question) is history once answered;
+        still waiting, it is left out, as the wake leaves it out."""
         if not self.has("reflection_queue"):
             return []
         clause, scope = self.scoped("reflection_queue")
+        retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
         return [dict(r) for r in self.c.execute(
             "SELECT id, kind, prompt, excerpt, surfaced_count, created_at, answered_at, answer, target_id "
-            f"FROM reflection_queue WHERE {clause} ORDER BY created_at DESC", scope)]
+            f"FROM reflection_queue WHERE {clause} "
+            f"AND (answered_at IS NOT NULL OR kind NOT IN ({retired})) ORDER BY created_at DESC",
+            (*scope, *RETIRED_REFLECTION_KINDS))]
 
     def beliefs(self) -> list[dict]:
         if not self.has("beliefs"):

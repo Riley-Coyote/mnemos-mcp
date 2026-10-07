@@ -1,10 +1,10 @@
-"""The agent forms and judges its own beliefs and contradictions, keyless.
+"""The agent forms and judges its own beliefs, keyless.
 
 Two reflection kinds were legal in the schema but never produced or applied.
-Wiring them completes the inversion: a keyless install now does the last two
-judgment tasks — belief formation and contradiction detection — through the
-agent's own turns, no provider. The server only ever *proposes*; the agent's
-answer is what becomes a belief or a contradiction edge.
+Wiring them completed the inversion: a keyless install does belief formation
+through the agent's own turns, no provider. The server only ever *proposes*;
+the agent's answer is what becomes a belief. (The other kind, the
+contradiction question, is retired: test_contradiction_question_retired.py.)
 """
 
 from __future__ import annotations
@@ -115,68 +115,6 @@ class TestBeliefReaffirmation:
         out = rt.reflect(item["target_id"], "No, not any more.", verdict="retire")
         assert "Retired" in out
         assert rt._store.get_beliefs("t", active_only=True) == []
-
-
-class TestContradiction:
-    def _surprising_pair(self, rt):
-        """A capture with a surprising sibling, so a candidate can surface."""
-        rt._ensure_init()
-        rt.capture(content="Riley always ships through pull requests, never to main")
-        # A directly conflicting later capture; force a surprise signal so the
-        # enqueuer offers it (surprise detection is store-state dependent).
-        eng = rt._encoder.encode(
-            content="Riley now pushes small fixes straight to main without a PR",
-            agent_id="t",
-        )
-        eng.encoding_context.surprise_level = 0.7
-        rt._store.save_engram(eng)
-        return eng
-
-    def test_a_surprising_capture_surfaces_a_contradiction_candidate(self, db):
-        rt = _runtime(db)
-        self._surprising_pair(rt)
-        rt.maintain()
-        cand = _pending(rt, "contradiction")
-        assert cand, "no contradiction candidate surfaced for a surprising conflicting capture"
-        assert re.search(r"\[ref:engram_", cand[0]["prompt"])
-
-    def test_contradicts_writes_a_contradicts_edge_and_weakens_nothing(self, db):
-        rt = _runtime(db)
-        eng = self._surprising_pair(rt)
-        rt.maintain()
-        item = _pending(rt, "contradiction")[0]
-        other_id = re.search(r"\[ref:(engram_[A-Za-z0-9]+)\]", item["prompt"]).group(1)
-        before = {i: rt._store.get_engram(i).strength for i in (other_id, item["target_id"])}
-
-        out = rt.reflect(item["target_id"], "yes, he changed his workflow", verdict="contradicts")
-        assert "Contradiction recorded" in out, out
-
-        edges = rt._store.get_connections(item["target_id"])
-        assert any(
-            c.target_id == other_id
-            and str(getattr(c.relation, "value", c.relation)) == "contradicts"
-            and c.formed_by == "agent_reflection"
-            for c in edges
-        ), "no agent-authored CONTRADICTS edge was written"
-        # The verdict says the two conflict, not which one is wrong.
-        assert {i: rt._store.get_engram(i).strength for i in before} == before
-
-    def test_compatible_records_no_conflict(self, db):
-        rt = _runtime(db)
-        self._surprising_pair(rt)
-        rt.maintain()
-        item = _pending(rt, "contradiction")[0]
-        other_id = re.search(r"\[ref:(engram_[A-Za-z0-9]+)\]", item["prompt"]).group(1)
-        out = rt.reflect(
-            item["target_id"], "no, those are about different things", verdict="compatible",
-        )
-        assert "not a contradiction" in out.lower()
-        edges = rt._store.get_connections(item["target_id"])
-        assert not any(
-            c.target_id == other_id
-            and str(getattr(c.relation, "value", c.relation)) == "contradicts"
-            for c in edges
-        )
 
 
 class TestRestraintHolds:

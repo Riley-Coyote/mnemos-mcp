@@ -568,10 +568,14 @@ keyless store:
 | 5 · identity from the graph | identity rows | **1** |
 
 The two tasks that used to require a provider — forming beliefs and judging
-contradictions — now run through the agent's own turns. On the same keyless run: one
+contradictions — ran through the agent's own turns. On the same keyless run: one
 agent-authored belief formed and standing, one agent-typed `contradicts` edge, and a
-wrong belief successfully retired. There is nothing a provider is *required* for. A
-configured model only accelerates the work when no agent turn is available.
+wrong belief successfully retired. Beliefs still work this way. The contradiction
+question has since been retired: without a model, it paired a surprising memory with
+whichever memory shared the most words with it, so the pairs were chance, and on a
+real store every answer was "not related". A memory that turns out wrong is fixed with
+`mnemos_correct`. There is nothing a provider is *required* for. A configured model
+only accelerates the work when no agent turn is available.
 
 **350 tests**, on Python 3.10 through 3.13.
 

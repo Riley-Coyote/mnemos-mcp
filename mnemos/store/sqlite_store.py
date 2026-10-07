@@ -326,11 +326,21 @@ _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
 # belief the agent holds is still true; before it, a reaffirmation was filed as
 # 'belief' and the unique index below, which counts answered asks, blocked it
 # for good behind the answered ask that formed the belief.
-REFLECTION_KINDS = ("impact", "lesson", "belief", "contradiction", "reaffirm")
+REFLECTION_KINDS = ("impact", "lesson", "belief", "reaffirm")
+
+# What the queue once asked and never asks again. A store keeps the ones it
+# holds: answered, they are the agent's words and stay as history; waiting,
+# they are never shown, and maintenance clears them
+# (``purge_retired_reflections``). 'contradiction' asked whether a memory that
+# surprised the agent contradicted the memory sharing the most words with it.
+# Surprise without a model means nothing close is held, so the pair was a
+# coincidence of common words: on a real store every answer was "not related".
+RETIRED_REFLECTION_KINDS = ("contradiction",)
 
 # The reflection queue's table, kept apart from the schema script so that a
 # queue from before v11 can be rebuilt from it: SQLite cannot widen a CHECK in
-# place (see EngramStore._allow_reaffirm_asks). Must match REFLECTION_KINDS.
+# place (see EngramStore._allow_reaffirm_asks). Must allow REFLECTION_KINDS and
+# RETIRED_REFLECTION_KINDS: a store holds the questions it was once asked.
 _REFLECTION_QUEUE_TABLE = """CREATE TABLE IF NOT EXISTS reflection_queue (
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL DEFAULT 'default',
@@ -4503,6 +4513,8 @@ class EngramStore:
         quotable, so ``pending_reflections`` resolves the text live and a
         forgotten memory has no second copy here to leak from.
         """
+        if kind in RETIRED_REFLECTION_KINDS:
+            raise ValueError(f"Reflection kind {kind!r} is retired and is never asked")
         if kind not in REFLECTION_KINDS:
             raise ValueError(f"Unsupported reflection kind: {kind}")
 
@@ -4558,10 +4570,12 @@ class EngramStore:
 
         model_clause = "AND (q.for_model = '' OR q.for_model = ?)" if reader_model else "AND q.for_model = ''"
         model_params = (model_line(reader_model),) if reader_model else ()
+        retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
         conn = self._get_conn()
         now = datetime.now(timezone.utc).isoformat()
         # The word questions older code made are noise (see _WORD_QUESTION): never
         # shown, and never standing in the way of a question that means something.
+        # Nor is a question no longer asked, before maintenance clears it.
         rows = conn.execute(
             f"""
             SELECT q.*, e.content AS live_content
@@ -4573,11 +4587,13 @@ class EngramStore:
               AND (q.expires_at IS NULL OR q.expires_at > ?)
               AND e.state != 'archived'
               AND q.prompt NOT LIKE 'You keep returning to "%'
+              AND q.kind NOT IN ({retired})
               {model_clause}
             ORDER BY q.surfaced_count ASC, q.created_at ASC
             LIMIT ?
             """,
-            (agent_id, person_id, project_scope, self.MAX_SURFACINGS, now, *model_params, limit),
+            (agent_id, person_id, project_scope, self.MAX_SURFACINGS, now,
+             *RETIRED_REFLECTION_KINDS, *model_params, limit),
         ).fetchall()
 
         items = []
@@ -4608,6 +4624,34 @@ class EngramStore:
         )
         self._commit()
         return cur.rowcount or 0
+
+    def purge_retired_reflections(self) -> int:
+        """Stop the questions no longer asked (``RETIRED_REFLECTION_KINDS``)
+        from waiting.
+
+        A waiting one is removed. One the agent already wrote on without a
+        verdict holds the agent's words (``reflect`` kept them on the question
+        and left it open), so it is closed with them instead, never deleted.
+        Answered ones are history, and are left exactly as they are.
+
+        Returns the number of questions that stopped waiting.
+        """
+        kinds = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
+        conn = self._get_conn()
+        closed = conn.execute(
+            f"""
+            UPDATE reflection_queue SET answered_at = ?
+            WHERE answered_at IS NULL AND kind IN ({kinds})
+              AND trim(COALESCE(answer, '')) != ''
+            """,
+            (datetime.now(timezone.utc).isoformat(), *RETIRED_REFLECTION_KINDS),
+        ).rowcount or 0
+        removed = conn.execute(
+            f"DELETE FROM reflection_queue WHERE answered_at IS NULL AND kind IN ({kinds})",
+            RETIRED_REFLECTION_KINDS,
+        ).rowcount or 0
+        self._commit()
+        return closed + removed
 
     def mark_reflections_surfaced(self, ids: list[str]) -> None:
         """Record that these were shown, so an ignored item eventually stops."""
@@ -4669,16 +4713,21 @@ class EngramStore:
     ) -> dict[str, Any] | None:
         """The ask ``answer_reflection`` would answer about ``target_id``.
 
+        The oldest waiting one, and a question no longer asked only when
+        nothing else waits on the memory: an answer to the question the agent
+        was shown never goes to one it wasn't.
+
         Reads only: the ask stays pending and its showings are unchanged.
         """
+        retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
         row = self._get_conn().execute(
-            """
+            f"""
             SELECT * FROM reflection_queue
             WHERE agent_id = ? AND person_id = ? AND project_scope = ?
               AND target_id = ? AND answered_at IS NULL
-            ORDER BY created_at ASC LIMIT 1
+            ORDER BY kind IN ({retired}) ASC, created_at ASC LIMIT 1
             """,
-            (agent_id, person_id, project_scope, target_id),
+            (agent_id, person_id, project_scope, target_id, *RETIRED_REFLECTION_KINDS),
         ).fetchone()
         return dict(row) if row is not None else None
 
