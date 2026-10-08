@@ -29,7 +29,17 @@ from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from .cue import JUDGE_CALLS_KEPT, JUDGE_CALLS_KEY, judged_calls, offered_summary, scope_key
+from .cue import (
+    BUSY,
+    JUDGE_CALLS_KEPT,
+    JUDGE_CALLS_KEY,
+    NOT_NAMED,
+    SOCKET_TOO_LONG,
+    TIMEOUT,
+    judged_calls,
+    offered_summary,
+    scope_key,
+)
 from .dream_journal import compose_dream_narrative, latest_dream_entry
 from .jev import switched_on as judge_switched_on
 from .store.embedding_index import NETWORK_TIMEOUT, text_hash
@@ -674,11 +684,55 @@ def _notes(store: EngramStore, scope: dict[str, str], now: datetime, index: Any)
     return {"seen": seen, **counts}
 
 
+# What fixes each kind of failure the cue counts (WP-E2), said as the one
+# thing the person can do. A kind not named here (an error) wants a restart.
+_CUE_FIXES = {
+    TIMEOUT: "nothing to fix, it passes when the machine and the session's Mnemos server are less busy",
+    BUSY: "nothing to fix, another process held the store and it passes",
+    SOCKET_TOO_LONG: "a shorter HOME fixes it",
+    NOT_NAMED: "nothing to fix, an older hook counted these without naming them",
+}
+_CUE_RESTART = "a restart of the session fixes it (it starts the session's Mnemos server again)"
+# The judge's own failures, which its own check watches and flags by its own
+# rule (``_cue_judge``: most of Jev's last calls): not flagged twice.
+_JUDGES_OWN = ("judge timeout", "judge error")
+# The cue is flagged when the messages it could not answer are at least this
+# share of the week's messages, or for any one of a kind that something
+# fixes: an error, no answerer to judge, or a socket path too long to open.
+# Timeouts and busy stores under the share pass, and stay counted in its line.
+CUE_FLAG_SHARE = 0.05
+
+
+def _always_flagged(kind: str) -> bool:
+    return kind.startswith("error (") or kind in ("no answerer judged", SOCKET_TOO_LONG)
+
+
+def _cue_fix(kind: str) -> str:
+    if kind in _CUE_FIXES:
+        return _CUE_FIXES[kind]
+    if kind.endswith(TIMEOUT):  # the judge's own ("judge timeout")
+        return _CUE_FIXES[TIMEOUT]
+    return _CUE_RESTART
+
+
+def _most_first(counts: Mapping[str, int]) -> list[tuple[str, int]]:
+    """Counts by name, the largest first; a named kind before ``not named``."""
+    return sorted(counts.items(), key=lambda item: (-item[1], item[0] == NOT_NAMED, item[0]))
+
+
 def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -> dict:
     """What the prompt hook's cue did with the messages sent in this scope over
     the last week (R16), from its per-session files, which sit outside the
     store: offers, silences, how it answered (by meaning or by words, or by
-    Jev), and failures (``cue.offered_summary``). Reads those files only."""
+    Jev) and why by words, and failures by kind (``cue.offered_summary``).
+    Reads those files only.
+
+    Flagged when the messages it could not answer are at least
+    ``CUE_FLAG_SHARE`` of the week's, or for any error, any message with no
+    answerer to judge it, or any it answered by words because no server can
+    open its socket under this HOME: the flag says which of those kinds
+    dominates and the one thing that fixes it (WP-E2). Jev's own failures are
+    left to the judge's check."""
     summary = offered_summary(days=WINDOW.days, key=scope_key(str(store.db_path), **scope))
     messages = summary["messages"]
     if not messages:
@@ -687,15 +741,48 @@ def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -
         ways = ", ".join(
             f"{count} by {via}" for via, count in sorted(summary["answered_by"].items(), key=lambda i: -i[1])
         )
+        kinds = ", ".join(f"{count} {kind}" for kind, count in _most_first(summary["failures_by_kind"]))
         seen = (
             f"{_count(messages, 'message')} in {_count(summary['sessions'], 'session')} over the last "
             f"{WINDOW.days} days: {_count(summary['offers'], 'offer')} "
             f"({_count(summary['offered'], 'line')}), {_count(summary['silences'], 'silence')}, "
-            f"{_count(summary['failures'], 'failure')}" + (f"; answered {ways}" if ways else "")
+            f"{_count(summary['failures'], 'failure')}" + (f" ({kinds})" if kinds else "")
+            + (f"; answered {ways}" if ways else "")
         )
+        if summary["words_because"]:
+            seen += "; by words because: " + ", ".join(
+                f"{count} {reason}" for reason, count in _most_first(summary["words_because"])
+            )
         if summary["last_failure"]:
             seen += f"; the last failure: {summary['last_failure']}"
-    return {"seen": seen, **summary}
+    result: dict[str, Any] = {"seen": seen, **summary}
+    failed = {kind: n for kind, n in summary["failures_by_kind"].items() if kind not in _JUDGES_OWN}
+    failures = sum(failed.values())
+    share_met = bool(messages) and failures >= CUE_FLAG_SHARE * messages
+    flagged = dict(failed) if share_met else {k: n for k, n in failed.items() if _always_flagged(k)}
+    by_socket = summary["words_because"].get(SOCKET_TOO_LONG, 0)
+    if by_socket:
+        flagged[SOCKET_TOO_LONG] = by_socket
+    if flagged:
+        kind, count = _most_first(flagged)[0]
+        if kind == SOCKET_TOO_LONG:
+            flag = (
+                f"The cue answered {by_socket} of {_count(messages, 'message')} here in the last "
+                f"{WINDOW.days} days by words alone, because the socket path under this HOME is too long "
+                f"for the session's Mnemos server to open: {_cue_fix(kind)}."
+            )
+        elif share_met:
+            flag = (
+                f"The cue could not answer {failures} of {_count(messages, 'message')} here in the last "
+                f"{WINDOW.days} days, most often {kind} ({count} of {failures}): {_cue_fix(kind)}."
+            )
+        else:
+            flag = (
+                f"The cue could not answer {failures} of {_count(messages, 'message')} here in the last "
+                f"{WINDOW.days} days; {count} {_was(count)} {kind}: {_cue_fix(kind)}."
+            )
+        result.update({"stalled": True, "flag": flag, "command": "mnemos doctor", "dominant": kind})
+    return result
 
 
 def _network_waits(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -> dict:

@@ -573,7 +573,11 @@ def test_the_watchdog_reports_the_cues_offers_silences_and_failures(tmp_path, me
     assert set(check["by_via"]) == {"words", "meaning"} and check["offered"] >= 2, check
     assert check["last_failure"] == "error (RuntimeError)", check
     assert "2 offers" in check["seen"] and "1 silence" in check["seen"] and "2 failures" in check["seen"]
-    assert check["stalled"] is False
+    # Messages it could not answer are flagged, by the kind that dominates and
+    # what fixes it (WP-E2): here a tie, named in order.
+    assert check["failures_by_kind"] == {"no answerer judged": 1, "error (RuntimeError)": 1}, check
+    assert check["stalled"] is True and "2 of 5 messages" in check["flag"], check
+    assert "most often error (RuntimeError) (1 of 2): a restart of the session" in check["flag"], check
     assert sorted((path.name, path.stat().st_mtime_ns) for path in run.iterdir()) == files_before, (
         "the watchdog wrote to the cue's files"
     )

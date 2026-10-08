@@ -33,9 +33,15 @@ words, with its date and its id. Or nothing, which is the usual answer.
   under ``~/.mnemos/run`` (``SeenFile``). Anything already shown is skipped.
 - **Shown is not used.** An offered line is counted as offered, in that file,
   and never reinforces anything. Recalling it by id afterwards is a use. The
-  file also counts the messages the cue answered by meaning or by words, those
-  it answered with nothing (silences), and those it could not answer
-  (failures); the watchdog reads them (``offered_summary``).
+  file also counts the messages the cue answered by meaning or by words (and
+  for each answered by words, why not by meaning: the session's server didn't
+  answer in time, its store was locked, it was loading its model, there was
+  none, it spoke another protocol, or no server can open a socket under a
+  path that long), those it answered with nothing (silences), and those it
+  could not answer (failures), by kind: ``timeout``, ``busy`` or
+  ``error (<Name>)``, with the times of the last ``FAILURE_TIMES_KEPT`` of
+  each. The watchdog reads them (``offered_summary``), and the health card
+  names the kind that dominates and what fixes it.
 - **Fast, with meaning.** The session's own Mnemos server keeps the embedding
   model warm (``CueAnswerer``) and answers on a unix socket named for the
   Claude Code process that spawned it. The hook finds it by ``CLAUDE_PID``,
@@ -44,9 +50,22 @@ words, with its date and its id. Or nothing, which is the usual answer.
   with the old one). With no answerer, a slow one, or one speaking an older
   protocol, the hook answers from words alone. The model loads at the server's
   start where the hook is in use, and otherwise only when a cue first asks.
+- **The person is never slowed** (WP-E2). The words answer starts the moment
+  the store is open, beside the question to the answerer, so when the
+  answerer is slow, busy, loading or absent the words answer is ready as its
+  window closes: a slow server costs a message its meaning, never the
+  person's time. The answerer may take until ``ANSWER_MARGIN`` before the
+  hook's deadline; whichever answer is ready then is shown, meaning if it
+  came. (Waiting the window out and only then starting on words is
+  what ran the hook out of its time on a busy machine: 18 of 109 messages in
+  a week on the maintainer's, counted as timeouts and, where the deadline
+  stopped a query, as ``error (OperationalError)``.)
 - **Read-only.** The cue writes no memory. The per-session files and the
   socket are outside the store; the one row it keeps there, only while the
-  judge is switched on, counts Jev's recent calls (below).
+  judge is switched on, counts Jev's recent calls (below). Its reads of the
+  memories, the hook's and the answerer's, wait at most ``READ_BUSY_SECONDS``
+  on a locked store, are tried once more, and are then counted as ``busy``; a
+  query the hook's deadline stops is a ``timeout``.
 - **Jev decides, when switched on** (WP-R16b, off by default; ``mnemos.jev``).
   The hook asks the answerer to judge: its candidates before the cap, at most
   ``jev.CANDIDATES`` lines that cleared the floors, go to Jev with the message
@@ -73,6 +92,7 @@ import math
 import os
 import re
 import socket
+import sqlite3
 import stat
 import subprocess
 import sys
@@ -81,7 +101,7 @@ import time
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from . import jev
 
@@ -130,13 +150,53 @@ CUE_MIN_WORDS = 4
 # The hook's hard cap, end to end, and its parts. The process takes about a
 # tenth of a second to start and import before the hook's own clock starts;
 # the process ends HOOK_BUDGET after that, and the work aims to finish
-# HOOK_MARGIN sooner. The answerer gets CONNECT_SECONDS to be found and
-# ANSWER_SECONDS to answer, which leaves room to answer from words.
+# HOOK_MARGIN sooner. The answerer gets CONNECT_SECONDS to be found, and then
+# until ANSWER_MARGIN before that deadline to answer: the words answer runs
+# beside it from the start, so a longer wait costs the person nothing when the
+# answerer answers, and gives a slow one its chance (WP-E2). The margin is what
+# the hook needs after the wait: on a copy of the maintainer's store, under a
+# load of 15 on 14 cores, a hook woke at most 12 ms after its window closed and
+# then recorded and printed its answer in at most 43 ms; the hard stop is
+# HOOK_MARGIN past the deadline. ANSWER_SECONDS is how long a caller with no
+# deadline of its own (a direct ``ask_answerer``) waits.
 HOOK_SECONDS = 0.8
 HOOK_BUDGET = 0.7
 HOOK_MARGIN = 0.05
 CONNECT_SECONDS = 0.05
+ANSWER_MARGIN = 0.1
 ANSWER_SECONDS = 0.35
+
+# How long each of the cue's own reads of the memories (the hook's, the
+# answerer's) waits on a locked store; a read that meets a lock is tried once
+# more, then counted as busy (WP-E2). The answerer's meaning index keeps its
+# own connection's wait: recall reads past that connection's failures quietly,
+# so a short wait there would thin an answer without a word. In WAL mode
+# another session's writing never locks a reader: on a copy of the
+# maintainer's store, 600 of the hook's reads beside captures, maintenance,
+# opening the store, the backup, checkpoints and a writer dying
+# mid-transaction met none. A reader meets one in a race with the store's last
+# connection closing, and one more try cleared every one seen.
+READ_BUSY_SECONDS = 0.1
+# The longest unix socket path the answerer binds (sun_path holds 104 bytes
+# on macOS and 108 on Linux, the terminator included).
+SOCKET_PATH_MAX = 100
+
+# How a message the cue could not answer is counted (``SeenFile``): it ran out
+# of time (a query its deadline stopped included), the store stayed locked
+# through a second try, or something else broke: ``error (<Name>)``. Failures
+# an older hook counted without a kind are NOT_NAMED (``offered_summary``).
+TIMEOUT = "timeout"
+BUSY = "busy"
+NOT_NAMED = "not named"
+# Why a message was answered by words when the session's server could have
+# answered by meaning: besides TIMEOUT (it didn't answer in its window), BUSY
+# (its store stayed locked) and ``error (<Name>)`` (it failed), there was no
+# answerer for this session, it was still loading its model, it spoke another
+# protocol, or the socket path under this HOME is too long for any to open.
+NO_ANSWERER = "no answerer"
+WARMING = "warming"
+ANOTHER_PROTOCOL = "another protocol"
+SOCKET_TOO_LONG = "socket path too long"
 
 # Jev's score a line needs to show, with the switch on (WP-R16b). On the lab's
 # 20 development prompts the cue's candidates before its cap are 62 lines, 26
@@ -162,6 +222,9 @@ PAYLOAD_BYTES = 1_048_576
 RUN_DAYS = 7
 # The offers one session file keeps, newest last.
 OFFERS_KEPT = 200
+# The times of the failures one session file keeps, per kind, newest last: for
+# lining failures up with what else ran then (the scheduled jobs, say).
+FAILURE_TIMES_KEPT = 20
 
 # The one row the answerers keep in the store while the judge is switched on
 # (``meta``): the outcomes of Jev's last this-many calls, from every session,
@@ -201,6 +264,72 @@ _SAFE = re.compile(r"[^0-9A-Za-z-]")
 
 class HookTimeout(Exception):
     """The hook ran out of its time. It prints nothing."""
+
+
+class StoreBusy(Exception):
+    """The store stayed locked through a read's second try. The hook prints
+    nothing, and counts the message as busy."""
+
+
+_T = TypeVar("_T")
+
+
+def _sqlite_code(exc: BaseException) -> int | None:
+    """SQLite's primary result code for ``exc``, where Python gives it (3.11+)."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    return code & 0xFF if isinstance(code, int) else None
+
+
+def is_busy(exc: BaseException) -> bool:
+    """Whether ``exc`` is SQLite saying the store is locked."""
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    code = _sqlite_code(exc)
+    if code is not None:
+        return code in (5, 6)  # SQLITE_BUSY, SQLITE_LOCKED
+    return "locked" in str(exc)
+
+
+def is_interrupt(exc: BaseException) -> bool:
+    """Whether ``exc`` is SQLite saying a query was stopped: in the hook, by
+    its deadline."""
+    if not isinstance(exc, sqlite3.OperationalError):
+        return False
+    code = _sqlite_code(exc)
+    if code is not None:
+        return code == 9  # SQLITE_INTERRUPT
+    return str(exc) == "interrupted"
+
+
+def failure_kind(exc: BaseException) -> str:
+    """How a message the cue could not answer because of ``exc`` is counted:
+    ``timeout`` (the hook ran out of time, or its deadline stopped a query),
+    ``busy`` (the store stayed locked) or ``error (<Name>)``."""
+    if isinstance(exc, HookTimeout) or is_interrupt(exc):
+        return TIMEOUT
+    if isinstance(exc, StoreBusy) or is_busy(exc):
+        return BUSY
+    return f"error ({type(exc).__name__})"
+
+
+def read_once_more(read: Callable[[], _T], *, deadline: float | None = None) -> _T:
+    """``read()``; when it meets a locked store, once more, unless ``deadline``
+    (a ``time.monotonic()`` value) has passed. A lock the second time raises
+    ``StoreBusy``."""
+    try:
+        return read()
+    except sqlite3.OperationalError as exc:
+        if not is_busy(exc):
+            raise
+        first = exc
+    if deadline is not None and time.monotonic() >= deadline:
+        raise StoreBusy() from first
+    try:
+        return read()
+    except sqlite3.OperationalError as exc:
+        if is_busy(exc):
+            raise StoreBusy() from exc
+        raise
 
 
 def arm_hard_stop(seconds: float) -> threading.Event:
@@ -259,9 +388,11 @@ class SeenFile:
     """What one session has been shown, for one scope: the ids and words the
     briefing showed and the cue offered, and the cue's offers counted; and
     how the cue answered each message it looked at (``answers``, by meaning,
-    by words or by Jev), how many of them it answered with nothing
-    (``silences``) and how many it could not answer (``failures``, the last
-    one's reason kept).
+    by words or by Jev), why each it answered by words wasn't by meaning
+    (``words_because``), how many of them it answered with nothing
+    (``silences``) and how many it could not answer (``failures``, counted by
+    kind in ``failure_kinds``, the last one's kept, and when the last
+    ``FAILURE_TIMES_KEPT`` of each kind happened in ``failure_times``).
 
     One small JSON file per session under ``~/.mnemos/run`` (0600, the folder
     0700), replaced whole on every write. The session is Claude Code's session
@@ -277,7 +408,8 @@ class SeenFile:
 
     def read(self) -> dict[str, Any]:
         empty = {"shown": [], "texts": [], "offered": 0, "offers": [], "answers": {},
-                 "silences": 0, "failures": 0, "last_failure": None}
+                 "silences": 0, "failures": 0, "last_failure": None,
+                 "failure_kinds": {}, "failure_times": {}, "words_because": {}}
         if not self.session:
             return empty
         try:
@@ -297,6 +429,9 @@ class SeenFile:
             "silences": _count_of(data.get("silences")),
             "failures": _count_of(data.get("failures")),
             "last_failure": last if isinstance(last, str) else None,
+            "failure_kinds": _counts_of(data.get("failure_kinds")),
+            "failure_times": _times_of(data.get("failure_times")),
+            "words_because": _counts_of(data.get("words_because")),
         }
 
     def record(
@@ -307,13 +442,16 @@ class SeenFile:
         offer: Mapping[str, Any] | None = None,
         answered: str | None = None,
         failure: str | None = None,
+        because: str | None = None,
     ) -> None:
         """Add what was just shown. An offer (the cue's) is also counted.
 
         ``answered`` is how the cue answered a message it looked at (its
-        ``via``): with an offer, or else with nothing, a silence. ``failure``
-        says why the cue could not answer one (it ran out of time, broke, or
-        its judge failed); a failure is not a silence."""
+        ``via``): with an offer, or else with nothing, a silence; ``because``
+        says why a message answered by words wasn't answered by meaning.
+        ``failure`` is the kind of failure that kept the cue from answering one
+        (``timeout``, ``busy``, ``error (<Name>)``, or its judge's); a failure
+        is not a silence."""
         if not self.session:
             return
         folder = ensure_run_dir()
@@ -324,6 +462,8 @@ class SeenFile:
         offered = data["offered"]
         answers = dict(data["answers"])
         silences, failures, last_failure = data["silences"], data["failures"], data["last_failure"]
+        kinds, words_because = dict(data["failure_kinds"]), dict(data["words_because"])
+        times = dict(data["failure_times"])
         if offer is not None:
             offers = [*offers, dict(offer)][-OFFERS_KEPT:]
             offered += len(offer.get("ids") or [])
@@ -331,10 +471,16 @@ class SeenFile:
         if failure:
             failures += 1
             last_failure = str(failure)[:200]
+            kinds[last_failure] = kinds.get(last_failure, 0) + 1
+            when = datetime.now(timezone.utc).isoformat()
+            times[last_failure] = [*times.get(last_failure, []), when][-FAILURE_TIMES_KEPT:]
         elif answered:
             answers[answered] = answers.get(answered, 0) + 1
             if offer is None:
                 silences += 1
+            if because:
+                reason = str(because)[:200]
+                words_because[reason] = words_because.get(reason, 0) + 1
         _write_private(self.path, {
             "v": CUE_PROTOCOL,
             "session": self.session,
@@ -347,6 +493,9 @@ class SeenFile:
             "silences": silences,
             "failures": failures,
             "last_failure": last_failure,
+            "failure_kinds": kinds,
+            "failure_times": times,
+            "words_because": words_because,
             "updated": datetime.now(timezone.utc).isoformat(),
         })
         sweep(folder)
@@ -355,6 +504,25 @@ class SeenFile:
 def _count_of(value: Any) -> int:
     """A count read from a session file: a whole number, else 0."""
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
+
+
+def _counts_of(value: Any) -> dict[str, int]:
+    """Counts by name read from a session file: those that are counts."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(name): _count_of(n) for name, n in value.items() if _count_of(n)}
+
+
+def _times_of(value: Any) -> dict[str, list[str]]:
+    """Failure times by kind read from a session file: the last
+    ``FAILURE_TIMES_KEPT`` of each that are text."""
+    if not isinstance(value, dict):
+        return {}
+    times = {
+        str(kind): [when for when in whens if isinstance(when, str)][-FAILURE_TIMES_KEPT:]
+        for kind, whens in value.items() if isinstance(whens, list)
+    }
+    return {kind: whens for kind, whens in times.items() if whens}
 
 
 def _write_private(path: Path, data: Mapping[str, Any]) -> None:
@@ -408,12 +576,16 @@ def offered_summary(*, days: float = RUN_DAYS, key: str | None = None) -> dict[s
     messages it brought lines to), ``offered`` (those lines) and
     ``silences`` (the messages it answered with nothing); ``answered_by``,
     those messages by how the cue answered ("meaning", "words" or "jev"), and
-    ``by_via``, the lines offered the same way; and ``failures``, the messages
-    it could not answer, with ``last_failure``, the newest one's reason. A file
-    written before messages were counted gives its offers only."""
+    ``by_via``, the lines offered the same way; ``words_because``, why those
+    answered by words weren't by meaning; and ``failures``, the messages it
+    could not answer, by kind in ``failures_by_kind``, with ``last_failure``,
+    the newest one's. A file written before messages were counted gives its
+    offers only; one written before failures were counted by kind gives its
+    newest under its reason and the rest as ``not named``."""
     summary: dict[str, Any] = {
         "sessions": 0, "messages": 0, "offers": 0, "offered": 0, "silences": 0,
         "failures": 0, "last_failure": None, "answered_by": {}, "by_via": {},
+        "failures_by_kind": {}, "words_because": {},
     }
     cutoff = time.time() - days * 86400
     suffix = f"-{key}.json" if key else ".json"
@@ -454,6 +626,17 @@ def offered_summary(*, days: float = RUN_DAYS, key: str | None = None) -> dict[s
         for offer in offers:
             via = str(offer.get("via") or "")
             summary["by_via"][via] = summary["by_via"].get(via, 0) + len(offer.get("ids") or [])
+        kinds = _counts_of(data.get("failure_kinds"))
+        unnamed = failures - sum(kinds.values())
+        if unnamed > 0 and not kinds and isinstance(data.get("last_failure"), str) and data["last_failure"]:
+            kinds[data["last_failure"]] = 1  # the newest one's reason is known
+            unnamed -= 1
+        if unnamed > 0:
+            kinds[NOT_NAMED] = kinds.get(NOT_NAMED, 0) + unnamed
+        for kind, count in kinds.items():
+            summary["failures_by_kind"][kind] = summary["failures_by_kind"].get(kind, 0) + count
+        for reason, count in _counts_of(data.get("words_because")).items():
+            summary["words_because"][reason] = summary["words_because"].get(reason, 0) + count
         if failures and isinstance(data.get("last_failure"), str) and changed >= newest_failure:
             newest_failure, summary["last_failure"] = changed, data["last_failure"]
     return summary
@@ -569,58 +752,105 @@ def ask_answerer(
     connect_seconds: float = CONNECT_SECONDS,
     answer_seconds: float = ANSWER_SECONDS,
     judge: str = "",
+    why: dict[str, Any] | None = None,
+    until: float | None = None,
 ) -> dict[str, Any] | None:
     """Ask this session's answerer for the cue: its reply, or None when there
     is none, it is slow, it fails, or it speaks another protocol.
 
-    ``judge`` ("jev") asks it to have its candidates judged (WP-R16b), and
-    tells it how long this waits, so the judge's time fits inside it. An
-    answerer that did judge says so in its reply (``judge``)."""
+    It waits ``answer_seconds`` once connected, and never past ``until`` (a
+    ``time.monotonic()`` value) when given, and tells the answerer how long it
+    waits (``wait``). ``judge`` ("jev") asks it to have its candidates judged
+    (WP-R16b), the judge's time fitting inside that wait. An answerer that did
+    judge says so in its reply (``judge``).
+
+    With ``why``, ``why["reason"]`` says why there is no reply (None when
+    there is one): ``socket path too long`` (no answerer can open a socket
+    where this session's would be), ``no answerer``, ``timeout`` (it didn't
+    answer in ``answer_seconds``), ``warming`` (its model is loading),
+    ``busy`` (its store stayed locked), ``another protocol``, or
+    ``error (<Name>)``."""
+    told = why if why is not None else {}
+    told["reason"] = None
     if not hasattr(socket, "AF_UNIX"):
+        told["reason"] = NO_ANSWERER
         return None
     started = time.monotonic()
     connect_by = started + connect_seconds
     sock = None
+    too_long = ran_out = False
     for pid in claude_pids(environ, deadline=connect_by):
         path = answerer_path(pid, key)
+        if len(os.fsencode(str(path))) >= SOCKET_PATH_MAX:
+            too_long = True  # no answerer can open one there (CueAnswerer._bind)
+            continue
         if not path.exists():
             continue
         remaining = connect_by - time.monotonic()
         if remaining <= 0:
+            ran_out = True
             break
         candidate = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         candidate.settimeout(remaining)
         try:
             candidate.connect(str(path))
+        except TimeoutError:
+            candidate.close()
+            ran_out = True
+            continue
         except OSError:
             candidate.close()
             continue
         sock = candidate
         break
     if sock is None:
+        told["reason"] = TIMEOUT if ran_out else SOCKET_TOO_LONG if too_long else NO_ANSWERER
         return None
+    answer_by = time.monotonic() + answer_seconds
+    if until is not None:
+        answer_by = min(answer_by, until)
+    wait = max(0.0, answer_by - time.monotonic())
     try:
+        # An answerer from before the wait was sent with every question reads
+        # it only to judge, and ignores it otherwise.
         request = {"v": CUE_PROTOCOL, "op": "cue", "text": text,
-                   "exclude": list(exclude), "texts": list(texts)}
+                   "exclude": list(exclude), "texts": list(texts), "wait": round(wait, 3)}
         if judge:
-            request.update({"judge": judge, "wait": round(answer_seconds, 3)})
-        answer_by = time.monotonic() + answer_seconds
-        sock.settimeout(answer_seconds)
+            request["judge"] = judge
+        sock.settimeout(max(wait, 0.001))
         sock.sendall((json.dumps(request) + "\n").encode("utf-8"))
         reply = _read_line(sock, answer_by)
-    except OSError:
+    except TimeoutError:
+        told["reason"] = TIMEOUT
+        return None
+    except OSError as exc:
+        told["reason"] = f"error ({type(exc).__name__})"
         return None
     finally:
         sock.close()
     if reply is None:
+        # Nothing whole by the end of its window, or it hung up first.
+        told["reason"] = TIMEOUT if time.monotonic() >= answer_by - 0.01 else "error (no reply)"
         return None
     try:
         data = json.loads(reply)
-    except ValueError:
+    except ValueError as exc:
+        told["reason"] = f"error ({type(exc).__name__})"
         return None
-    if not isinstance(data, dict) or data.get("v") != CUE_PROTOCOL or not data.get("ok"):
+    if not isinstance(data, dict) or data.get("v") != CUE_PROTOCOL:
+        told["reason"] = ANOTHER_PROTOCOL
+        return None
+    if not data.get("ok"):
+        said = str(data.get("why") or "")
+        if said in (WARMING, BUSY):
+            told["reason"] = said
+        elif said == "unknown request":
+            told["reason"] = ANOTHER_PROTOCOL
+        else:
+            told["reason"] = f"error ({said.split(':', 1)[0].strip() or 'no reason'})"
         return None
     if not isinstance(data.get("lines"), list):
+        told["reason"] = ANOTHER_PROTOCOL
         return None
     return data
 
@@ -697,7 +927,9 @@ class CueAnswerer:
     any before the model is ready, are told to answer from words.
 
     Queries run on the answerer's own read-only connections to the store and
-    its index, one at a time, and change nothing. It never takes a live
+    its index, one at a time, and change nothing. A store locked through a
+    second try is answered "busy" at once, never waited on for seconds, and
+    the hook answers by words. It never takes a live
     answerer's socket, replaces a dead one's, and on stop removes the socket
     only while it is still its own. Without meaning to offer (no embedding
     backend, a model that can't load) it stops, and the server goes on as it
@@ -846,8 +1078,12 @@ class CueAnswerer:
         assert self.path is not None
         ensure_run_dir()
         path = str(self.path)
-        if len(os.fsencode(path)) >= 100:
-            log.info("The cue's socket path is too long for this system: %s", path)
+        if len(os.fsencode(path)) >= SOCKET_PATH_MAX:
+            log.warning(
+                "The cue's socket path is too long for this system (%d bytes; it must stay under %d): %s. "
+                "The prompt hook answers from words alone, and says so, until a shorter HOME.",
+                len(os.fsencode(path)), SOCKET_PATH_MAX, path,
+            )
             return False
         if os.path.lexists(path):
             if _answers(path):
@@ -908,15 +1144,22 @@ class CueAnswerer:
         else:
             text = str(request.get("text") or "")
             judged = request.get("judge") == jev.JEV
+            exclude = [i for i in request.get("exclude") or [] if isinstance(i, str)]
+            texts = [t for t in request.get("texts") or [] if isinstance(t, str)]
             try:
-                lines = self._lines(
-                    text,
-                    exclude=[i for i in request.get("exclude") or [] if isinstance(i, str)],
-                    texts=[t for t in request.get("texts") or [] if isinstance(t, str)],
-                    # Judged, the candidates before the cap; else the cap.
-                    limit=jev.CANDIDATES if judged else None,
+                # A locked store is tried once more within the hook's wait,
+                # then answered "busy" (WP-E2).
+                lines = read_once_more(
+                    lambda: self._lines(
+                        text, exclude=exclude, texts=texts,
+                        # Judged, the candidates before the cap; else the cap.
+                        limit=jev.CANDIDATES if judged else None,
+                    ),
+                    deadline=received + _wait(request.get("wait")),
                 )
                 why = None if lines is not None else "no store"
+            except StoreBusy:
+                lines, why = None, BUSY
             except Exception as exc:  # the hook answers from words instead
                 lines, why = None, f"{type(exc).__name__}: {exc}"[:200]
             reply = {"v": CUE_PROTOCOL, "ok": lines is not None, "meaning": True,
@@ -939,9 +1182,15 @@ class CueAnswerer:
                 return None
             from .store.sqlite_store import ReadOnlyEngramStore
 
-            self._store = ReadOnlyEngramStore(self.db_path)
+            store = ReadOnlyEngramStore(self.db_path)
+            # It waits on a lock briefly, as the hook does (WP-E2).
+            store._get_conn().execute(f"PRAGMA busy_timeout = {int(READ_BUSY_SECONDS * 1000)}")
+            self._store = store
         from .simple_runtime import cue_memories
 
+        # A lock shows here, where it is counted, rather than partway through
+        # recall, which reads past some failures quietly.
+        self._store._get_conn().execute("SELECT count(*) FROM sqlite_master").fetchone()
         return cue_memories(
             self._store, self._index, text, exclude=exclude, exclude_texts=texts, limit=limit,
             **self.scope,
@@ -1140,14 +1389,19 @@ def prompt_hook(
 ) -> str:
     """What ``mnemos hook prompt`` prints for one message: the block, or
     ``""``. Records what it offers, and how it answered the message (by
-    meaning, by words or by Jev; with lines or with nothing) or why it could
-    not (it ran out of time, broke, or its judge failed), in the session's
-    file (``SeenFile``). Writes nothing to the store.
+    meaning, by words or by Jev; with lines or with nothing, and for an answer
+    by words why it wasn't by meaning) or why it could not (by kind: it ran out
+    of time, the store stayed locked, it broke, or its judge failed), in the
+    session's file (``SeenFile``). Writes nothing to the store.
 
     ``payload`` is Claude Code's UserPromptSubmit input. A notice Claude Code
     wrote itself (``generated_notice``) gets nothing, and nothing is recorded
     for it: it was never the person's message. ``deadline`` (a
     ``time.monotonic()`` value) bounds the work: past it, nothing is printed.
+    Without the judge, the words answer is worked out beside the question to
+    the session's answerer (``_Words``), so neither waits for the other. A
+    timeout raises ``HookTimeout``, a store locked through a second try
+    ``StoreBusy``.
     """
     from .authorship import clean_session_id
     from .code_version import MAINTENANCE_CODE_VERSION
@@ -1178,17 +1432,25 @@ def prompt_hook(
 
     from .store.sqlite_store import ReadOnlyEngramStore
 
-    # Why the cue could not answer this message, when it could not.
+    # Why the cue could not answer this message, when it could not; and why
+    # it answered by words, when it did.
     failure: str | None = None
+    because: str | None = None
     try:
         store = ReadOnlyEngramStore(db)
+        words: _Words | None = None
         try:
-            # No read may outlast the hook: a locked store waits only until the
-            # deadline, and a query still running then is stopped.
+            # No read may outlast the hook, or wait long on a lock: a locked
+            # store is read once more and then counted as busy, and a query
+            # still running at the deadline (or once meaning has answered, in
+            # the words answer's thread) is stopped.
             conn = store._get_conn()
-            conn.execute(f"PRAGMA busy_timeout = {max(1, int((deadline - time.monotonic()) * 1000))}")
-            conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
-            minimum = store.min_code_version()
+            conn.execute(f"PRAGMA busy_timeout = {int(READ_BUSY_SECONDS * 1000)}")
+            done_reading = threading.Event()
+            conn.set_progress_handler(
+                lambda: int(done_reading.is_set() or time.monotonic() >= deadline), 1000,
+            )
+            minimum = read_once_more(store.min_code_version, deadline=deadline)
             if minimum is not None and minimum > MAINTENANCE_CODE_VERSION:
                 return ""  # a newer Mnemos has opened this store
             _check(deadline)
@@ -1209,34 +1471,53 @@ def prompt_hook(
                 elif reply.get("judged") in ("timeout", "error"):
                     failure = f"judge {reply['judged']}"
             else:
+                from .simple_runtime import cue_memories
+
+                # The words answer starts now, beside the question: when the
+                # answerer is slow, busy, loading or not there, it is ready as
+                # the answerer's window closes, and the person waits for one of
+                # them, never both (WP-E2).
+                words = _Words(
+                    lambda: cue_memories(
+                        store, None, text, exclude=seen["shown"], exclude_texts=seen["texts"],
+                        agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+                    ),
+                    store=store, deadline=deadline, stop=done_reading,
+                )
+                # The answerer may take until ANSWER_MARGIN before the
+                # deadline: whichever answer is ready then is shown, meaning
+                # if it came, else words.
+                asked: dict[str, Any] = {}
                 reply = ask_answerer(
                     key, text, exclude=seen["shown"], texts=seen["texts"], environ=env,
                     connect_seconds=min(CONNECT_SECONDS, max(0.0, room)),
-                    answer_seconds=min(ANSWER_SECONDS, max(0.0, room - CONNECT_SECONDS - 0.15)),
+                    answer_seconds=max(0.0, room), until=deadline - ANSWER_MARGIN,
+                    why=asked,
                 )
                 if reply is not None:
                     lines, via = _valid_lines(reply["lines"]), "meaning"
                 else:
-                    _check(deadline)
-                    from .simple_runtime import cue_memories
-
-                    lines = cue_memories(
-                        store, None, text, exclude=seen["shown"], exclude_texts=seen["texts"],
-                        agent_id=agent_id, person_id=person_id, project_scope=project_scope,
-                    )
-                    via = "words"
+                    lines, via, because = words.wait(), "words", asked.get("reason")
         finally:
-            store.close()
+            if words is None:
+                store.close()
+            else:
+                words.stop()  # the store is its now: it closes it when it ends
         shown = set(seen["shown"])
         known = set(seen["texts"])
         lines = [line for line in lines if line["id"] not in shown and line["key"] not in known][:CUE_LINES]
         _check(deadline)
         block = format_block(lines)
     except HookTimeout:
-        _failed(seen_file, "timeout")
+        _failed(seen_file, TIMEOUT)
         raise
     except Exception as exc:
-        _failed(seen_file, f"error ({type(exc).__name__})")
+        kind = failure_kind(exc)
+        _failed(seen_file, kind)
+        if kind == TIMEOUT:
+            raise HookTimeout() from exc  # its deadline stopped a query
+        if kind == BUSY and not isinstance(exc, StoreBusy):
+            raise StoreBusy() from exc
         raise
     if block:
         judged_scores = {"scores": [line.get("score") for line in lines]} if via == jev.JEV else {}
@@ -1249,21 +1530,69 @@ def prompt_hook(
                 "similarity": [line.get("similarity") for line in lines],
                 "via": via,
                 **judged_scores,
+                **({"because": because} if because else {}),
                 "ms": round((time.perf_counter() - started) * 1000, 1),
             },
             answered=via,
+            because=because,
         )
     else:
         # Nothing to show: a silence, or a failure the cue went quiet on.
-        seen_file.record((), (), answered=via, failure=failure)
+        seen_file.record((), (), answered=via, failure=failure, because=because)
     return block
 
 
-def _failed(seen_file: SeenFile, reason: str) -> None:
-    """Count a message the cue could not answer. Never raises: the hook's own
-    failure is what the caller sees."""
+class _Words:
+    """The words answer (``cue_memories`` without meaning), worked out in a
+    thread of its own from the moment the store is open, while the hook asks
+    the session's answerer (WP-E2). ``read`` runs under ``read_once_more``.
+    From then on the store is this thread's: nothing else reads it, and the
+    thread closes it when it ends. ``stop`` is the event the store's progress
+    handler reads: once it is set, a query that runs on stops."""
+
+    def __init__(self, read: Callable[[], list[dict[str, Any]]], *, store: Any, deadline: float,
+                 stop: threading.Event) -> None:
+        self._read = read
+        self._store = store
+        self._deadline = deadline
+        self._stop = stop
+        self._done = threading.Event()
+        self._lines: list[dict[str, Any]] | None = None
+        self._error: BaseException | None = None
+        threading.Thread(target=self._run, name="mnemos-cue-words", daemon=True).start()
+
+    def _run(self) -> None:
+        try:
+            self._lines = read_once_more(self._read, deadline=self._deadline)
+        except BaseException as exc:  # the hook's, if it needs these lines
+            self._error = exc
+        finally:
+            self._done.set()
+            try:
+                self._store.close()
+            except Exception:
+                pass
+
+    def wait(self) -> list[dict[str, Any]]:
+        """The lines, once worked out; what reading them raised, raised here;
+        ``HookTimeout`` if they aren't there by the deadline."""
+        if not self._done.wait(max(0.0, self._deadline - time.monotonic())):
+            raise HookTimeout()
+        if self._error is not None:
+            raise self._error
+        return self._lines or []
+
+    def stop(self) -> None:
+        """The hook is done with it (meaning answered, or the hook ends): a
+        query of its that runs on stops, and nothing waits for it."""
+        self._stop.set()
+
+
+def _failed(seen_file: SeenFile, kind: str) -> None:
+    """Count a message the cue could not answer, by its kind. Never raises:
+    the hook's own failure is what the caller sees."""
     try:
-        seen_file.record((), (), failure=reason)
+        seen_file.record((), (), failure=kind)
     except Exception:
         pass
 

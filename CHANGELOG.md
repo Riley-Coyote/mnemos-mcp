@@ -2,6 +2,49 @@
 
 ## 0.3.1 (unreleased)
 
+### The cue answers, or says why it didn't
+
+On the maintainer's machine the cue failed 18 of 109 messages in a week: 12
+counted as timeouts and 6 as `error (OperationalError)`. Both were the hook's
+own deadline. It waited up to 0.35 s for the session's Mnemos server to answer
+by meaning, and when the server was slow, only then started on words, with too
+little of its 0.65 s left on a busy machine. Where it ran out decided the
+name: a query still running at the deadline is stopped by SQLite, which calls
+that "interrupted", and the hook recorded the exception's class name. No lock
+was involved, and none of the scheduled jobs lined up with the failures.
+
+The hook now starts its words answer as soon as the store is open, beside the
+question to the server, so a slow, busy or loading server costs a message its
+meaning, never the person's time. With the words answer ready, it waits for
+the server until 0.1 s before its deadline instead of 0.35 s, and shows
+whichever answer is ready then: meaning if it came, else words. The deadline
+is unchanged, and so is what the cue offers. A query the deadline stops counts
+as a timeout. The hook's reads wait at most 0.1 s on a locked store, are tried
+once more, and are then counted as `busy`; the server does the same with its
+reads of the memories, and answers "busy" at once instead of waiting up to
+5 s. Each session's file now counts failures by kind (`timeout`, `busy`,
+`error (<Name>)`), keeps the times of the last 20 of each kind, and says why
+each answer by words wasn't by meaning: the server didn't answer in time, its
+store was locked, it was loading its model, there was none, it spoke another
+protocol, or the socket path under HOME was too long for it to open, which the
+server now logs as a warning. The health card and `mnemos doctor` give an
+ATTENTION line when the messages the cue could not answer are 5% of the week's
+or more, or for any error, any message with no answerer to judge it, or any
+answer forced to words by that socket path, naming the kind that dominates and
+what fixes it; a few timeouts or busy stores are counted and not flagged. On a
+copy of the maintainer's store, with the server stalled and the words answer
+as slow as on that machine, 35 of 38 messages failed before and none after;
+with the longer wait, a server held up for 0.6 s at each message answered all
+38 by meaning instead of none, and one that never answered held each message
+0.55 s instead of 0.35 s.
+
+Two things still go uncounted: a hook ended by its own hard stop, and one
+Claude Code ends after 2 s, as it would one whose start stalled before its
+clock began (7.7 s once in the lab). The hook's side of this takes effect when
+the installed checkout is updated; a session's server keeps its old answerer,
+with the long wait on a lock and no word about its socket, until the session
+restarts.
+
 ### The contradiction question, retired
 
 Maintenance used to ask the agent: "This memory surprised you. Does it

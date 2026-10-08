@@ -592,10 +592,11 @@ def _socket_answerer(db: Path, reply: dict, *, delay: float, seen: list) -> thre
 
 
 def test_the_hook_gives_the_judge_its_time_only_when_switched_on(tmp_path, meaning, home, key):
-    """Switched off, the hook waits ``ANSWER_SECONDS`` for its answerer and
-    then answers from words. Switched on, there are no words to fall back on,
-    so it waits for the judge as long as its budget allows, and tells the
-    answerer how long."""
+    """Switched off, the hook waits for its answerer until ``ANSWER_MARGIN``
+    before its deadline, its words answer ready beside it (WP-E2), and then
+    answers from words; it asks no judgment. Switched on, there are no words
+    to fall back on, so it waits for the judge as long as its budget allows.
+    Either way it tells the answerer how long it waits."""
     db = _store(tmp_path / "memory.db")
     judged = {"v": cue.CUE_PROTOCOL, "ok": True, "meaning": True, "judge": "jev", "judged": "shown",
               "lines": [{"id": "engram_JUDGEDLINE01", "text": "A judged line.", "date": "2026-09-29",
@@ -611,11 +612,12 @@ def test_the_hook_gives_the_judge_its_time_only_when_switched_on(tmp_path, meani
     assert _seen("session-one", db)["offers"][0]["scores"] == [0.93]
 
     seen.clear()
-    thread = _socket_answerer(db, judged, delay=late, seen=seen)
+    after_the_wait = cue.HOOK_BUDGET - cue.ANSWER_MARGIN + 0.1
+    thread = _socket_answerer(db, judged, delay=after_the_wait, seen=seen)
     off = _hook(db, session="session-two")
     thread.join(5)
-    assert "engram_JUDGEDLINE01" not in off and off != "", "switched off: words, as before"
-    assert "judge" not in seen[0] and "wait" not in seen[0]
+    assert "engram_JUDGEDLINE01" not in off and off != "", "switched off: words, once the wait is over"
+    assert "judge" not in seen[0] and seen[0]["wait"] <= cue.HOOK_BUDGET - cue.ANSWER_MARGIN, seen[0]
 
 
 def test_the_answerer_fits_the_judge_inside_what_the_hook_waits(tmp_path, meaning, home):

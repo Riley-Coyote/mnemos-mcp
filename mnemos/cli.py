@@ -975,7 +975,9 @@ def _hook_prompt(args: argparse.Namespace) -> int:
     deadline (``cue.HOOK_BUDGET`` after it starts, which with the process's own
     start keeps it under ``cue.HOOK_SECONDS``); and run as the command itself,
     the process also ends at that deadline whatever it is doing. The block is
-    written whole, in one write, or not at all.
+    written whole, in one write, or not at all. A timeout and a store locked
+    through a second try are counted by kind in the session's file, and say
+    nothing on stderr; anything else is named there too.
     """
     import time
 
@@ -1008,7 +1010,7 @@ def _hook_prompt(args: argparse.Namespace) -> int:
                 finished.set()
             _write_whole(out + "\n")
     except BaseException as exc:  # a hook never breaks a prompt, even on Ctrl-C
-        if not isinstance(exc, cue.HookTimeout):
+        if not isinstance(exc, (cue.HookTimeout, cue.StoreBusy)):
             print(f"[mnemos hook] {type(exc).__name__}: {exc}", file=sys.stderr)
     finally:
         if finished is not None:
