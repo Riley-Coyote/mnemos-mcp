@@ -46,7 +46,7 @@ from mnemos.cli import main
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.core.engram import Connection, Engram
 from mnemos.core.types import ConnectionRelation
-from mnemos.retrieval.reactive import ReactiveRetriever
+from mnemos.retrieval.reactive import SPREAD_FAN, ReactiveRetriever
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.store.embedding_index import EmbeddingIndex
 from mnemos.store.sqlite_store import SCHEMA_VERSION, EngramStore
@@ -223,7 +223,7 @@ def test_a_seed_starts_at_its_fused_score_and_neither_kind_is_locked_out(tmp_pat
     assert (results[0].score_breakdown["words_rank"], results[0].score_breakdown["meaning_rank"]) == (1, 1)
 
 
-# ── 3. Resonance: from newly reached memories, divided by links, two hops ──
+# ── 3. Resonance: from newly reached memories, shared by link weight, two hops ──
 
 
 def test_a_memory_passes_activation_on_once(store):
@@ -296,7 +296,7 @@ def test_the_best_match_is_not_outshone_by_well_linked_memories(store):
     assert results[0].engram.id == answer.id, [(r.engram.content, r.score) for r in results[:3]]
 
 
-def test_quiet_memories_neither_relay_nor_receive(store):
+def test_quiet_memories_never_relay_and_only_a_dormant_one_is_lit(store):
     seed = _memory("lighthouse keeper")
     dormant = _memory("a dormant note", state="dormant")
     beyond = _memory("reached only through the dormant note")
@@ -310,11 +310,117 @@ def test_quiet_memories_neither_relay_nor_receive(store):
     _link(store, quiet_seed, past_quiet)
     _link(store, seed, archived)
 
-    found = {r.engram.id for r in ReactiveRetriever(store, reconsolidation_enabled=False)
+    found = {r.engram.id: r for r in ReactiveRetriever(store, reconsolidation_enabled=False)
              .retrieve("lighthouse keeper", max_results=None, **SCOPE)}
 
     assert quiet_seed.id in found, "the cue brings back a quiet memory it matches"
-    assert not found & {dormant.id, beyond.id, past_quiet.id, archived.id}
+    assert found[dormant.id].score == pytest.approx(0.25), "a link lights a dormant memory at a discount"
+    assert found[dormant.id].retrieval_path == "resonance"
+    assert not set(found) & {beyond.id, past_quiet.id, archived.id}
+
+
+def test_a_memory_shares_what_it_sends_by_link_weight(store):
+    hub = _memory("lighthouse keeper")
+    strong = _memory("the strong neighbour")
+    weak = _memory("the weak neighbour")
+    for engram in (hub, strong, weak):
+        store.save_engram(engram)
+    store.save_connection(hub.id, Connection(
+        target_id=strong.id, relation=ConnectionRelation.SUPPORTS, strength=1.0))
+    store.save_connection(hub.id, Connection(
+        target_id=weak.id, relation=ConnectionRelation.SUPPORTS, strength=0.25))
+
+    score = _scores(ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", max_results=None, **SCOPE))
+
+    assert score[strong.id] == pytest.approx(0.5 * 0.8)
+    assert score[weak.id] == pytest.approx(0.5 * 0.2)
+
+
+def test_a_hub_lights_its_strongest_links_and_no_more(store):
+    hub = _memory("lighthouse keeper")
+    near = [_memory(f"near neighbour number {i}") for i in range(SPREAD_FAN)]
+    far = [_memory(f"far neighbour number {i}") for i in range(3)]
+    for engram in (hub, *near, *far):
+        store.save_engram(engram)
+    for neighbour in near:
+        _link(store, hub, neighbour)
+    for neighbour in far:
+        store.save_connection(hub.id, Connection(
+            target_id=neighbour.id, relation=ConnectionRelation.SUPPORTS, strength=0.5))
+
+    score = _scores(ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", max_results=None, **SCOPE))
+
+    for neighbour in near:
+        assert score[neighbour.id] == pytest.approx(0.5 / SPREAD_FAN)
+    assert not {n.id for n in far} & set(score), "a hub lit more links than it carries"
+
+
+def test_links_are_walked_both_ways(store):
+    seed = _memory("lighthouse keeper")
+    behind = _memory("a note that points at the seed")
+    for engram in (seed, behind):
+        store.save_engram(engram)
+    _link(store, behind, seed)
+
+    score = _scores(ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", **SCOPE))
+
+    assert score[behind.id] == pytest.approx(0.5), "a link into the seed carried nothing"
+
+
+def test_nothing_flows_back_to_what_is_lit(store):
+    seed = _memory("lighthouse keeper")
+    near = _memory("a note that shares no word with the cue")
+    for engram in (seed, near):
+        store.save_engram(engram)
+    _link(store, seed, near)
+    _link(store, near, seed)
+
+    score = _scores(ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", **SCOPE))
+
+    assert score[seed.id] == 1.0, "activation echoed back to the seed"
+    assert score[near.id] == pytest.approx(0.5)
+
+
+def test_a_lit_memory_can_match_the_best_seed_but_not_outrank_it(store):
+    seeds = [_memory(f"lighthouse keeper log {i}") for i in range(3)]
+    shared = _memory("a note every log leans on")
+    for engram in (*seeds, shared):
+        store.save_engram(engram)
+    for seed in seeds:
+        _link(store, seed, shared)
+
+    results = ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", max_results=None, **SCOPE)
+    score = _scores(results)
+
+    assert score[shared.id] == 1.0, "a lit memory outranked the best match"
+    assert results[0].retrieval_path == "fts" and results[0].score == 1.0
+
+
+def test_faint_links_that_agree_light_what_one_alone_could_not(store):
+    """Six seeds each send a small share to one memory. No share clears the
+    floor on its own; their sum does."""
+    seeds = [_memory(f"lighthouse keeper log {i}") for i in range(6)]
+    shared = _memory("a note every log leans on a little")
+    store.save_engram(shared)
+    for i, seed in enumerate(seeds):
+        store.save_engram(seed)
+        for j in range(4):
+            filler = _memory(f"filler {i} {j} that names nothing asked")
+            store.save_engram(filler)
+            _link(store, seed, filler)
+        store.save_connection(seed.id, Connection(
+            target_id=shared.id, relation=ConnectionRelation.SUPPORTS, strength=0.2))
+
+    score = _scores(ReactiveRetriever(store, reconsolidation_enabled=False).retrieve(
+        "lighthouse keeper", max_results=None, **SCOPE))
+
+    assert shared.id in score, "faint links that agree lit nothing"
+    assert 0.1 <= score[shared.id] < 0.2
 
 
 # ── 4. Filter first, then cut ──

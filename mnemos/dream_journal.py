@@ -99,7 +99,7 @@ def compose_dream_narrative(
     if engrams_dormant > 0:
         sentences.append(
             f"{engrams_dormant} {_plural(engrams_dormant, 'memory', 'memories')} "
-            f"went quiet. A strong match brings {_plural(engrams_dormant, 'it', 'them')} back."
+            f"went quiet. A strong match or a close link brings {_plural(engrams_dormant, 'it', 'them')} back."
         )
     for delta in (belief_deltas or [])[:3]:
         old = float(delta.get("old_confidence", 0.0))

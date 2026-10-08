@@ -24,9 +24,11 @@ Pipeline:
    is left out of every words list (``search_terms``); when every word is,
    there are no words lists and meaning decides alone (WP-R08c).
 2. RESONANCE through the connection graph, among memories only: each hop,
-   only memories reached for the first time pass activation on, a memory's
-   contribution is divided by its number of links, and it stops after two
-   hops. Only active memories relay or receive; a note never takes part.
+   only memories reached for the first time pass activation on, a memory
+   shares what it sends among its strongest ``SPREAD_FAN`` links by weight,
+   links are walked both ways, what arrives is summed before the floor, and
+   it stops after two hops. Only active memories relay; a dormant one can be
+   lit and brought back; a note never takes part.
 3. Emotional bias applied multiplicatively.
 4. Filter, then cut: threshold, confidence floor and the caller's ``keep``
    first, then ``max_results``, so what a filter drops is replaced from the
@@ -42,13 +44,13 @@ meaning; and every reached memory re-fired on every hop with no fan limit, so
 the best keyword match for "how does Riley like to be told about mistakes"
 finished 12th behind memories with 20 to 32 links.
 
-Quiet memories. A dormant memory is found only by the cue itself: it is seeded
-when it matches, at half the activation an active memory would start with, and
-a returned one wakes (``EngramStore.record_return``). Dormant and archived
-memories take no part in resonance: they pass no activation on, and none
-reaches them through a connection. Decay used to be the only way out of the
-active set and recall the only way back, and recall never looked, so a memory
-that went dormant stayed there, with every check green.
+Quiet memories. A dormant memory is found by the cue itself (it is seeded when
+it matches, at half the activation an active memory would start with) or lit
+through a link from a memory that is, at the same discount; a returned one
+wakes (``EngramStore.record_return``). It relays nothing until it does. An
+archived memory takes no part in resonance. Decay used to be the only way out
+of the active set and recall the only way back, and recall never looked, so a
+memory that went dormant stayed there, with every check green.
 """
 
 from __future__ import annotations
@@ -86,8 +88,14 @@ DORMANT_SEED_SHARE = 0.5
 # How many dormant memories one cue may seed, apart from the active seeds, so
 # a store where most memories have gone quiet cannot crowd the active ones out.
 DORMANT_SEED_LIMIT = 10
-# Memories that pass no activation on and receive none through a connection.
+# Memories that pass no activation on: a seed in one of these states relays
+# nothing (a dormant one can still be lit, below).
 _QUIET_STATES = frozenset({"dormant", "archived"})
+# Memories a link can light: active ones, and dormant ones at a discount.
+_RECEIVING_STATES = frozenset({"active", "dormant"})
+# A memory passes activation to at most this many of its links, the strongest
+# first, so a hub lights its nearest neighbours rather than none of them.
+SPREAD_FAN = 5
 
 # Reciprocal rank fusion, as Polyphonic fuses its trigram and vector seeds
 # (site/supabase/functions/_shared/embeddings.ts): each list a result is in
@@ -295,7 +303,8 @@ class ReactiveRetriever:
            module docstring): each seed starts at its fused score relative to
            the best.
         2. Resonance, among memories only: from memories newly reached, each
-           contribution divided by the sender's links, at most two hops.
+           sender's activation shared among its strongest links by weight,
+           both ways, summed before the floor, at most two hops.
         3. Emotional bias (multiplicative boost for congruent tags).
         4. Filter, then cut: threshold, confidence floor and ``keep`` first,
            then ``max_results`` (None: every result), so the list backfills
@@ -504,45 +513,54 @@ class ReactiveRetriever:
 
         # 2. RESONANCE, among memories. Each hop only memories reached for the
         # first time pass activation on; a memory already lit never fires
-        # again. What one sends is divided by its number of links, so a hub
-        # lights each neighbour a little rather than all of them fully. Quiet
-        # memories (dormant, archived) relay nothing and receive nothing: only
-        # the cue brings a dormant one back.
+        # again. A sender shares its activation (less the hop's decay) out
+        # whole among the links that carry (``_carrying``): its strongest
+        # ``SPREAD_FAN`` links to memories not yet lit, each in proportion to
+        # its weight, so a strong link carries more than a weak one, a hub
+        # lights its nearest neighbours rather than none of them, and nothing
+        # flows back to what is lit already. Links are walked both ways. What
+        # arrives at a memory is summed before the floor, so faint links that
+        # agree can light what one alone could not. A dormant memory receives
+        # at ``DORMANT_SEED_SHARE`` and can come back this way, but relays
+        # nothing until it wakes; an archived memory, and one out of scope,
+        # neither receive nor relay. A memory lit through links can match the
+        # best seed, never outrank it: what was asked for comes first, then
+        # what it is tied to.
         activation = {item_id: act for item_id, act in seed_activation.items() if item_id in engrams}
         frontier = {
             item_id: act for item_id, act in activation.items()
             if engrams[item_id].state not in _QUIET_STATES
         }
         reached = set(activation)
+        floor = self._threshold * 0.5
+        state_of: dict[str, str | None] = {}
+
+        def state(item_id: str) -> str | None:
+            if item_id not in state_of:
+                state_of[item_id] = self._store.engram_state_in_scope(item_id, **scope)
+            return state_of[item_id]
+
         for hop in range(1, self._depth + 1):
             hop_decay = self._decay ** hop
             arriving: dict[str, float] = defaultdict(float)
             for sender, sender_activation in frontier.items():
                 if sender_activation < self._threshold:
                     continue
-                links = self._store.get_connections(sender)
-                # Cross-DB connections: also check shared store
-                if self._shared_store:
-                    try:
-                        links = links + self._shared_store.get_connections(sender)
-                    except Exception:
-                        pass
-                if not links:
-                    continue
-                fan = len(links)
-                for link in links:
-                    if self._store.engram_state_in_scope(link.target_id, **scope) != "active":
-                        continue  # out of scope, or quiet
-                    sent = (
-                        sender_activation * hop_decay * link.strength
-                        * _RELATION_WEIGHTS.get(link.relation, 0.5) / fan
-                    )
-                    if sent > self._threshold * 0.5:
-                        arriving[link.target_id] += sent
-            for target, amount in arriving.items():
+                for neighbour, share in self._carrying(sender, reached, state):
+                    sent = sender_activation * hop_decay * share
+                    if state(neighbour) == "dormant":
+                        sent *= DORMANT_SEED_SHARE
+                    arriving[neighbour] += sent
+            landed = {
+                target: min(amount, 1.0) for target, amount in arriving.items() if amount >= floor
+            }
+            for target, amount in landed.items():
                 activation[target] = activation.get(target, 0.0) + amount
-            frontier = {target: amount for target, amount in arriving.items() if target not in reached}
-            reached.update(arriving)
+            frontier = {
+                target: amount for target, amount in landed.items()
+                if target not in reached and state(target) == "active"
+            }
+            reached.update(landed)
             if not frontier:
                 break
 
@@ -602,11 +620,8 @@ class ReactiveRetriever:
             # Cross-DB: check shared store if not found in private
             if not engram and self._shared_store:
                 engram = self._shared_store.get_engram(eid)
-            # An active memory, or a dormant one the cue itself matched.
-            if not engram or not (
-                engram.state == "active"
-                or (engram.state == "dormant" and eid in seed_activation)
-            ):
+            # An active memory, or a dormant one the cue matched or a link lit.
+            if not engram or engram.state not in _RECEIVING_STATES:
                 continue
             # Allow own engrams + shared/public from other agents
             if engram.owner_agent_id != agent_id and engram.visibility == "private":
@@ -642,6 +657,44 @@ class ReactiveRetriever:
             self.reinforce(top, cue, agent_id=agent_id)
 
         return top
+
+    def _carrying(
+        self, sender: str, reached: Collection[str], state: Callable[[str], str | None],
+    ) -> list[tuple[str, float]]:
+        """The links of ``sender`` that carry activation this hop, as
+        ``(neighbour, share)`` with the shares summing to one: its strongest
+        ``SPREAD_FAN`` links, walked both ways, to memories in scope and live
+        (active or dormant) that are not lit yet, each weighted by its
+        strength times its relation's weight. A neighbour linked more than
+        once counts at its strongest link. A sender with no such link carries
+        nothing."""
+        links = list(self._store.get_connections(sender))
+        incoming = getattr(self._store, "get_connections_to", None)
+        if incoming is not None:
+            links += incoming(sender)
+        if self._shared_store:
+            try:
+                links += self._shared_store.get_connections(sender)
+            except Exception:
+                pass  # Shared store is optional
+        weight_of: dict[str, float] = {}
+        for link in links:
+            neighbour = link.target_id
+            if neighbour == sender or neighbour in reached:
+                continue
+            weight = link.strength * _RELATION_WEIGHTS.get(link.relation, 0.5)
+            if weight > weight_of.get(neighbour, 0.0):
+                weight_of[neighbour] = weight
+        live = [
+            (neighbour, weight) for neighbour, weight in weight_of.items()
+            if state(neighbour) in _RECEIVING_STATES
+        ]
+        live.sort(key=lambda pair: (-pair[1], pair[0]))
+        carrying = live[:SPREAD_FAN]
+        total = sum(weight for _, weight in carrying)
+        if total <= 0:
+            return []
+        return [(neighbour, weight / total) for neighbour, weight in carrying]
 
     def _cue_vector(self, cue: str) -> list[float] | None:
         """The cue's vector from the index, or None when embedding it failed."""

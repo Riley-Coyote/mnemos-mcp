@@ -10,8 +10,10 @@ and every health check green. Mnemos had the same shape one step earlier:
   * the dream report told the agent dormant memories were "ready to wake if
     needed".
 
-Now recall seeds a dormant memory that matches the cue, at half the score, and
-a returned one wakes. Dormant and archived memories take no part in resonance.
+Now recall seeds a dormant memory that matches the cue, at half the score, or
+lights it through a link from a memory that is, at the same discount, and a
+returned one wakes. Quiet memories never relay, and an archived one is never
+lit.
 Decay keeps fading a dormant memory until it wakes or reaches the archive. A
 memory that faded into the archive comes back by its id, or through
 ``mnemos_recall`` with ``include_archived``; one the agent forgot or replaced
@@ -304,13 +306,37 @@ def test_every_recall_path_wakes_what_it_returns_and_older_code_none(tmp_path):
     assert _row(older, quiet) == before, "older code woke a dormant memory"
 
 
-# ── 2. Dormant and archived memories never relay ──
+def test_a_dormant_memory_lit_through_a_link_wakes_when_returned(tmp_path):
+    """The cue matches A alone. A link from A lights a dormant B, at the
+    discount a dormant seed gets, and B wakes when it is returned."""
+    db, (ferry, lighthouse) = _stored(tmp_path, FERRY, OTHERS[1])
+    store = EngramStore(str(db))
+    try:
+        _link(store, ferry, lighthouse)
+    finally:
+        store.close()
+    _go_quiet(db, lighthouse)
+    assert _found(db, CUE)[lighthouse] == pytest.approx(0.25)
+    assert _row(db, lighthouse, "state")["state"] == "dormant"
+
+    store = EngramStore(str(db))
+    try:
+        returned = [r.engram.id for r in ReactiveRetriever(store).retrieve(CUE, **SCOPE)]
+    finally:
+        store.close()
+
+    assert lighthouse in returned
+    assert _row(db, lighthouse, "state")["state"] == "active", "a lit dormant memory did not wake"
+
+
+# ── 2. Quiet memories never relay; only a dormant one is lit ──
 
 
 @pytest.mark.parametrize("quiet_state", ["dormant", "archived"])
 def test_quiet_memories_never_relay(tmp_path, quiet_state):
     """A → Q → B: the cue matches A alone. Through an active Q, resonance
-    reaches B; through a quiet Q it must not, and Q gets nothing either."""
+    reaches B; through a quiet Q it must not. A dormant Q is itself lit, at
+    the discount a dormant seed gets; an archived Q gets nothing."""
     db = tmp_path / "memory.db"
     store = EngramStore(str(db))
     try:
@@ -337,7 +363,10 @@ def test_quiet_memories_never_relay(tmp_path, quiet_state):
     found = _found(db, CUE)
 
     assert far not in found, f"a {quiet_state} memory passed activation on"
-    assert middle not in found, f"a {quiet_state} memory was reached through a link"
+    if quiet_state == "dormant":
+        assert found[middle] == pytest.approx(0.25), "a link lights a dormant memory at a discount"
+    else:
+        assert middle not in found, "an archived memory was reached through a link"
     assert seeded_quiet in found, "premise: the cue itself matches the dormant seed"
     assert beyond not in found, "a dormant seed passed activation on"
 
@@ -806,8 +835,8 @@ def test_the_dream_report_says_what_recall_does_with_quiet_memories():
     one = compose_dream_narrative({"cycle_type": "deep", "decay": {"engrams_dormant": 1}})
     both = compose_dream_narrative({"decay": {"engrams_archived": 2, "engrams_dormant": 3}})
 
-    assert "3 memories went quiet. A strong match brings them back." in many, many
-    assert "1 memory went quiet. A strong match brings it back." in one, one
+    assert "3 memories went quiet. A strong match or a close link brings them back." in many, many
+    assert "1 memory went quiet. A strong match or a close link brings it back." in one, one
     assert "ready to wake" not in many
     assert "Mnemos moved 2 faded memories into the archive." in both, both
     assert "3 memories went quiet." in both, "a cycle that did both reported one"

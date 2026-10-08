@@ -2286,6 +2286,26 @@ class EngramStore:
             for r in rows
         ]
 
+    def get_connections_to(self, engram_id: str) -> list[Connection]:
+        """Every connection TO an engram, each as a ``Connection`` whose
+        ``target_id`` is the other end: the memory the link comes from.
+        Recall's resonance walks links both ways, so what supports a memory
+        is as near to it as what it supports (``idx_connections_target``)."""
+        conn = self._get_conn()
+        rows = conn.execute(
+            "SELECT * FROM connections WHERE target_id = ?", (engram_id,)
+        ).fetchall()
+        return [
+            Connection(
+                target_id=r["source_id"],
+                relation=r["relation"],
+                strength=r["strength"],
+                formed_at=r["formed_at"],
+                formed_by=r["formed_by"],
+            )
+            for r in rows
+        ]
+
     def update_connection(self, source_id: str, connection) -> None:
         """Update an existing connection's relation, strength, or formed_by."""
         self._conn.execute(

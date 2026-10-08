@@ -2,6 +2,26 @@
 
 ## 0.3.1 (unreleased)
 
+### Resonance reaches
+
+Recall's second step, activation spreading through the links between
+memories, was nearly inert. A memory split what it sent by its number of
+links, every link counted (to faded, archived and out-of-scope memories too),
+and each share had to clear a floor on its own; on the maintainer's store,
+where most live memories have more than six links, the best match sent
+nothing anywhere. A dormant memory could not be reached through a link at
+all, so a memory that had faded came back only when the words or the meaning
+of a question hit it directly, never by association.
+
+Now a memory shares its activation out whole among its five strongest links,
+in proportion to each link's weight; links are walked both ways; what arrives
+at a memory is summed before the floor, so faint links that agree can light
+what one alone could not; nothing flows back to a memory already lit; and a
+dormant memory can be lit through a link, at the same discount a dormant seed
+gets, and wakes when it is returned. It relays nothing until it does. Archived
+memories take no part, as before. `EngramStore.get_connections_to` reads the
+links into a memory. Nothing about how a store is written changes.
+
 ### The cue answers, or says why it didn't
 
 On the maintainer's machine the cue failed 18 of 109 messages in a week: 12
