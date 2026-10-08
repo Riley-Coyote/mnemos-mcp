@@ -34,15 +34,19 @@ def _links(store, engram: Engram) -> set[str]:
 
 
 class _Meaning:
-    """An embedding index that finds one memory at a known similarity."""
+    """An embedding index that finds one memory at a known similarity, as
+    recall's scorer does: among the candidates asked about, at or above the
+    floor."""
 
     available = True
 
     def __init__(self, target: Engram, similarity: float):
         self.target, self.similarity = target, similarity
 
-    def search(self, text, k=10, exclude_ids=None):
-        return [] if self.target.id in (exclude_ids or ()) else [(self.target.id, self.similarity)]
+    def search_candidates(self, text, candidates, *, k=30, floor=0.0, **_):
+        if self.target.id not in candidates or self.similarity < floor:
+            return []
+        return [(self.target.id, self.similarity)]
 
 
 def test_common_words_alone_do_not_link_two_memories(store):

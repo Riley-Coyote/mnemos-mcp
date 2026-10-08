@@ -55,16 +55,17 @@ def _gone_dormant(store, engram: Engram) -> None:
 
 
 class _Meaning:
-    """An embedding index that finds these memories at these similarities."""
+    """An embedding index that finds these memories at these similarities, as
+    recall's scorer does: among the candidates asked about, at or above the
+    floor."""
 
     available = True
 
     def __init__(self, similarities: dict[str, float]):
         self.similarities = similarities
 
-    def search(self, text, k=10, exclude_ids=None):
-        exclude = exclude_ids or set()
-        hits = [(eid, s) for eid, s in self.similarities.items() if eid not in exclude]
+    def search_candidates(self, text, candidates, *, k=30, floor=0.0, **_):
+        hits = [(eid, s) for eid, s in self.similarities.items() if eid in candidates and s >= floor]
         return sorted(hits, key=lambda hit: hit[1], reverse=True)[:k]
 
 

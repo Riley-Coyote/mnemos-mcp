@@ -285,6 +285,17 @@ def index_for_recall(
     return done
 
 
+def maintenance_index(db_path: str) -> EmbeddingIndex:
+    """The embedding index the maintenance cycle links by, built one way for
+    every path that runs it: a session's maintenance (the runtime's index,
+    which capture and recall share), a quiet hour's (its Mnemos server is a
+    session's), and `mnemos consolidate`, which the scheduled jobs run. Those
+    jobs handed the cycle no index, so they linked by words alone while a
+    session linked by meaning too. The model loads only from this machine;
+    without it the cycle links by words and says why."""
+    return EmbeddingIndex(db_path=db_path)
+
+
 def _index_unavailable(index: Any) -> str:
     """Why the embedding model could not index, in one short line."""
     if str(getattr(index, "backend", "")).startswith("local"):
@@ -2404,7 +2415,7 @@ class MnemosRuntime:
             # (EngramStore._record_code_version), so a server still running
             # older code stops maintaining it.
             self._store = EngramStore(self.scope.db_path)
-            self._embedding_index = EmbeddingIndex(db_path=self.scope.db_path)
+            self._embedding_index = maintenance_index(self.scope.db_path)
         # The agent's self-declared model, recorded for the record rather
         # than to gate anything. Read straight from the freshly created
         # store: _get_meta would re-enter init.

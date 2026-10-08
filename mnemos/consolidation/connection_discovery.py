@@ -3,7 +3,8 @@ Connection discovery pass: find semantic connections between engrams
 that were missed during encoding.
 
 Phase 2 upgrade:
-- Uses embedding similarity (Gemini 3072-dim) alongside FTS5 for candidate discovery
+- Finds candidates by meaning as recall does (each memory by its best passage,
+  over only the memories it may be linked to) alongside FTS5
 - Uses LLM classifier for typed relationship assignment (7 types + NONE)
 - Can reclassify existing low-quality connections (old all-"supports" monoculture)
 - Cross-session connections: memories from different conversations that relate
@@ -13,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from ..core.engram import Connection
@@ -30,7 +32,19 @@ log = logging.getLogger("mnemos.consolidation.connections")
 
 
 class _LinkLookup:
-    """The pass's lookups by meaning, bounded as write-path indexing is.
+    """The pass's lookups by meaning, read as recall reads, bounded as
+    write-path indexing is.
+
+    A memory's nearest are found the way recall finds a cue's
+    (``EmbeddingIndex.search_candidates``: each candidate by its best passage
+    of this scheme, less the length penalty), with the memory's own words as
+    the query, over only the memories it may be linked to. Only passages
+    count (``passages_only``): the whole-text vectors capture writes
+    (``embeddings``) are not read. The lookup used to read only those, so a
+    memory indexed only as passages was never linked by meaning: 139 of the
+    554 live memories on a copy of a real store, and 2,890 of 6,654 on a copy
+    grown to twelve times its size. ``floor`` is ``similarity_threshold``, a
+    floor on the best passage's similarity, as before.
 
     Maintenance runs inside a capture, and the pass looks up to 50 memories'
     neighbours by meaning, embedding each one. With a network backend each
@@ -42,8 +56,9 @@ class _LinkLookup:
     model waits on no network and is not bounded. ``timeouts`` and
     ``deferred`` go into the cycle's log, where the watchdog counts them."""
 
-    def __init__(self, index: Any | None) -> None:
+    def __init__(self, index: Any | None, *, floor: float) -> None:
         self.index = index
+        self.floor = floor
         self.meaning = bool(index is not None and getattr(index, "available", False))
         self.network = self.meaning and bool(getattr(index, "network", False))
         self.deadline = (
@@ -53,20 +68,21 @@ class _LinkLookup:
         self.timeouts = 0
         self.deferred = 0
 
-    def neighbours(self, engram: Any) -> list[tuple[str, float]]:
-        """``engram``'s nearest by meaning; none when meaning is off, or spent
-        for this pass (the memory is then counted as deferred)."""
+    def neighbours(self, engram: Any, candidates: Collection[str]) -> list[tuple[str, float]]:
+        """``engram``'s nearest by meaning among ``candidates``, at or above
+        the floor, nearest first; none when meaning is off, or spent for this
+        pass (the memory is then counted as deferred)."""
         if not self.meaning:
             return []
         if self.deadline is None:
-            return self.index.search(engram.content, k=10, exclude_ids={engram.id})
+            return self._nearest(engram, candidates)
         wait = min(_embedding.NETWORK_TIMEOUT, self.deadline - time.monotonic())
         if self.spent or wait <= 0:
             self.spent = True
             self.deferred += 1
             return []
         before = getattr(self.index, "timeouts", 0)
-        found = self.index.search(engram.content, k=10, exclude_ids={engram.id}, timeout=wait)
+        found = self._nearest(engram, candidates, timeout=wait)
         if getattr(self.index, "timeouts", 0) > before:
             # The backend isn't answering: nothing more is asked of it here.
             self.timeouts += 1
@@ -74,6 +90,40 @@ class _LinkLookup:
             self.spent = True
             return []
         return found
+
+    def _nearest(
+        self, engram: Any, candidates: Collection[str], *, timeout: float | None = None,
+    ) -> list[tuple[str, float]]:
+        return self.index.search_candidates(
+            engram.content, candidates, k=10, floor=self.floor,
+            passages_only=True, timeout=timeout,
+        )
+
+    def off(self) -> str | None:
+        """Why this pass linked by words alone, or None when meaning was on
+        throughout: no index, one that was off from the start, or one that
+        went off during the pass (a local model that failed to load)."""
+        if self.index is None:
+            return "no embedding index"
+        if self.meaning and getattr(self.index, "available", False):
+            return None
+        reason = getattr(self.index, "unavailable_reason", None) or "the embedding index is off"
+        return " ".join(str(reason).split())
+
+
+def _linkable(
+    store: EngramStore, agent_id: str, person_id: str | None, project_scope: str | None,
+) -> set[str]:
+    """The memories a new link may reach by meaning: the active ones in the
+    pass's scope, as the scope check and the state check admitted them, or
+    every active one when the pass has no scope (``get_engram`` and the state
+    check). Read once a pass: nothing in the pass changes a memory's state."""
+    if person_id is not None and project_scope is not None:
+        return store.active_engram_ids(
+            agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+        )
+    rows = store._get_conn().execute("SELECT id FROM engrams WHERE state = 'active'").fetchall()
+    return {row[0] for row in rows}
 
 
 def run_connection_discovery(
@@ -142,33 +192,35 @@ def run_connection_discovery(
         if len(existing) < max_per_engram:
             underconnected.append((engram, existing))
 
-    lookup = _LinkLookup(embedding_index)
+    lookup = _LinkLookup(embedding_index, floor=similarity_threshold)
+    # What a link by meaning may reach, read once: none while meaning is off.
+    linkable = _linkable(store, agent_id, person_id, project_scope) if lookup.meaning else set()
     for engram, existing_connections in underconnected[:max_per_pass]:
         stats["engrams_processed"] += 1
         existing_target_ids = {c.target_id for c in existing_connections}
         candidates = []
 
-        # 1. Embedding-based candidates (if available, within the pass's time)
+        # 1. Candidates by meaning (if available, within the pass's time):
+        # the memories it isn't linked to yet, at or above the similarity.
         if lookup.meaning:
-            emb_results = lookup.neighbours(engram)
-            for eid, score in emb_results:
-                if eid not in existing_target_ids and score >= similarity_threshold:
-                    candidate = (
-                        store.get_engram_in_scope(
-                            eid, agent_id=agent_id, person_id=person_id,
-                            project_scope=project_scope,
-                        )
-                        if person_id is not None and project_scope is not None
-                        else store.get_engram(eid)
+            reachable = linkable - existing_target_ids - {engram.id}
+            for eid, _similarity in lookup.neighbours(engram, reachable):
+                candidate = (
+                    store.get_engram_in_scope(
+                        eid, agent_id=agent_id, person_id=person_id,
+                        project_scope=project_scope,
                     )
-                    # Only a live memory takes a new link, as with keyword
-                    # candidates and recall's seeds. The index still holds the
-                    # vectors of archived and dormant memories, and a correction
-                    # reads almost like the memory it retired: linking the two
-                    # let recall carry light back into what was retired.
-                    if candidate and candidate.state == "active":
-                        candidates.append(candidate)
-                        stats["embedding_candidates"] += 1
+                    if person_id is not None and project_scope is not None
+                    else store.get_engram(eid)
+                )
+                # Only a live memory takes a new link, as with keyword
+                # candidates and recall's seeds. The index still holds the
+                # vectors of archived and dormant memories, and a correction
+                # reads almost like the memory it retired: linking the two
+                # let recall carry light back into what was retired.
+                if candidate and candidate.state == "active":
+                    candidates.append(candidate)
+                    stats["embedding_candidates"] += 1
 
         # 2. FTS5 candidates (supplement, catches keyword matches embeddings miss)
         mine = distinctive_terms(engram.content)
@@ -236,6 +288,11 @@ def run_connection_discovery(
         # words alone this cycle for want of the backend's time.
         stats["embedding_timeouts"] = lookup.timeouts
         stats["embedding_deferred"] = lookup.deferred
+    off = lookup.off()
+    if off:
+        # Said in the cycle's log and by `mnemos consolidate`: a pass that
+        # linked by words alone, and why, rather than as if meaning had run.
+        stats["words_only"] = f"links by words only: meaning search is off ({off})"
 
     # ── Phase B: Reclassify unclassified connections ──
     if llm_client:

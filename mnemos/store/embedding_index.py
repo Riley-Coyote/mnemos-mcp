@@ -32,8 +32,9 @@ them. So a text is read twice over: in windows of a few sentences, and as a
 whole (its first 700 characters). A memory whose impact holds a lesson the
 agent wrote has that lesson as one more passage (``LESSON_PART``): it is found
 by what it taught as well as by what happened. ``embeddings`` keeps one vector
-per memory's whole text, as capture writes it, for linking and for recall
-until a memory has passages.
+per memory's whole text, as capture writes it, for recall until a memory has
+passages. Maintenance links by the passages alone (``search_candidates`` with
+``passages_only``), as recall scores them.
 """
 
 from __future__ import annotations
@@ -1272,6 +1273,8 @@ class EmbeddingIndex:
         length_penalty: float | None = None,
         query_vector: Sequence[float] | None = None,
         unusable: dict[str, set[str]] | None = None,
+        passages_only: bool = False,
+        timeout: float | None = None,
     ) -> list[tuple[str, float]]:
         """The ``candidates`` closest in meaning to ``query``: at most ``k``,
         none whose best similarity is below ``floor``, each with that best
@@ -1301,6 +1304,14 @@ class EmbeddingIndex:
         non-finite length): ``"text"`` holds the items with such a text
         passage, ``"lesson"`` those whose lesson passage was one. The coverage
         checks read these verdicts, so they judge a vector as the scorer did.
+
+        With ``passages_only``, a candidate counts by its passages alone: one
+        with none is not scored by its whole-text vector, and the
+        ``embeddings`` table is not read. Maintenance asks this way for the
+        memories it may link (``connection_discovery``), by the scoring recall
+        uses; a memory waits for its passages to be found there. ``timeout``
+        is how long a network backend may take to embed ``query`` (None:
+        ``NETWORK_TIMEOUT``); nothing is embedded with ``query_vector``.
         """
         if not self._available or not self._embedder or not candidates:
             return []
@@ -1308,7 +1319,9 @@ class EmbeddingIndex:
         conn = self._existing_conn()
         if conn is None:
             return []
-        query_values = list(query_vector) if query_vector is not None else self._embed(query)
+        query_values = (
+            list(query_vector) if query_vector is not None else self._embed(query, timeout=timeout)
+        )
         if query_values is None:
             return []
         model = self._embedder.model_name
@@ -1321,7 +1334,7 @@ class EmbeddingIndex:
         rows = [row for row in cut if row[0] not in now or now[row[0]] == row[4]]
         passages = len(rows)  # then whole-text vectors, for items with no passage
         without = wanted - {row[0] for row in cut}
-        if without:
+        if without and not passages_only:
             rows += self._rows_for(
                 conn, "SELECT engram_id, embedding, dims FROM embeddings "
                 "WHERE model_name = ? AND engram_id IN ({})", (model,), without,

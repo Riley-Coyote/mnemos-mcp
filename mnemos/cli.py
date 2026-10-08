@@ -2129,7 +2129,21 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
         daemon_config = load_config()
     except Exception:
         daemon_config = {}
-    daemon = ConsolidationDaemon(store=store, config=daemon_config, llm_client=llm_client)
+    # The cycle links by meaning with the index a session's maintenance uses
+    # (``maintenance_index``), for `consolidate` and `--deep` alike. It was
+    # given none, so the scheduled jobs linked by words alone. Without the
+    # model the pass links by words and says why; the index serves the
+    # indexing after the cycle too.
+    try:
+        from .simple_runtime import maintenance_index
+
+        index = maintenance_index(_resolve_db_path(args))
+    except Exception as exc:
+        index = None
+        print(f"Meaning search: off, the index could not be opened ({type(exc).__name__}: {exc})")
+    daemon = ConsolidationDaemon(
+        store=store, config=daemon_config, llm_client=llm_client, embedding_index=index,
+    )
     label = "deep" if args.deep else "shallow"
     print(f"Running {label} consolidation...")
 
@@ -2145,7 +2159,10 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
         print(f"  Decay: {d.get('engrams_decayed', 0)} decayed, {d.get('engrams_archived', 0)} archived")
     if "connection_discovery" in stats:
         cd = stats["connection_discovery"]
-        print(f"  Connections: {cd.get('connections_created', 0)} created, {cd.get('connections_strengthened', 0)} strengthened")
+        said = f"  Connections: {cd.get('connections_created', 0)} created, {cd.get('connections_strengthened', 0)} strengthened"
+        if cd.get("words_only"):
+            said += f"; {cd['words_only']}"
+        print(said)
     if "softening" in stats:
         s = stats["softening"]
         print(f"  Softening: {s.get('engrams_softened', 0)} softened")
@@ -2159,7 +2176,9 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
         print(f"  ERROR ({e}): {stats[e]}", file=sys.stderr)
 
     _report_consolidation(store, scope, stats)
-    _index_after_consolidating(store, args, scope)
+    _index_after_consolidating(store, args, scope, index)
+    if index is not None:
+        index.close()
     store.close()
     return 0
 
@@ -2181,18 +2200,24 @@ def _report_consolidation(store, scope, stats: dict) -> None:
     print("Maintenance report: written" if narrative else "Maintenance report: none, nothing worth reporting")
 
 
-def _index_after_consolidating(store, args: argparse.Namespace, scope) -> None:
+def _index_after_consolidating(store, args: argparse.Namespace, scope, index=None) -> None:
     """Index a bounded part of what waits for recall's meaning search in the
     scope just consolidated (``SCHEDULED_INDEX_BUDGET``), after the cycle, so
     what code older than the store writes is indexed within hours without any
     session. Consolidation has already run and nothing here can undo or stop
     it: without the model, indexing is skipped and says why, and the health
-    card says so too."""
-    try:
-        from .simple_runtime import SCHEDULED_INDEX_BUDGET, index_for_recall
-        from .store.embedding_index import EmbeddingIndex
+    card says so too.
 
-        index = EmbeddingIndex(db_path=_resolve_db_path(args))
+    ``index`` is the cycle's, used while it is on. One that went off in the
+    cycle (a local model that failed to load), or none, is replaced by a
+    fresh one from the same builder, so the failure is met and recorded here
+    as it always was."""
+    own = None
+    try:
+        from .simple_runtime import SCHEDULED_INDEX_BUDGET, index_for_recall, maintenance_index
+
+        if index is None or not index.available:
+            index = own = maintenance_index(_resolve_db_path(args))
         try:
             if not index.available:
                 print(f"Recall index: off, {index.unavailable_reason}")
@@ -2204,7 +2229,8 @@ def _index_after_consolidating(store, args: argparse.Namespace, scope) -> None:
                 budget=SCHEDULED_INDEX_BUDGET, record="mnemos consolidate",
             )
         finally:
-            index.close()
+            if own is not None:
+                own.close()
     except Exception as exc:
         print(f"Recall index: not updated ({type(exc).__name__}: {exc})")
         return

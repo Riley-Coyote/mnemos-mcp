@@ -2,6 +2,47 @@
 
 ## 0.3.1 (unreleased)
 
+### Links by meaning, by every path that makes them
+
+How a store's memories were linked depended on which path ran maintenance.
+`mnemos consolidate`, which the scheduled jobs run every four hours and at
+night, gave the linking pass no embedding index, so it linked by words alone
+and never read `similarity_threshold`; a session's maintenance gave it one and
+linked by meaning too. And the pass's search by meaning read only the
+whole-text vector a capture writes (`embeddings`), while recall reads the
+passages (`passage_vectors`), so a memory indexed only as passages could never
+be linked by meaning: 139 of the 554 live memories on a copy of the
+maintainer's store, and 2,890 of 6,654 on a copy grown to twelve times its
+size.
+
+Now `mnemos consolidate`, with or without `--deep`, gives the cycle the index
+a session's maintenance uses, built one way for both (`maintenance_index`). A
+quiet hour already maintained through its own Mnemos server, as a session
+does. The pass searches the way recall searches (`search_candidates`): each
+memory by its best passage, less the length penalty, with the memory's own
+words as the query, among only the memories it may be linked to (live, in its
+scope, not itself, not linked to it yet). It reads the passages alone and no
+longer reads `embeddings`, so a memory with a whole-text vector and no
+passages yet is linked by meaning once it is cut into passages (within a
+write's budget, by the scheduled job, or by `mnemos embeddings index`). The
+bar (similarity 0.7), the relation, the strength, the caps and the words path
+are as they were. Without the model the pass links by words, as before, and
+says why: `mnemos consolidate` adds "links by words only: meaning search is
+off (…)" to its Connections line, the cycle's log keeps it, and nothing tries
+the network.
+
+Measured on copies. On the maintainer's store, `mnemos consolidate` made no
+new link before and 9 after, all by meaning, the same 9 a session's
+maintenance now makes (it made 1 before); the command took 18.9 s instead of
+12.4 s on a busy machine, the difference its 100 searches by meaning (both
+load the model once). On the copy twelve times its size, with the cap raised
+so that one pass reaches all 6,300 under-linked live memories, the pass made
+18,771 links through the command, all by words, and 19,896 through a
+session, 4,239 of them by meaning; now both paths make the same 20,540,
+17,177 by meaning (12,310 of them to memories the old search could not
+reach) and 3,363 by words. The words' share fell because the pass still makes
+at most five links a memory, the ones found by meaning first. Code version 21.
+
 ### Promotion by lasting attention
 
 A note with no memory of its own became one by a score: the confidence and
