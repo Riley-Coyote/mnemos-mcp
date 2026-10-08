@@ -69,6 +69,8 @@ from .store.archive import resharpen
 from .store.fts import distinctive_terms, fts_words, meaningful_words, search_words
 from .store.sqlite_store import (
     EARLY_LESSON_ARCHIVE_REASON,
+    PROMOTION_REVISIONS,
+    PROMOTION_SESSIONS,
     RECALLABLE_ARCHIVE_REASONS,
     RETIRED_REFLECTION_KINDS,
     EngramStore,
@@ -129,6 +131,13 @@ AUTO_INDEX_BUDGET = 64
 
 # What a capture appends to the agent's words when it gives context.
 _CAPTURE_CONTEXT = "\n\nContext: "
+
+# Notes one maintenance cycle makes memories of, at most (WP-R12: the ones the
+# agent kept coming back to, the most used first; the rest wait their turn),
+# and how many of the ready ones its report names, each with the rule's two
+# numbers. The health card names as many.
+PROMOTIONS_PER_CYCLE = 3
+PROMOTION_LINES = 5
 
 # How many journal entries an empty ``mnemos_journal`` call reads back.
 JOURNAL_READ = 5
@@ -5856,7 +5865,8 @@ class MnemosRuntime:
         except Exception:
             if self._host_mutation_active:
                 raise
-        promoted = self._promote_candidates(limit=3)
+        promotion = self._promote_candidates()
+        promoted = promotion["promoted"]
         # Maintenance proposes reflections; it never answers them.
         try:
             # Hygiene first: a store written before excerpts were dropped can
@@ -5925,7 +5935,7 @@ class MnemosRuntime:
             f"Cycle: {stats.get('cycle_type', 'shallow')}",
             f"Completed: {completed}",
             f"Passes: {', '.join(stats.get('passes_run', [])) or 'none'}",
-            f"Promoted continuity notes: {promoted}",
+            *_promotion_lines(promotion),
             f"Model path: {model_note}",
             f"Dream journal: {dream_status}",
             # After the passes, so lessons this cycle distilled are indexed too.
@@ -6074,9 +6084,19 @@ class MnemosRuntime:
                     self._store, **self._scope_args()
                 )["hidden"],
                 "continuity_notes_foundational": stats.get("hypomnema_foundational", 0),
+                # Notes ready to become memories, and notes promotion made
+                # memories of (a capture's note is its memory's from the
+                # start, and is neither).
+                "continuity_notes_promotion_candidates": stats.get(
+                    "hypomnema_promotion_candidates", 0
+                ),
+                "continuity_notes_promoted": stats.get("hypomnema_promoted", 0),
                 "connections": stats.get("connections", 0),
                 "beliefs_active": stats.get("beliefs_active", 0),
             },
+            # The rule a note becomes a memory by, and the notes ready now,
+            # each with the rule's two numbers.
+            "promotion": self._promotion_health(stats),
             "last_cycle": last_cycle,
             # This session's own introduction. The scope's last one belongs
             # to whichever session made it (on a real store, a Grok session's)
@@ -6113,6 +6133,30 @@ class MnemosRuntime:
             # What should be moving and whether it is: each check's expected
             # and seen, and a flag for whatever stalled for more than a day.
             "watchdog": self.watchdog(),
+        }
+
+    def _promotion_health(self, stats: dict[str, Any]) -> dict[str, Any]:
+        """Promotion as the health card reports it (WP-R12): the rule (how
+        many revisions by the agent, in how many sessions), how many notes
+        are ready to become memories and how many promotion made (from
+        ``stats``, the scope's own), and the first ``PROMOTION_LINES`` ready
+        ones with the rule's two numbers. Reads only."""
+        assert self._store is not None
+        ready = self._store.get_hypomnema_promotion_candidates(
+            **self._scope_args(), limit=PROMOTION_LINES,
+        )
+        return {
+            "rule": {"revisions": PROMOTION_REVISIONS, "sessions": PROMOTION_SESSIONS},
+            "candidates": int(stats.get("hypomnema_promotion_candidates", 0)),
+            "promoted": int(stats.get("hypomnema_promoted", 0)),
+            "ready": [
+                {
+                    "id": note["id"],
+                    "revised_by_agent": int(note["revised_by_agent"]),
+                    "used_in_sessions": int(note["used_in_sessions"]),
+                }
+                for note in ready
+            ],
         }
 
     def watchdog(self) -> dict[str, Any]:
@@ -6288,8 +6332,14 @@ class MnemosRuntime:
             project_scope=self.scope.project_scope,
         )
 
-    def _promote_candidates(self, limit: int = 3) -> int:
-        """Promote stable continuity notes to memories, as their writers left them.
+    def _promote_candidates(self, limit: int = PROMOTIONS_PER_CYCLE) -> dict[str, Any]:
+        """Make memories of the notes the agent kept coming back to, at most
+        ``limit`` of them, the most used first, and say what was found.
+
+        A note is ready when the agent revised it and recalled it in more
+        than one session (``get_hypomnema_promotion_candidates``), never
+        because of its age, its length or a score its words earned. Only the
+        agent's own notes are: promoted, a note's words become a memory's.
 
         The memory holds the note's words and the note's meaning, which is
         none: a note has no place for what it changed. So the memory's
@@ -6297,28 +6347,41 @@ class MnemosRuntime:
         as it asks any memory without one; it reaches the memory through the
         note it is now paired with. Promotion used to write "Stable
         continuity promoted during simple maintenance." there: Mnemos's words
-        where only the agent's belong.
+        where only the agent's belong. Nothing is summarised or reworded.
 
-        A note Mnemos wrote is never a candidate
-        (``get_hypomnema_promotion_candidates``): promoted, its words became
-        a memory Mnemos wrote. Nor is a note that references a memory:
-        marking it promoted into that memory paired it with a memory no
-        capture wrote together with it.
+        A note that references a memory is never a candidate: marking it
+        promoted into that memory paired it with a memory no capture wrote
+        together with it.
+
+        Promoting applies a rule, so code older than the store promotes
+        nothing. Returns ``{"candidates": [...], "promoted": n}``: each
+        candidate's id, the rule's two numbers (``revised_by_agent``,
+        ``used_in_sessions``) and, when it was promoted, its memory's id.
         """
         assert self._store is not None
         assert self._encoder is not None
+        if self._older_than_store() is not None:
+            return {"candidates": [], "promoted": 0}
         candidates = self._store.get_hypomnema_promotion_candidates(
             agent_id=self.scope.agent_id,
             person_id=self.scope.person_id,
             project_scope=self.scope.project_scope,
-            limit=limit,
+            limit=None,
         )
+        found = [
+            {
+                "id": entry["id"],
+                "revised_by_agent": int(entry["revised_by_agent"]),
+                "used_in_sessions": int(entry["used_in_sessions"]),
+                "memory_id": None,
+            }
+            for entry in candidates
+        ]
         promoted = 0
-        for entry in candidates:
+        for entry, said in zip(candidates[:max(0, limit)], found):
             # The memory holds the note's words, so it keeps the note's
-            # author: the agent's note stays the agent's, and any other kind
-            # is not claimed for it. (Mnemos's own notes never get here; one
-            # that did would stay Mnemos's, not be passed off as another's.)
+            # author and signature: only the agent's notes get here, and one
+            # of any other kind would not be claimed for the agent.
             engram = self._encoder.encode(
                 content=entry["content"],
                 kind="semantic",
@@ -6337,8 +6400,44 @@ class MnemosRuntime:
             )
             self._traced_write(engram.id)
             self._store.mark_hypomnema_promoted(entry["id"], engram.id)
+            said["memory_id"] = engram.id
             promoted += 1
-        return promoted
+        return {"candidates": found, "promoted": promoted}
+
+
+def _times(count: int, one: str, many: str) -> str:
+    return f"{count} {one if count == 1 else many}"
+
+
+def _promotion_lines(promotion: dict[str, Any]) -> list[str]:
+    """What a maintenance cycle's promotion did, for its report: how many
+    notes were ready to become memories and how many did, then each one
+    with the rule's two numbers, and the memory it became. The rule is said
+    once, so the numbers can be read against it."""
+    candidates = promotion.get("candidates") or []
+    promoted = int(promotion.get("promoted") or 0)
+    if not candidates:
+        return [f"Promoted continuity notes: {promoted} of 0 candidates"]
+    lines = [
+        f"Promoted continuity notes: {promoted} of "
+        f"{_times(len(candidates), 'candidate', 'candidates')} "
+        f"(each revised at least {_times(PROMOTION_REVISIONS, 'time', 'times')} "
+        f"and recalled in at least {_times(PROMOTION_SESSIONS, 'session', 'sessions')}; "
+        f"{PROMOTIONS_PER_CYCLE} at most a cycle)"
+    ]
+    for found in candidates[:PROMOTION_LINES]:
+        became = (
+            f"; now memory {found['memory_id']}" if found.get("memory_id")
+            else "; waits for the next cycle"
+        )
+        lines.append(
+            f"  - note {found['id']}: revised "
+            f"{_times(found['revised_by_agent'], 'time', 'times')}, recalled in "
+            f"{_times(found['used_in_sessions'], 'session', 'sessions')}{became}"
+        )
+    if len(candidates) > PROMOTION_LINES:
+        lines.append(f"  - and {len(candidates) - PROMOTION_LINES} more")
+    return lines
 
 
 def _importance_scores(importance: str | float, domain: str) -> tuple[float, float]:
@@ -6832,6 +6931,38 @@ def describe_journal(journal: Mapping[str, Any] | None) -> str | None:
     )
 
 
+def describe_promotion(promotion: dict[str, Any] | None) -> list[str]:
+    """The health card's promotion lines: how many notes are ready to become
+    memories and how many promotion made, then each ready note with the
+    rule's two numbers (revisions by the agent, sessions that recalled it).
+    Nothing for a snapshot without them."""
+    if not promotion:
+        return []
+    count = int(promotion.get("candidates") or 0)
+    promoted = int(promotion.get("promoted") or 0)
+    rule = promotion.get("rule") or {}
+    head = (
+        f"{_times(count, 'note', 'notes')} ready to become "
+        f"{'a memory' if count == 1 else 'memories'}, {promoted} promoted"
+    )
+    if count:
+        head += (
+            f" (ready: revised at least {_times(int(rule.get('revisions', PROMOTION_REVISIONS)), 'time', 'times')}"
+            f" and recalled in at least {_times(int(rule.get('sessions', PROMOTION_SESSIONS)), 'session', 'sessions')})"
+        )
+    rows = [f"{'Promotion:':<15}{head}"]
+    ready = promotion.get("ready") or []
+    for note in ready:
+        rows.append(
+            f"{'':<15}note {note['id']}: revised "
+            f"{_times(int(note['revised_by_agent']), 'time', 'times')}, recalled in "
+            f"{_times(int(note['used_in_sessions']), 'session', 'sessions')}"
+        )
+    if count > len(ready):
+        rows.append(f"{'':<15}and {count - len(ready)} more")
+    return rows
+
+
 def format_health_card(data: dict[str, Any]) -> str:
     """Render a health() snapshot as a human-relayable card."""
 
@@ -6963,6 +7094,7 @@ def format_health_card(data: dict[str, Any]) -> str:
             f"{counts['continuity_notes_active']} notes "
             f"({counts['continuity_notes_foundational']} foundational)",
         ),
+        *describe_promotion(data.get("promotion")),
         line("Connections", counts["connections"]),
         line("Beliefs", f"{counts['beliefs_active']} active"),
         *semantic_lines,

@@ -93,6 +93,58 @@ CORRECTION_VERSION_REASON = "correction"
 # see" has an answer for as long as anyone is likely to ask it.
 TRACE_KEEP_DAYS = 90
 
+# Promotion by lasting attention (WP-R12). A continuity note with no memory of
+# its own becomes one because the agent kept coming back to it, never because
+# of its age, its length or a score its words earned: the agent revised it at
+# least PROMOTION_REVISIONS times and recalled it in at least
+# PROMOTION_SESSIONS distinct sessions. Only the agent's own notes qualify
+# (``authored_by`` 'agent'): promoted, a note's words become a memory's, and
+# words in memory come only from the agent. Both numbers are counted from what
+# the store already records:
+#
+# - a revision is the agent's when the model that made it signed it
+#   (``revised_by`` in the note's revision trail). An unsigned revision, such as
+#   a repair's, is no one's that can be named.
+# - a session used it when a recall in that named session showed it alone
+#   (``memory_trace``): asked for by its id, ``mnemos_recall("<id>")``, which
+#   is how the agent draws on a note it was shown, or the only thing its query
+#   found. Being returned among other rows, offered by the cue or shown in the
+#   briefing is not a use. Only uses within the last TRACE_KEEP_DAYS count:
+#   the trace drops older calls when it next writes, and the count ignores
+#   them before that too, so a long idle spell can't promote on stale uses. A
+#   client that names no session records none.
+PROMOTION_REVISIONS = 1
+PROMOTION_SESSIONS = 2
+_REVISED_BY_AGENT_SQL = """(
+    SELECT COUNT(*) FROM json_each(
+        CASE WHEN json_valid(h.revisions_json) THEN h.revisions_json ELSE '[]' END
+    ) AS revision
+    WHERE CASE WHEN revision.type = 'object'
+               THEN TRIM(COALESCE(json_extract(revision.value, '$.revised_by'), ''))
+               ELSE '' END != ''
+)"""
+_USED_IN_SESSIONS_SQL = """(
+    SELECT COUNT(DISTINCT trace.session) FROM memory_trace trace
+    WHERE trace.agent_id = h.agent_id AND trace.person_id = h.person_id
+      AND trace.project_scope = h.project_scope
+      AND trace.tool = 'recall' AND trace.session != ''
+      AND trace.at >= strftime('%Y-%m-%dT%H:%M:%S', 'now', '-""" + str(TRACE_KEEP_DAYS) + """ days')
+      AND CASE WHEN json_valid(trace.read_ids)
+               THEN json_array_length(trace.read_ids) = 1
+                    AND json_extract(trace.read_ids, '$[0]') = h.id
+               ELSE 0 END
+)"""
+# What can become a memory at all: a live continuity note in the agent's own
+# words, with no memory of its own (a capture's note is its memory's pair from
+# the start) and naming none it only interprets.
+_PROMOTABLE_NOTE_SQL = """
+    h.active = 1
+    AND h.entry_kind = 'continuity'
+    AND h.authored_by = 'agent'
+    AND h.graduated_to_engram_id IS NULL
+    AND h.related_engram_id IS NULL
+"""
+
 VALID_FUNCTIONAL_TYPES = {
     "working",
     "preference",
@@ -4355,41 +4407,65 @@ class EngramStore:
         ).fetchall()
         return [dict(row) for row in rows]
 
+    @staticmethod
+    def _promotion_query(where_sql: str) -> str:
+        """The notes the agent kept coming back to (PROMOTION_REVISIONS,
+        PROMOTION_SESSIONS), with the rule's two numbers on each row:
+        ``revised_by_agent`` and ``used_in_sessions``. ``where_sql`` narrows
+        the notes, written against ``h``; the query takes its parameters
+        first, then the two minimums."""
+        return f"""
+            SELECT * FROM (
+                SELECT h.*,
+                       {_REVISED_BY_AGENT_SQL} AS revised_by_agent,
+                       {_USED_IN_SESSIONS_SQL} AS used_in_sessions
+                FROM hypomnema_entries h
+                WHERE {where_sql} AND {_PROMOTABLE_NOTE_SQL}
+            )
+            WHERE revised_by_agent >= ? AND used_in_sessions >= ?
+        """
+
     def get_hypomnema_promotion_candidates(
         self,
         *,
         agent_id: str = "default",
         person_id: str = "user",
         project_scope: str = "global",
-        limit: int = 10,
+        limit: int | None = 10,
     ) -> list[dict[str, Any]]:
-        """List stable hypomnema entries ready to become Mnemos engrams.
+        """The notes ready to become memories: the ones the agent kept coming
+        back to, the most used first.
+
+        A note qualifies when it is the agent's own, has no memory of its own,
+        and the agent revised it at least ``PROMOTION_REVISIONS`` times and
+        recalled it in at least ``PROMOTION_SESSIONS`` distinct sessions (see
+        PROMOTION_REVISIONS for how each is counted). Each row carries the two
+        numbers, ``revised_by_agent`` and ``used_in_sessions``. Its age, its
+        length, whether it is foundational and the confidence or salience its
+        words were given decide nothing.
 
         A note that references a memory it interprets or summarises
         (``related_engram_id``) is never one: promoting it would pair it with
-        a memory no capture wrote together with it. Nor is a note Mnemos
-        wrote (``authored_by`` 'system'), such as a closed session's summary:
-        promoted, its words would become a memory Mnemos wrote, and words in
-        memory come only from the agent. Left out here, not skipped later, so
-        such a note never holds a place another note could have.
+        a memory no capture wrote together with it. Nor is a note in anyone
+        else's words: Mnemos's (``authored_by`` 'system'), such as a closed
+        session's summary, a person's or setup's, or a writer no one recorded.
+        Promoted, their words would become a memory, and words in memory come
+        only from the agent. Left out here, not skipped later, so such a note
+        never holds a place another note could have. ``limit`` None lists
+        every one.
         """
         conn = self._get_conn()
         rows = conn.execute(
-            """
-            SELECT * FROM hypomnema_entries
-            WHERE agent_id = ? AND person_id = ? AND project_scope = ?
-              AND active = 1
-              AND entry_kind = 'continuity'
-              AND authored_by != 'system'
-              AND graduated_to_engram_id IS NULL
-              AND related_engram_id IS NULL
-              AND confidence >= 0.82
-              AND salience >= 0.65
-              AND (revision_count >= 1 OR foundational = 1)
-            ORDER BY foundational DESC, confidence DESC, salience DESC, created_at ASC
+            self._promotion_query("h.agent_id = ? AND h.person_id = ? AND h.project_scope = ?")
+            + """
+            ORDER BY used_in_sessions DESC, revised_by_agent DESC, created_at ASC, id ASC
             LIMIT ?
             """,
-            (agent_id, person_id, project_scope, limit),
+            (
+                agent_id, person_id, project_scope,
+                PROMOTION_REVISIONS, PROMOTION_SESSIONS,
+                -1 if limit is None else limit,
+            ),
         ).fetchall()
         return [self._hydrate_hypomnema_row(dict(row)) for row in rows]
 
@@ -4405,6 +4481,13 @@ class EngramStore:
         ``hypomnema_active`` and ``hypomnema_foundational`` count live notes
         (``_NOTE_LIVE``), the ones a reader is shown: a note whose memory has
         gone quiet or faded is not counted until it comes back.
+
+        ``hypomnema_promotion_candidates`` counts the notes ready to become
+        memories (``get_hypomnema_promotion_candidates``), and
+        ``hypomnema_promoted`` the notes promotion made memories of, whose
+        memory is tagged 'promoted'. A capture's note is its memory's pair from
+        the start, and was never promoted: counting every paired note, as this
+        did, reported each capture as a promotion.
         """
         conn = self._get_conn()
         where = ["agent_id = ?"]
@@ -4415,7 +4498,6 @@ class EngramStore:
         if project_scope is not None:
             where.append("project_scope = ?")
             params.append(project_scope)
-        where_sql = " AND ".join(where)
         noted_sql = " AND ".join(f"h.{condition}" for condition in where)
         row = conn.execute(
             f"""
@@ -4423,25 +4505,21 @@ class EngramStore:
               COUNT(*) AS total,
               SUM(CASE WHEN {_NOTE_LIVE} THEN 1 ELSE 0 END) AS active,
               SUM(CASE WHEN h.foundational = 1 AND {_NOTE_LIVE} THEN 1 ELSE 0 END) AS foundational,
-              SUM(CASE WHEN h.graduated_to_engram_id IS NOT NULL THEN 1 ELSE 0 END) AS promoted
+              SUM(CASE WHEN m.id IS NOT NULL AND EXISTS (
+                      SELECT 1 FROM json_each(
+                          CASE WHEN json_valid(m.tags) THEN m.tags ELSE '[]' END
+                      ) AS tag
+                      WHERE tag.value = 'promoted'
+                  ) THEN 1 ELSE 0 END) AS promoted
             FROM hypomnema_entries h {_NOTE_MEMORY_JOIN}
             WHERE {noted_sql}
             """,
             params,
         ).fetchone()
-        candidate_query = (
-            "SELECT COUNT(*) FROM hypomnema_entries "
-            f"WHERE {where_sql} "
-            "AND active = 1 "
-            "AND entry_kind = 'continuity' "
-            "AND authored_by != 'system' "
-            "AND graduated_to_engram_id IS NULL "
-            "AND related_engram_id IS NULL "
-            "AND confidence >= 0.82 "
-            "AND salience >= 0.65 "
-            "AND (revision_count >= 1 OR foundational = 1)"
-        )
-        candidate_row = conn.execute(candidate_query, params).fetchone()
+        candidate_row = conn.execute(
+            f"SELECT COUNT(*) FROM ({self._promotion_query(noted_sql)})",
+            (*params, PROMOTION_REVISIONS, PROMOTION_SESSIONS),
+        ).fetchone()
         candidates = int(candidate_row[0] or 0)
         return {
             "hypomnema_total": int(row["total"] or 0),

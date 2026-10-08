@@ -101,34 +101,38 @@ class TestHypomnemaStore:
         assert inactive["active"] is False
         assert inactive["superseded_by"] == replacement_id
 
-    def test_promotion_candidates_require_stability_thresholds(self, store):
-        low_id = store.write_hypomnema_entry(
+    def test_promotion_candidates_are_the_notes_the_agent_kept_coming_back_to(self, store):
+        """WP-R12: a note is ready when the agent revised it and asked for it
+        in two sessions. How sure or salient its words were scored, and
+        whether it is foundational, decide nothing."""
+        scope = {"agent_id": "vektor", "person_id": "riley", "project_scope": "codex-test"}
+        attended_id = store.write_hypomnema_entry(
             "Interesting but weak continuity",
-            agent_id="vektor",
-            person_id="riley",
-            project_scope="codex-test",
+            **scope,
+            authored_by="agent",
             confidence=0.7,
             salience=0.6,
-            foundational=True,
         )
-        high_id = store.write_hypomnema_entry(
+        store.revise_hypomnema_entry(
+            attended_id, "Interesting continuity, checked again.", reason="checked",
+            revised_by="claude-opus-5-5", **scope,
+        )
+        for session in ("session-one", "session-two"):
+            store.record_trace(tool="recall", session=session, read_ids=[attended_id], **scope)
+        sure_id = store.write_hypomnema_entry(
             "Foundational continuity ready for Mnemos.",
-            agent_id="vektor",
-            person_id="riley",
-            project_scope="codex-test",
+            **scope,
+            authored_by="agent",
             confidence=0.9,
             salience=0.8,
             foundational=True,
         )
 
-        candidates = store.get_hypomnema_promotion_candidates(
-            agent_id="vektor",
-            person_id="riley",
-            project_scope="codex-test",
-        )
+        candidates = store.get_hypomnema_promotion_candidates(**scope)
 
-        assert [entry["id"] for entry in candidates] == [high_id]
-        assert low_id not in [entry["id"] for entry in candidates]
+        assert [entry["id"] for entry in candidates] == [attended_id]
+        assert (candidates[0]["revised_by_agent"], candidates[0]["used_in_sessions"]) == (1, 2)
+        assert sure_id not in [entry["id"] for entry in candidates]
 
 
 def test_a_note_is_reachable_however_full_the_store_gets(store):

@@ -29,18 +29,26 @@ def _runtime(tmp_path) -> MnemosRuntime:
 
 
 def _seed_promotion_candidate(runtime: MnemosRuntime) -> None:
-    """Plant a foundational note that _promote_candidates will graduate."""
+    """Plant a note that _promote_candidates will graduate: the agent's own,
+    revised by the agent and asked for by its id in two sessions (WP-R12)."""
 
     runtime._ensure_init()
-    runtime._store.write_hypomnema_entry(
+    scope = {"agent_id": "nova", "person_id": "riley", "project_scope": "demo"}
+    note = runtime._store.write_hypomnema_entry(
         "Riley always wants the dream journal verified by tests.",
-        agent_id="nova",
-        person_id="riley",
-        project_scope="demo",
-        foundational=True,
-        confidence=0.9,
-        salience=0.8,
+        **scope,
+        authored_by="agent",
+        author_id="nova",
     )
+    runtime._store.revise_hypomnema_entry(
+        note,
+        "Riley always wants the dream journal verified by tests, every time.",
+        reason="said it better",
+        revised_by="claude-opus-5-5",
+        **scope,
+    )
+    for session in ("session-one", "session-two"):
+        runtime._store.record_trace(tool="recall", session=session, read_ids=[note], **scope)
 
 
 def test_compose_returns_none_when_nothing_noteworthy():

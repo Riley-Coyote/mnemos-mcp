@@ -623,6 +623,9 @@ def test_health_returns_structured_dict(tmp_path):
         # What should be moving and whether it is: each check's expected and
         # seen, and a flag for whatever stalled for more than a day.
         "watchdog",
+        # The rule a note becomes a memory by, how many notes are ready and
+        # how many promotion made, each ready note with the rule's numbers.
+        "promotion",
     }
     assert data["legacy"]["hidden"] == 0
     assert data["counts"]["continuity_notes_active"] >= 1

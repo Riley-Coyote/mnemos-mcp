@@ -139,6 +139,17 @@ def _stable_note(store, content: str, **fields) -> str:
     )
 
 
+def _attend(store, note: str) -> None:
+    """What makes a note ready to become a memory (WP-R12): a revision the
+    agent's model signed, and its id asked for in two sessions."""
+    content = store.get_hypomnema_entry(note, **SCOPE)["content"]
+    store.revise_hypomnema_entry(
+        note, f"{content} Noted again.", reason="noted again", revised_by=MODEL, **SCOPE,
+    )
+    for session in ("session-one", "session-two"):
+        store.record_trace(tool="recall", session=session, read_ids=[note], **SCOPE)
+
+
 def _closed_session_summary(store, n: int, confidence: float = 0.9) -> str:
     """A closed session's summary, as the store writes one when a session
     closes with no synthesis: Mnemos's words around the session's memories
@@ -257,6 +268,7 @@ def test_a_promoted_memory_keeps_the_notes_meaning_and_asks_for_its_own(tmp_path
             rt._store, "Riley keeps the ferry timetable pinned above the chart table.",
             authored_by="agent", author_id="nova", author_model=MODEL,
         )
+        _attend(rt._store, note)
         said = rt.maintain()
         memory = _pair_of(db, note)
         assert "Promoted continuity notes: 1" in said and memory, said
@@ -299,6 +311,10 @@ def test_a_note_mnemos_wrote_is_never_promoted_and_takes_no_place(tmp_path):
             mine, "The harbour master answers the radio before the telephone, always.",
             reason="said again", **SCOPE,
         )
+        # The same attention for every one of them (WP-R12): only who wrote
+        # them sets them apart.
+        for note in (*summaries, mine):
+            _attend(store, note)
         assert _read(db, f"""
             SELECT authored_by, entry_kind, confidence >= 0.82, salience >= 0.65,
                    revision_count >= 1, related_engram_id
@@ -401,21 +417,32 @@ def test_no_cycle_or_promotion_writes_engine_words_on_a_store_full_of_candidates
         candidates = [
             _stable_note(store, "Riley keeps the ferry timetable pinned above the chart table.",
                          authored_by="agent", author_id="nova", author_model=MODEL),
-            _stable_note(store, "The lighthouse keeper logs every ship that passes the point.",
-                         source="co-formed"),
-            _stable_note(store, "The chandlery on the quay sells rope by the fathom.",
-                         source="observed"),
+            _stable_note(store, "The harbour bell rings twice when fog rolls in.",
+                         authored_by="agent", author_id="nova"),
+            _stable_note(store, "The night ferry skips the outer buoy in a heavy swell.",
+                         authored_by="agent", author_id="nova", foundational=False),
         ]
         revised = _stable_note(store, "The tide turns an hour later at the outer buoy.",
                                authored_by="agent", author_id="nova", foundational=False)
         store.revise_hypomnema_entry(revised, "The tide turns an hour later at the outer buoy, "
                                      "and later still in spring.", reason="learned more", **SCOPE)
         candidates.append(revised)
+        # Notes in other words than the agent's, given the same attention:
+        # they never become memories at all (WP-R12).
+        others = [
+            _stable_note(store, "The lighthouse keeper logs every ship that passes the point.",
+                         source="co-formed"),
+            _stable_note(store, "The chandlery on the quay sells rope by the fathom.",
+                         source="observed"),
+        ]
         summary = _closed_session_summary(store, 1)
+        for note in (*candidates, *others, summary):
+            _attend(store, note)
     finally:
         rt.close()
     authors = dict(_read(db, "SELECT id, authored_by FROM hypomnema_entries"))
-    assert [authors[c] for c in candidates] == ["agent", "coauthored", "unknown", "agent"], "premise"
+    assert [authors[c] for c in candidates] == ["agent"] * 4, "premise"
+    assert [authors[o] for o in others] == ["coauthored", "unknown"], "premise"
     assert authors[summary] == "system", "premise"
     before = _ids(db)
 
@@ -436,7 +463,7 @@ def test_no_cycle_or_promotion_writes_engine_words_on_a_store_full_of_candidates
     promoted = {_pair_of(db, c) for c in candidates}
     assert None not in promoted, second
     assert _ids(db) - before == promoted, _written(db, _ids(db) - before - promoted)
-    assert _pair_of(db, summary) is None
+    assert [_pair_of(db, note) for note in (*others, summary)] == [None] * 3
 
 
 # ── 5. The code before this change stands down ──

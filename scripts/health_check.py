@@ -652,30 +652,41 @@ def phase4_hypomnema(h: Harness) -> None:
                  f"superseded_by_ok={oldrow['superseded_by'] == new_id if oldrow else None} "
                  f"new_source={newrow['source'] if newrow else None} recoverable={recoverable}")
 
-        # I18: promotion candidate iff active ∧ not graduated ∧ conf≥0.82 ∧ sal≥0.65 ∧ (rev≥1 ∨ foundational)
-        # Build a positive case: write then revise (rev≥1) with high conf/sal
-        pos = store.write_hypomnema_entry("promote me", **scope, domain="identity",
-                                          confidence=0.9, salience=0.9)
-        store.revise_hypomnema_entry(pos, "promote me v2", reason="bump",
-                                     confidence=0.9, salience=0.9, **scope)
-        # Negative: high conf/sal but rev=0 and not foundational → excluded
-        neg_lowrev = store.write_hypomnema_entry("no revisions yet", **scope,
-                                                 confidence=0.9, salience=0.9)
-        # Negative: foundational satisfies rev requirement but low confidence → excluded
-        neg_lowconf = store.write_hypomnema_entry("foundational but unsure", **scope,
-                                                  foundational=True,
-                                                  confidence=0.5, salience=0.9)
-        # Positive via foundational: high conf/sal + foundational (rev not required)
-        pos_found = store.write_hypomnema_entry("foundational and sure", **scope,
-                                                foundational=True,
-                                                confidence=0.9, salience=0.9)
+        # I18: promotion candidate iff the agent's own live note with no memory of
+        # its own, revised by the agent (a signed revision) and recalled alone in
+        # >= 2 distinct sessions (WP-R12). Confidence, salience and foundational
+        # decide nothing.
+        def attend(entry_id: str, sessions: tuple[str, ...], revise: bool = True) -> None:
+            if revise:
+                store.revise_hypomnema_entry(entry_id, "said again", reason="bump",
+                                             revised_by="hh-model", **scope)
+            for session in sessions:
+                store.record_trace(tool="recall", session=session, read_ids=[entry_id], **scope)
+
+        # Positive: unsure and unremarkable, but revised and recalled in two sessions
+        pos = store.write_hypomnema_entry("promote me", **scope, authored_by="agent",
+                                          confidence=0.5, salience=0.5)
+        attend(pos, ("hh-1", "hh-2"))
+        # Negative: revised, but recalled in one session only
+        neg_one = store.write_hypomnema_entry("one session only", **scope,
+                                              authored_by="agent")
+        attend(neg_one, ("hh-1", "hh-1"))
+        # Negative: foundational and sure, recalled in two sessions, never revised
+        neg_unrevised = store.write_hypomnema_entry("foundational and sure", **scope,
+                                                    authored_by="agent", foundational=True,
+                                                    confidence=0.9, salience=0.9)
+        attend(neg_unrevised, ("hh-1", "hh-2"), revise=False)
+        # Negative: words no one recorded as the agent's, given the same attention
+        neg_unknown = store.write_hypomnema_entry("whose words?", **scope,
+                                                  confidence=0.9, salience=0.9)
+        attend(neg_unknown, ("hh-1", "hh-2"))
         cand_ids = {c["id"] for c in store.get_hypomnema_promotion_candidates(**scope, limit=50)}
-        ok18 = (pos in cand_ids and pos_found in cand_ids
-                and neg_lowrev not in cand_ids and neg_lowconf not in cand_ids)
-        h.record("I18", "promotion candidacy predicate (conf≥.82 ∧ sal≥.65 ∧ (rev≥1 ∨ foundational))",
+        ok18 = (pos in cand_ids and neg_one not in cand_ids
+                and neg_unrevised not in cand_ids and neg_unknown not in cand_ids)
+        h.record("I18", "promotion candidacy (agent's own ∧ signed revision ≥1 ∧ recalled in ≥2 sessions)",
                  "PASS" if ok18 else "FAIL",
-                 f"pos_rev∈={pos in cand_ids} pos_found∈={pos_found in cand_ids} "
-                 f"neg_rev0∉={neg_lowrev not in cand_ids} neg_lowconf∉={neg_lowconf not in cand_ids}")
+                 f"pos∈={pos in cand_ids} one_session∉={neg_one not in cand_ids} "
+                 f"unrevised∉={neg_unrevised not in cand_ids} unknown∉={neg_unknown not in cand_ids}")
     finally:
         store.close()
 

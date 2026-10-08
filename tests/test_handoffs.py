@@ -178,11 +178,13 @@ def test_startup_packet_delivers_handoff_first_once_and_marks_delivery(tmp_path)
 
 
 def test_handoffs_and_maintenance_reports_never_promote(tmp_path):
+    """Each is revised by the agent and asked for by its id in two sessions,
+    as a note that becomes a memory is (WP-R12): only the ordinary note does."""
     store = EngramStore(tmp_path / "promotion.db")
     scope = MnemosScope(db_path=str(tmp_path / "promotion.db"), **SCOPE)
     try:
-        store.write_handoff("keep this as working state", **SCOPE)
-        write_dream_entry(store, scope, "Mnemos connected two memories.")
+        handoff = store.write_handoff("keep this as working state", **SCOPE)
+        report = write_dream_entry(store, scope, "Mnemos connected two memories.")
         ordinary = store.write_hypomnema_entry(
             "stable ordinary continuity",
             authored_by="agent",
@@ -192,6 +194,12 @@ def test_handoffs_and_maintenance_reports_never_promote(tmp_path):
             salience=0.9,
             **SCOPE,
         )
+        for note in (handoff, report, ordinary):
+            store.revise_hypomnema_entry(
+                note, "said again", reason="said again", revised_by="claude-opus-5-5", **SCOPE,
+            )
+            for session in ("session-one", "session-two"):
+                store.record_trace(tool="recall", session=session, read_ids=[note], **SCOPE)
         candidates = store.get_hypomnema_promotion_candidates(**SCOPE)
         assert [item["id"] for item in candidates] == [ordinary]
     finally:

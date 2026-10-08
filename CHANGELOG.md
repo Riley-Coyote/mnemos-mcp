@@ -2,6 +2,56 @@
 
 ## 0.3.1 (unreleased)
 
+### Promotion by lasting attention
+
+A note with no memory of its own became one by a score: the confidence and
+salience its words were given, and either one revision or the mark
+"foundational", which let a note through unrevised. It took notes in anyone's
+words but Mnemos's: setup's line around the person's own answer, a note whose
+writer nobody recorded. On the maintainer's store it never fired: no memory
+there was ever promoted.
+
+Now a note becomes a memory because the agent kept coming back to it. The
+agent revised it at least once (a revision its model signed) and recalled it
+in at least two sessions. Recalled means a recall in a named session showed it
+alone: asked for by its id, which is how the agent draws on a note it was
+shown, or the only thing its query found. Returned among other rows, offered
+by the cue or shown in the briefing, it was not used. Both numbers come from
+what the store already keeps, the note's revisions and `memory_trace` (90
+days of calls), so nothing new is recorded. Only the agent's own notes
+qualify, and the memory holds exactly the note's words, its meaning left for
+the agent to give. How sure or salient its words were scored, its age and its
+length decide nothing. At most three a cycle, the most used first.
+
+A capture's note is its memory's from the start, so what can still become a
+memory is a note written another way: a session the advanced console closes
+with the agent's synthesis, an answer older code kept for later, a note an
+integration wrote. The simple tools never revise a continuity note in place (a
+correction writes a new pair), so a note qualifies only once it has been
+revised through the advanced console.
+
+On a fresh copy of the maintainer's live store (2026-10-07) no memory had
+ever been promoted. In `claude-code/user/global` all 475 continuity notes are
+captures, paired with their memories, so neither rule finds anything there,
+and a cycle on this code and on the previous one promoted nothing. The file's
+only candidates by the old rule were 10 notes in another agent's scope,
+`claude-field/user/global`, whose writer was never recorded, with unsigned
+revisions and no recorded use: a cycle there on the previous code made 3 of
+them memories of unknown authorship, one of them never revised; on this code,
+none. A note written through the advanced console on a copy (a session closed
+with the agent's synthesis), revised with `mnemos_hypomnema_revise` and asked
+for by its id in two sessions, each in its own process, became a memory at the
+next cycle with its words and no meaning, and came back to a recall in
+another process.
+
+The maintenance report says how many notes were ready and how many became
+memories, each ready one with its two numbers (revised N times, recalled in M
+sessions) and the memory it became. The health card says how many are ready
+and how many were promoted, with the same numbers, and its structured result
+keeps the rule. `hypomnema_promoted` now counts the notes promotion made
+memories of: it counted every note paired with a memory, so each capture read
+as a promotion. Code version 20.
+
 ### Resonance reaches
 
 Recall's second step, activation spreading through the links between
