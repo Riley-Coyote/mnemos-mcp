@@ -14,6 +14,8 @@ Use this checklist before publishing Mnemos or opening a release PR.
   - `mnemos_reflect`
   - `mnemos_introduce`
   - `mnemos_health`
+  - `mnemos_journal`
+  - `mnemos_note`
 - Advanced mode serves every simple tool, unchanged, plus its own tools.
 - Injected FastMCP context parameters are not exposed in public tool schemas.
 - Baseline tools never request host-model sampling.

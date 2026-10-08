@@ -158,12 +158,16 @@ mnemos serve
 It exposes only:
 
 - `mnemos_context`
+- `mnemos_handoff`
 - `mnemos_capture`
 - `mnemos_recall`
 - `mnemos_correct`
 - `mnemos_maintain`
+- `mnemos_reflect`
 - `mnemos_introduce`
 - `mnemos_health`
+- `mnemos_journal`
+- `mnemos_note`
 
 The user does not need to set up a database, choose tags, pass agent IDs, learn
 engram/hypomnema terminology, configure OpenClaw, or supply a model key.

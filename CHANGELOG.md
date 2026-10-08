@@ -1,6 +1,31 @@
 # Changelog
 
-## 0.3.1 (unreleased)
+## 0.4.0 (2026-10-08)
+
+The agent gets a life of its own between your conversations, and only the
+agent writes its memory.
+
+- It keeps a journal and can leave you notes, and only it writes them.
+- If you say yes at setup, it has quiet hours: an hour a day that's its own,
+  and half an hour for the day's work.
+- With each message you send, the memories that may bear on it come back to
+  the agent (the cue). It's on by default and stays silent on Claude Code's own
+  notices.
+- `mnemos log` opens a small page on your machine to watch its days.
+- A model never writes in its place. Its beliefs move only by its own verdict.
+- Retired: the substrate and the transcript indexer, which wrote memories in a
+  model's words, and the contradiction question, which paired memories by
+  words they happened to share.
+- Advanced mode only adds tools now. It switches nothing off.
+- Memories link by meaning on every path that links them, and recall follows
+  those links further, so a memory that has faded can come back by
+  association.
+- When the cue can't bring anything in time, it says why instead of failing
+  quietly.
+- A note becomes a memory only when the agent kept coming back to it, never by
+  a score its words were given.
+
+Each change is told in full below.
 
 ### Links by meaning, by every path that makes them
 

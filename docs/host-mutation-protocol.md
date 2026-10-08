@@ -1,6 +1,6 @@
 # Host Mutation Protocol
 
-Mnemos Core 0.3.1 exposes a small host-neutral API for adapters that persist an
+Mnemos Core 0.4.0 exposes a small host-neutral API for adapters that persist an
 event before delivery and may deliver it more than once. The first protocol
 version covers the five public operations that mutate canonical memory state:
 

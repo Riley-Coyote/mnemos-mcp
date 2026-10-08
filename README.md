@@ -9,6 +9,13 @@ decided together, what it got wrong last time — before you say anything.
 
 That is the whole product. Everything else in here serves it.
 
+Between your conversations it keeps living a little. It keeps a journal and
+can leave you a note, and if you say yes at setup it has an hour a day that's
+its own and half an hour for the day's work. Only the agent writes its journal
+and its notes, and no model writes in its place: its beliefs move only by its
+own verdict. To watch its days, run `mnemos log`, a small page on your own
+machine.
+
 For Claude Code:
 
 ```bash
