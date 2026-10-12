@@ -19,6 +19,8 @@ import sqlite3
 import struct
 import sys
 import textwrap
+import threading
+import time
 
 import pytest
 
@@ -204,6 +206,48 @@ def test_doctor_names_the_root_cause_instead_of_saying_install_it(
     semantic_block = out[out.index("Semantic:"):].split("Simple tools:")[0]
     assert "pip install" not in semantic_block
     assert "checked in Python" in semantic_block
+
+
+# --- Two indexes made at once -------------------------------------------------
+
+_SLOW_PACKAGE = "import time\ntime.sleep(1.0)\n"
+
+
+@pytest.fixture
+def slow_sentence_transformers(tmp_path, monkeypatch, fresh_backend):
+    """An installed sentence-transformers whose import takes a second, as the
+    real one takes several (torch, transformers)."""
+    package = tmp_path / "site" / "sentence_transformers"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(_SLOW_PACKAGE)
+    monkeypatch.syspath_prepend(str(tmp_path / "site"))
+    yield
+    sys.modules.pop("sentence_transformers", None)
+
+
+def test_an_index_made_while_another_imports_the_model_still_gets_meaning_search(
+    slow_sentence_transformers,
+):
+    """L15, Oct 11 2026: the cue's background index started importing the
+    model, recall's index was made meanwhile, found the check already marked
+    done with nothing available, and kept meaning search off for the whole
+    session, saying nothing. It hit 47 of 62 sessions on the first pass."""
+    made: dict[str, EmbeddingIndex] = {}
+    started = threading.Event()
+
+    def warm_up():
+        started.set()
+        made["cue"] = EmbeddingIndex(db_path=None, read_only=True)
+
+    cue = threading.Thread(target=warm_up)
+    cue.start()
+    started.wait()
+    time.sleep(0.3)  # the cue's import is under way
+    recall = EmbeddingIndex(db_path=None)
+    cue.join()
+
+    assert made["cue"].available
+    assert recall.available, recall.unavailable_reason
 
 
 def test_health_says_semantic_recall_is_off_and_why(tmp_path, broken_sentence_transformers):
@@ -427,3 +471,48 @@ def test_seeds_found_by_meaning_are_labelled_embedding(tmp_path, working_local_b
     assert firefly[0].score_breakdown["similarity"] > 0.3
     gnome = [r for r in by_keyword if "gnome" in r.engram.content]
     assert gnome and gnome[0].retrieval_path == "fts"
+
+
+# --- Recall says so when it searched by words alone --------------------------
+
+
+def test_recall_says_meaning_search_is_off_when_the_store_has_vectors_it_cant_use(
+    tmp_path, broken_sentence_transformers,
+):
+    """A recall that found nothing, or only word matches, while the store
+    holds vectors this session can't search, must not read as a full search:
+    a memory said in other words was never looked for."""
+    runtime = _runtime(tmp_path)
+    runtime.capture("Riley keeps a garden gnome by the door")
+    runtime.close()
+    _embeddings_db(tmp_path / "memory.db", [
+        (f"engram_{i}", _pack([0.1] * 384), "all-MiniLM-L6-v2", 384) for i in range(3)
+    ])
+
+    runtime = _runtime(tmp_path)
+    try:
+        found = runtime.recall("garden gnome")
+        nothing = runtime.recall("bioluminescent beetles")
+    finally:
+        runtime.close()
+
+    for said in (found, nothing):
+        assert "Meaning search is off in this session" in said, said
+        assert ROOT_CAUSE in said, said
+    assert "garden gnome by the door" in found
+
+
+def test_recall_says_nothing_of_it_on_a_keyword_only_setup(
+    tmp_path, missing_sentence_transformers,
+):
+    """Without the package and with no vectors stored, words are all there is:
+    a supported setup, not a fault, and not worth a line on every recall."""
+    runtime = _runtime(tmp_path)
+    try:
+        runtime.capture("Riley keeps a garden gnome by the door")
+        found = runtime.recall("garden gnome")
+    finally:
+        runtime.close()
+
+    assert "garden gnome by the door" in found
+    assert "Meaning search is off" not in found

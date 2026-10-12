@@ -4866,13 +4866,18 @@ class MnemosRuntime:
         ]
         faded = self._faded_matches(query, max_results) if include_archived else []
 
+        words_only = self._searched_by_words_only()
         if not found and not faded:
-            if include_archived:
-                return "No relevant continuity found, in memory or in the archive."
-            return "No relevant continuity found."
+            said = (
+                "No relevant continuity found, in memory or in the archive."
+                if include_archived else "No relevant continuity found."
+            )
+            return f"{said}\n{words_only}" if words_only else said
 
         self._traced_read(*(result.item_id for result in found))
         lines = [f"Mnemos recall for: {query.strip()}"]
+        if words_only:
+            lines.append(words_only)
         if memories:
             lines.extend(["", "Durable memories:"])
             lines.extend(_format_memory(result) for result in memories)
@@ -4918,6 +4923,39 @@ class MnemosRuntime:
         # from the archive is linked with what recall found beside it.
         self._reinforce_returned(query, returned)
         return "\n".join(lines)
+
+    def _searched_by_words_only(self) -> str:
+        """The line recall adds when meaning search is off in this session
+        though the store holds vectors it could have searched; ``""``
+        otherwise. A recall that found nothing, or only word matches, must not
+        read as a full search: a memory put in other words was never looked
+        for. On L15's first pass (Oct 11 2026) 47 of 62 sessions recalled by
+        words alone and nothing in what recall returned said so.
+
+        A keyword-only setup (nothing installed, nothing stored) is supported,
+        not a fault, and gets no line on every recall; the health card says
+        semantic recall is off either way."""
+        index = self._embedding_index
+        if index is None or index.available or self._store is None:
+            return ""
+        try:
+            stored = int(index.status().get("embeddings_stored") or 0)
+            if not stored:
+                stored = int(self._store._get_conn().execute(
+                    "SELECT COUNT(*) FROM passage_vectors"
+                ).fetchone()[0])
+        except Exception:
+            return ""
+        if not stored:
+            return ""
+        reason = " ".join(
+            str(index.unavailable_reason or "the embedding backend failed").split()
+        )[:200]
+        return (
+            f"Meaning search is off in this session ({reason}): only words were "
+            "searched, so a memory put in other words can be missing here. "
+            "mnemos_health says more."
+        )
 
     def _recallable_notes(self) -> list[dict[str, Any]]:
         """What recall ranks beside the memories that is not a memory: every

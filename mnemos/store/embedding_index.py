@@ -47,6 +47,7 @@ import os
 import re
 import sqlite3
 import struct
+import threading
 import time
 import urllib.request
 import urllib.error
@@ -495,6 +496,13 @@ class _GeminiEmbedder:
 # Whether local embeddings can run in this process, once checked.
 _HAS_LOCAL = False
 _LOCAL_CHECKED = False
+# One check at a time. The import takes seconds (torch, transformers), and the
+# cue's background index and recall's index are made at nearly the same
+# moment: the second used to find the check marked done mid-import, with
+# nothing available yet, and kept meaning search off for the whole session
+# without a word (L15, Oct 11 2026: 47 of 62 sessions). Now it waits for the
+# answer.
+_LOCAL_CHECK_LOCK = threading.Lock()
 # Why they cannot, when they cannot. status() reports it and `mnemos doctor`
 # and the health card print it.
 _LOCAL_UNAVAILABLE: str | None = None
@@ -511,10 +519,20 @@ def _check_local_deps() -> bool:
     keyword-only setup; installed but broken is a fault, and is logged once
     with its root cause.
     """
-    global _HAS_LOCAL, _LOCAL_CHECKED, _LOCAL_UNAVAILABLE
+    global _LOCAL_CHECKED
     if _LOCAL_CHECKED or _HAS_LOCAL:
         return _HAS_LOCAL
-    _LOCAL_CHECKED = True
+    with _LOCAL_CHECK_LOCK:
+        if not (_LOCAL_CHECKED or _HAS_LOCAL):
+            _import_local()
+            # Marked done only once the answer is known.
+            _LOCAL_CHECKED = True
+        return _HAS_LOCAL
+
+
+def _import_local() -> bool:
+    """Import the local backend, recording whether it can run and why not."""
+    global _HAS_LOCAL, _LOCAL_UNAVAILABLE
     try:
         import sentence_transformers  # noqa: F401
         import numpy  # noqa: F401

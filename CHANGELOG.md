@@ -68,6 +68,22 @@ Now:
 Handoffs written before this have no place yet. Each one gets its place the
 next time its session writes its handoff again.
 
+### Meaning search no longer switches itself off at the start of a session
+
+Loading the local embedding model takes a few seconds, and two parts of a
+session start it at nearly the same moment: the cue's index, in the
+background, and recall's. The check marked itself done before the model had
+loaded, so the second one found it done with nothing available, and recall
+searched by words alone for the rest of the session. Nothing said so. In a
+test of 62 sessions, 47 lost meaning search this way. Now the second waits for
+the first to finish, and gets the model.
+
+When meaning search is off and the memory holds vectors it can't use, recall
+now says so on every answer, with the reason, including when it found nothing:
+a "nothing found" from words alone isn't a full search. A setup without the
+package and without vectors is keyword-only by choice, and recall says
+nothing of it.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the
