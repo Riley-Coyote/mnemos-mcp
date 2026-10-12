@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from ..core.types import ConnectionRelation
@@ -141,6 +141,27 @@ class ConnectionClassification:
 
 
 @dataclass
+class ConnectionVerdicts:
+    """Everything one classification call said about its candidates.
+
+    ``parsed`` is whether a reply came back that could be read at all. It is
+    False when there was nothing to ask about, the call raised, or the reply
+    was empty, wasn't JSON (a usage-limit message on stdout reads like this)
+    or held no object to read. ``classifications`` are the confident typed
+    verdicts, as ``classify_connections`` returns them. ``unrelated`` holds
+    each candidate the reply called NONE explicitly: by its exact id, with a
+    confidence from MIN_CONFIDENCE to 1.0, and nothing else said about it. A
+    candidate the reply left out, or judged in a way that couldn't be read,
+    is in neither. ``why_unread`` says, when ``parsed`` is False, why, for
+    the cycle's log.
+    """
+    parsed: bool
+    classifications: list[ConnectionClassification] = field(default_factory=list)
+    unrelated: set[str] = field(default_factory=set)
+    why_unread: str = ""
+
+
+@dataclass
 class BeliefEvaluation:
     """Result of evaluating a new memory against a single belief."""
     belief_id: str
@@ -171,8 +192,25 @@ def classify_connections(
     Returns:
         List of ConnectionClassification results, filtered and validated.
     """
+    return connection_verdicts(client, new_engram, candidates).classifications
+
+
+def connection_verdicts(
+    client: "LLMClient",
+    new_engram: "Engram",
+    candidates: list["Engram"],
+) -> ConnectionVerdicts:
+    """Classify, keeping what the reply said apart from what it didn't say.
+
+    The same call as ``classify_connections``, which returns only the typed
+    verdicts. A caller that removes links needs the rest: whether the reply
+    could be read at all (``parsed``), and which candidates it explicitly
+    called NONE (``unrelated``). Reclassification read every candidate
+    missing from the typed verdicts as NONE, so a call that raised, an empty
+    reply or a usage-limit message removed every link it had sent.
+    """
     if not candidates:
-        return []
+        return ConnectionVerdicts(parsed=False, why_unread="there was nothing to ask about")
 
     # Build user prompt
     user_parts = [
@@ -213,10 +251,11 @@ def classify_connections(
         )
     except Exception as e:
         log.error("Connection classification LLM call failed: %s", e)
-        return []
+        failure = " ".join(f"{type(e).__name__}: {e}".split())[:120]
+        return ConnectionVerdicts(parsed=False, why_unread=f"the call failed ({failure})")
 
     # Parse response
-    return _parse_connection_response(raw_response, candidates)
+    return _parse_connection_verdicts(raw_response, candidates)
 
 
 def evaluate_beliefs(
@@ -284,8 +323,17 @@ def evaluate_beliefs(
 # Response parsing (defensive — LLMs can return malformed JSON)
 # ---------------------------------------------------------------------------
 
-def _extract_json(raw: str) -> list[dict]:
-    """Extract a JSON array from LLM response, handling common formatting issues."""
+def _read_json(raw: object) -> list[dict] | None:
+    """The objects in a reply's JSON array, or None when the reply can't be
+    read: not text, empty, not JSON, JSON that is neither an array nor an
+    object (one object reads as an array of one), or an array with items and
+    no object among them. Items that aren't objects are dropped, since they
+    name nothing; ``item.get`` raised on them, out of the pass and out of a
+    capture."""
+    if not isinstance(raw, str):
+        # A client can hand back None (a chat completion with no content).
+        log.error("LLM reply was not text: %s", type(raw).__name__)
+        return None
     text = raw.strip()
 
     # Strip markdown code fences if present
@@ -297,73 +345,114 @@ def _extract_json(raw: str) -> list[dict]:
 
     try:
         parsed = json.loads(text)
-        if isinstance(parsed, list):
-            return parsed
-        elif isinstance(parsed, dict):
-            return [parsed]
-        else:
-            log.warning("LLM returned unexpected JSON type: %s", type(parsed))
-            return []
     except json.JSONDecodeError as e:
         log.error("Failed to parse LLM JSON response: %s\nRaw: %s", e, text[:500])
-        return []
+        return None
+    if isinstance(parsed, dict):
+        parsed = [parsed]
+    if not isinstance(parsed, list):
+        log.warning("LLM returned unexpected JSON type: %s", type(parsed))
+        return None
+    items = [item for item in parsed if isinstance(item, dict)]
+    if len(items) < len(parsed):
+        log.warning("Skipping %d LLM JSON items that aren't objects", len(parsed) - len(items))
+        if not items:
+            return None
+    return items
 
 
-def _parse_connection_response(
+def _why_unreadable(raw: object) -> str:
+    """Why ``_read_json`` couldn't read a reply, in a few words for the log."""
+    if not isinstance(raw, str):
+        return f"the reply was {type(raw).__name__}, not text"
+    text = " ".join(raw.split())
+    if not text:
+        return "the reply was empty"
+    return f"the reply wasn't a list of verdicts ({text[:80]!r})"
+
+
+def _extract_json(raw: str) -> list[dict]:
+    """Extract a JSON array from LLM response, handling common formatting issues."""
+    return _read_json(raw) or []
+
+
+def _parse_connection_verdicts(
     raw: str,
     candidates: list["Engram"],
-) -> list[ConnectionClassification]:
+) -> ConnectionVerdicts:
     """Parse and validate connection classification response."""
-    items = _extract_json(raw)
+    items = _read_json(raw)
+    if items is None:
+        return ConnectionVerdicts(parsed=False, why_unread=_why_unreadable(raw))
     valid_ids = {c.id for c in candidates}
     results = []
+    none_ids: set[str] = set()
+    # Candidates the reply also judged some other way, or in a way that
+    # couldn't be read: a NONE beside any of those is no clear verdict.
+    unclear: set[str] = set()
 
     for item in items:
+        candidate_id = item.get("candidate_id")
+        if not isinstance(candidate_id, str) or candidate_id not in valid_ids:
+            log.debug("Skipping unknown candidate_id: %s", candidate_id)
+            continue
+
+        relation = item.get("relation")
+        if not isinstance(relation, str):
+            # Read as text, a null relation was "None", and so NONE.
+            log.warning("Relation %r is not text -- skipping", relation)
+            unclear.add(candidate_id)
+            continue
+
         try:
-            candidate_id = str(item.get("candidate_id", ""))
-            relation_str = str(item.get("relation", "")).upper()
+            relation_str = relation.upper()
             direction = str(item.get("direction", "forward")).lower()
             confidence = float(item.get("confidence", 0.0))
             reasoning = str(item.get("reasoning", ""))
-
-            # Validate
-            if candidate_id not in valid_ids:
-                log.debug("Skipping unknown candidate_id: %s", candidate_id)
-                continue
-
-            if relation_str not in VALID_RELATIONS:
-                log.warning("Invalid relation '%s' -- skipping", relation_str)
-                continue
-
-            if relation_str == "NONE":
-                log.debug("NONE for %s: %s", candidate_id, reasoning)
-                continue
-
-            if confidence < MIN_CONFIDENCE:
-                log.debug(
-                    "Low confidence %.2f for %s (%s) -- skipping",
-                    confidence, candidate_id, relation_str,
-                )
-                continue
-
-            if direction not in ("forward", "reverse"):
-                direction = "forward"
-
-            relation_enum = RELATION_MAP[relation_str]
-
-            results.append(ConnectionClassification(
-                candidate_id=candidate_id,
-                relation=relation_enum,
-                direction=direction,
-                confidence=confidence,
-                reasoning=reasoning,
-            ))
-
-        except (KeyError, ValueError, TypeError) as e:
+        except (ValueError, TypeError) as e:
             log.warning("Skipping malformed classification item: %s -- %s", item, e)
+            unclear.add(candidate_id)
             continue
 
-    return results
+        if relation_str not in VALID_RELATIONS:
+            log.warning("Invalid relation '%s' -- skipping", relation_str)
+            unclear.add(candidate_id)
+            continue
+
+        # Written so that NaN, which compares false to everything, is low.
+        if not confidence >= MIN_CONFIDENCE:
+            log.debug(
+                "Low confidence %.2f for %s (%s) -- skipping",
+                confidence, candidate_id, relation_str,
+            )
+            unclear.add(candidate_id)
+            continue
+
+        if relation_str == "NONE":
+            log.debug("NONE for %s: %s", candidate_id, reasoning)
+            if confidence <= 1.0:
+                none_ids.add(candidate_id)
+            else:
+                unclear.add(candidate_id)
+            continue
+
+        if direction not in ("forward", "reverse"):
+            direction = "forward"
+
+        relation_enum = RELATION_MAP[relation_str]
+
+        results.append(ConnectionClassification(
+            candidate_id=candidate_id,
+            relation=relation_enum,
+            direction=direction,
+            confidence=confidence,
+            reasoning=reasoning,
+        ))
+        unclear.add(candidate_id)
+
+    return ConnectionVerdicts(
+        parsed=True, classifications=results, unrelated=none_ids - unclear,
+    )
 
 
 def _parse_belief_response(

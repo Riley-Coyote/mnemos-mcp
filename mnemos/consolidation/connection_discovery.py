@@ -21,7 +21,7 @@ from ..core.engram import Connection
 from ..core.types import ConnectionRelation, DEFAULT_AGENT_ID
 from ..store import embedding_index as _embedding
 from ..store.fts import distinctive_terms, fts_words, or_query, overlap
-from ..encoding.llm_classifier import classify_connections
+from ..encoding.llm_classifier import classify_connections, connection_verdicts
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -326,7 +326,20 @@ def _reclassify_old_connections(
 
     Finds connections that carry no real semantic judgment — the legacy
     "supports" monoculture and retrieval's "co_activated" edges — and
-    classifies them. NONE results → remove the connection (false positive).
+    classifies them. A connection is removed only when the reply called its
+    target NONE, explicitly and clearly (``ConnectionVerdicts.unrelated``),
+    and only that connection: the relation that was sent, not the pair's
+    other links.
+
+    Anything else leaves it as it was. Every target missing from the typed
+    verdicts used to be read as NONE, so a call that raised, an empty reply,
+    or a usage-limit message on stdout removed every link the pass had sent,
+    and the cycle was logged as a success; a fork of this pass removed 6,321
+    links from one agent's store that way. Nothing was reclassified in such a
+    cycle, so the batch limit never stopped it either. Now a reply that can't
+    be read ends the pass for the cycle, as a lookup by meaning that times
+    out does: the provider isn't answering, and the links wait for a later
+    cycle. ``reclassify_stopped`` says so, and why, in the cycle's log.
     """
     # Find engrams with unclassified connections
     reclassified_count = 0
@@ -355,10 +368,22 @@ def _reclassify_old_connections(
             continue
 
         # Classify the batch
-        classifications = classify_connections(llm_client, engram, targets)
-        classified_ids = {cls.candidate_id for cls in classifications}
+        verdicts = connection_verdicts(llm_client, engram, targets)
+        if not verdicts.parsed:
+            # Said in the cycle's log and by `mnemos consolidate --deep`.
+            stats["reclassify_stopped"] = (
+                f"reclassifying stopped, links left as they were: {verdicts.why_unread}"
+            )
+            break
 
-        for cls in classifications:
+        # Exactly the connections judged unrelated, named before any is retyped.
+        unrelated = [
+            (engram.id, conn.target_id, conn.relation)
+            for conn in raw_connections
+            if conn.target_id in verdicts.unrelated
+        ]
+
+        for cls in verdicts.classifications:
             # Find the existing connection to update
             for conn in raw_connections:
                 if conn.target_id == cls.candidate_id:
@@ -371,11 +396,6 @@ def _reclassify_old_connections(
                     reclassified_count += 1
                     break
 
-        # Remove connections where LLM returned NONE (false positives)
-        for conn in raw_connections:
-            if conn.target_id not in classified_ids:
-                # Target wasn't classified → check if it was in our targets list
-                if any(t.id == conn.target_id for t in targets):
-                    # It was sent to the LLM and came back NONE → remove
-                    store.remove_connection(engram.id, conn.target_id)
-                    stats["connections_removed"] += 1
+        # Remove connections the LLM explicitly called NONE (false positives)
+        if unrelated:
+            stats["connections_removed"] += store.remove_connections(unrelated)

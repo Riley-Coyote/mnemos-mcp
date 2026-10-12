@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.4.1 (unreleased)
+
+### A link goes only by a verdict that says so
+
+With a provider chosen, maintenance's linking pass sends a memory's
+mechanically formed links (`supports`, `co_activated`) to the model to be
+retyped. It read every link missing from the model's typed verdicts as one the
+model had called unrelated, and removed it. A call that raised, an empty
+reply, and a usage-limit message (the `claude-cli` provider hands back
+whatever the command printed) leave every link missing, so each removed every
+link the pass had sent, and the cycle was logged as a success. Nothing was
+retyped in such a cycle, so the batch limit (`reclassify_batch_size`) never
+stopped it: the pass went on through every memory it had loaded, up to 200
+with the defaults. A fork of this pass removed 6,321 links from one agent's
+store over three cycles. And a link the model did call unrelated took every
+other link between the same two memories with it, typed ones no verdict had
+been asked about.
+
+Now a link is removed only when the reply calls it NONE explicitly: by its
+exact id, with a confidence from 0.5 to 1.0, and nothing else said about it.
+Only that link goes, not the pair's others. A link the reply left out, or
+judged in a way that can't be read, stays as it was. A reply that can't be
+read at all ends the pass for the cycle, and `mnemos consolidate --deep` says
+so, and why, on its Connections line ("reclassifying stopped, links left as
+they were: the reply was empty"); the cycle's log keeps it
+(`reclassify_stopped`). The line also says when a cycle removed links.
+
+The model is given to deep cycles only. `mnemos consolidate`, which the
+scheduled job runs every four hours, the bridge and the advanced tool gave it
+to shallow cycles too, so with a provider chosen the pass called it every four
+hours; a session's maintenance already gave it to deep cycles alone. A shallow
+cycle's log no longer says a provider assisted.
+
+A reply that holds no object, or is no text at all, no longer raises out of
+the classifier, where it failed the pass and, at save time, the capture.
+
+The code version is 22, so a session or job still running the code before
+stops maintaining a store this code has opened, rather than removing links by
+the old rule.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the

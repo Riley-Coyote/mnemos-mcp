@@ -63,7 +63,8 @@ class ConsolidationDaemon:
         Args:
             store: The engram store to consolidate.
             config: Configuration dict (consolidation section from defaults).
-            llm_client: LLM client for classification, softening, reflection.
+            llm_client: LLM client for classification, softening, reflection,
+                given to their passes in deep cycles only.
                 Must support structured_complete() for classifier and
                 complete() for reflection/softening.
                 If None, classification falls back to SUPPORTS, belief review
@@ -116,6 +117,12 @@ class ConsolidationDaemon:
 
         cycle_id = f"cycle_{_new_ulid()}"
         started_at = _now_iso()
+        # A model is given to deep cycles only. The scheduled shallow cycle
+        # runs every four hours, and `mnemos consolidate`, the bridge and the
+        # advanced tool gave it the model too, so its linking pass called the
+        # provider each time and reclassified links on whatever came back. A
+        # session's maintenance already gave the model to deep cycles alone.
+        model = self._llm_client if deep else None
 
         stats: dict[str, Any] = {
             "cycle_id": cycle_id,
@@ -124,7 +131,7 @@ class ConsolidationDaemon:
             "started_at": started_at,
             # Substrate provenance: every consolidation_log row records who
             # performed this agent's sleep.
-            "substrate": self._substrate_provenance(),
+            "substrate": self._substrate_provenance(model),
             "scope": {
                 "agent_id": agent_id,
                 "person_id": person_id,
@@ -140,7 +147,7 @@ class ConsolidationDaemon:
                 store=self._store,
                 embedding_index=self._embedding_index,
                 config=consolidation_config,
-                llm_client=self._llm_client,
+                llm_client=model,
                 agent_id=agent_id,
                 person_id=person_id,
                 project_scope=project_scope,
@@ -193,7 +200,7 @@ class ConsolidationDaemon:
                 softening_stats = run_softening_pass(
                     store=self._store,
                     config=consolidation_config,
-                    llm_client=self._llm_client if deep else None,
+                    llm_client=model,
                     agent_id=agent_id,
                     person_id=person_id,
                     project_scope=project_scope,
@@ -228,7 +235,7 @@ class ConsolidationDaemon:
                         store=self._store,
                         identity=identity,
                         emotional_state=emotional_state,
-                        llm_client=self._llm_client,
+                        llm_client=model,
                         config=consolidation_config,
                         person_id=person_id,
                         project_scope=project_scope,
@@ -261,8 +268,8 @@ class ConsolidationDaemon:
 
         return stats
 
-    def _substrate_provenance(self) -> dict[str, Any]:
-        """Who performed this cycle.
+    def _substrate_provenance(self, model: Any | None) -> dict[str, Any]:
+        """Who performed this cycle, given the model its passes were given.
 
         Mnemos does not call a model to maintain memory; work needing
         judgement is proposed to the agent through the reflection queue and
@@ -270,15 +277,15 @@ class ConsolidationDaemon:
         deep passes, so there is no longer a question of whether some
         outside model is entitled to do an agent's remembering for it.
         """
-        if self._llm_client is None:
+        if model is None:
             return {
                 "model": None,
                 "provider": None,
                 "note": "local deterministic passes; judgement left to the agent",
             }
         return {
-            "model": getattr(self._llm_client, "_model", None),
-            "provider": type(self._llm_client).__name__,
+            "model": getattr(model, "_model", None),
+            "provider": type(model).__name__,
             "note": "optional provider assisted the deep passes",
         }
 

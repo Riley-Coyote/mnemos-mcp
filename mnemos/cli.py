@@ -2160,8 +2160,12 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
     if "connection_discovery" in stats:
         cd = stats["connection_discovery"]
         said = f"  Connections: {cd.get('connections_created', 0)} created, {cd.get('connections_strengthened', 0)} strengthened"
+        if cd.get("connections_removed"):
+            said += f", {cd['connections_removed']} removed"
         if cd.get("words_only"):
             said += f"; {cd['words_only']}"
+        if cd.get("reclassify_stopped"):
+            said += f"; {cd['reclassify_stopped']}"
         print(said)
     if "softening" in stats:
         s = stats["softening"]
