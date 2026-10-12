@@ -52,12 +52,14 @@ from .interface.context_packet import (
     carried_count,
     fit_section,
     format_questions,
+    handoff_room,
     room_after,
     shown_ids,
     shown_memories,
     standing_words,
     whose_handoff,
 )
+from .place import place_of
 from .retrieval.reactive import MATCHED_WORDS, ReactiveRetriever, RetrievalResult
 # Re-exported: MnemosScope and resolve_scope moved to simple_scope but
 # remain importable from here for existing consumers.
@@ -3893,7 +3895,8 @@ class MnemosRuntime:
         if block:
             parts.append(block)
         if query.strip():
-            room = room_after("\n\n".join(parts), PACKET_MAX_CHARS)
+            # The handoff shown whole takes no room from the rest.
+            room = room_after("\n\n".join(parts), PACKET_MAX_CHARS + handoff_room(packet))
             section = self._query_results(query, max_results, shown_ids(packet), room)
             if section:
                 parts.append(section)
@@ -4031,6 +4034,8 @@ class MnemosRuntime:
             author_id=self.scope.agent_id,
             author_model=author,
             author_session=session,
+            # Claude Code starts each session's server in the session's folder.
+            author_place=place_of(_working_folder()),
             # Code older than the store replaces only this session's own note.
             # Retiring other sessions' notes by count is a rule; they stay
             # active until current code retires them.

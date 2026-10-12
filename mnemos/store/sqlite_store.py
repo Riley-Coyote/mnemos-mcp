@@ -25,6 +25,7 @@ from typing import Any
 from ..authorship import AUTHOR_KINDS
 from ..code_version import MAINTENANCE_CODE_VERSION
 from ..file_security import secure_directory, secure_file
+from ..place import nearness
 from .embedding_index import PASSAGE_TABLE_SQL
 from .fts import is_common
 from ..core.engram import Connection, Engram, VersionRef
@@ -170,10 +171,11 @@ _MAX_HYPOMNEMA_CANDIDATES = 5000
 # sessions' notes stay active per scope; beyond it the oldest is retired, with
 # its prose kept in history.
 HANDOFF_SESSIONS_KEPT = 8
-# A starting session is handed at most this many notes (its own or the newest
-# whole, the rest as short lines), and other sessions' notes only while they
-# are this recent. The continuity layer is scarce by design.
-PACKET_HANDOFFS = 3
+# A starting session is handed every session's note that is still kept (its
+# own, or its place's, or the newest whole; the rest as short lines), other
+# sessions' notes only while they are this recent. One session often
+# coordinates the others and needs to see every live thread.
+PACKET_HANDOFFS = HANDOFF_SESSIONS_KEPT
 LIVE_HANDOFF_HOURS = 72
 
 # Why a memory is in the archive, when nobody chose it: decay took it there
@@ -368,6 +370,7 @@ _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("author_id", "author_id TEXT NOT NULL DEFAULT ''"),
         ("author_model", "author_model TEXT NOT NULL DEFAULT ''"),
         ("author_session", "author_session TEXT NOT NULL DEFAULT ''"),
+        ("author_place", "author_place TEXT NOT NULL DEFAULT ''"),
         ("last_surfaced_at", "last_surfaced_at TEXT"),
         ("surface_count", "surface_count INTEGER NOT NULL DEFAULT 0"),
     ],
@@ -545,6 +548,7 @@ CREATE TABLE IF NOT EXISTS hypomnema_entries (
     author_id TEXT NOT NULL DEFAULT '',
     author_model TEXT NOT NULL DEFAULT '',
     author_session TEXT NOT NULL DEFAULT '',
+    author_place TEXT NOT NULL DEFAULT '',
     source TEXT NOT NULL DEFAULT 'observed'
         CHECK (source IN ('observed', 'synthesized', 'co-formed')),
     density REAL NOT NULL DEFAULT 0.5,
@@ -3388,12 +3392,17 @@ class EngramStore:
         author_id: str = "",
         author_model: str = "",
         author_session: str = "",
+        author_place: str = "",
         retire_crowded: bool = True,
     ) -> str:
         """Atomically replace this session's handoff, preserving exact prose.
 
         ``author_model`` signs the handoff with the model that wrote it. The
         next session may be a different model; the signature is how it knows.
+
+        ``author_place`` is where the writing session works (``place_of`` its
+        folder), for ranking only: a session starting there reads this note
+        first (``live_handoffs``).
 
         ``author_session`` is the harness session that wrote it. A handoff
         replaces only the one its own session left before: several sessions
@@ -3449,11 +3458,11 @@ class EngramStore:
                 INSERT INTO hypomnema_entries(
                     id, agent_id, person_id, project_scope, content,
                     entry_kind, authored_by, author_id, author_model,
-                    author_session, source,
+                    author_session, author_place, source,
                     density, domain, tags_json, confidence, salience,
                     active, foundational, revision_count, revisions_json,
                     created_at, last_revised_at, surface_count
-                ) VALUES (?, ?, ?, ?, ?, 'handoff', 'agent', ?, ?, ?, 'observed',
+                ) VALUES (?, ?, ?, ?, ?, 'handoff', 'agent', ?, ?, ?, ?, 'observed',
                           0.9, 'situational', ?, 1.0, 1.0,
                           1, 0, 0, '[]', ?, ?, 0)
                 """,
@@ -3466,6 +3475,7 @@ class EngramStore:
                     (author_id or agent_id).strip(),
                     (author_model or "").strip(),
                     session,
+                    (author_place or "").strip(),
                     _encode_json(["session-handoff", "continuity"]),
                     now,
                     now,
@@ -3544,6 +3554,7 @@ class EngramStore:
         person_id: str = "user",
         project_scope: str = "global",
         reader_session: str = "",
+        reader_place: str = "",
         limit: int = PACKET_HANDOFFS,
         within_hours: float = LIVE_HANDOFF_HOURS,
     ) -> list[dict[str, Any]]:
@@ -3551,10 +3562,16 @@ class EngramStore:
 
         First the note the reader's own session left, if it left one: a
         session coming back from compaction or a resume gets its own thread
-        back before anyone else's. Otherwise the newest note, however old, as
-        before sessions were told apart. Then other sessions' notes, newest
-        first, while they are no older than ``within_hours``, up to ``limit``
-        notes in all.
+        back before anyone else's. Otherwise the newest note written where
+        the reader works (``reader_place``, as ``place_of`` gives it), or in a
+        related place: a session started in a project picks up that project's
+        thread, however long ago it was left. Otherwise the newest note.
+
+        Then every other session's note no older than ``within_hours``, up to
+        ``limit`` notes in all: those written here first, then related places,
+        then the rest, newest first within each. Several sessions are often
+        live at once, and one that coordinates the others needs to see them
+        all.
         """
 
         rows = self._get_conn().execute(
@@ -3569,14 +3586,20 @@ class EngramStore:
         notes = [self._hydrate_hypomnema_row(dict(row)) for row in rows]
         if not notes:
             return []
+        here = (reader_place or "").strip()
+        near = {
+            note["id"]: nearness(here, note.get("author_place") or "") for note in notes
+        }
+        # Newest first already; a stable sort keeps that order within each place.
+        by_place = sorted(notes, key=lambda note: -near[note["id"]])
         reader = (reader_session or "").strip()
         first = next(
             (note for note in notes if reader and note.get("author_session") == reader),
-            notes[0],
+            by_place[0],
         )
         cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
         others = [
-            note for note in notes
+            note for note in by_place
             if note["id"] != first["id"] and _written_since(note.get("created_at"), cutoff)
         ]
         return [first, *others[: max(0, int(limit) - 1)]]

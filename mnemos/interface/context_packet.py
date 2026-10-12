@@ -18,11 +18,12 @@ apart at the end, for the tools:
    have what I kept before: ..."), once (``first_restart``).
 1. What I've come to see: each belief once, the firm ones apart from the ones
    still forming.
-2. Where I was: the reader's own handoff first, whole, then up to two notes
-   other sessions left in the last three days, each with its age and, when it
-   isn't the reader's, its model. Then, when the latest journal entry is under
-   three days old, its first line ("last time I wrote in my journal (5 hours
-   ago): ...").
+2. Where I was: one handoff whole, the reader's own, else the newest one left
+   where the reader works (``mnemos.place``), else the newest; then a short
+   line for every other note a session left in the last three days, this
+   place's first, each with its age and, when it isn't the reader's, its
+   model. Then, when the latest journal entry is under three days old, its
+   first line ("last time I wrote in my journal (5 hours ago): ...").
 3. What's been changing in me: the reader's newest impact lines, up to five.
 4. What I keep coming back to: the ideas the noticer found in the agent's own
    words, up to two, until one becomes a belief.
@@ -50,9 +51,10 @@ it, and the opening says whose memory it is visiting. A reader the harness
 didn't name gets every note labelled, and the opening says so once.
 
 The SessionStart hook injects this text and ``mnemos_context`` returns it, so the
-two can no longer disagree. Building it never runs maintenance. It stays under
-``PACKET_MAX_CHARS``: the reader's handoff is never cut, notes are cut at a
-sentence boundary, and ``mnemos_recall(<id>)`` returns a note whole.
+two can no longer disagree. Building it never runs maintenance. Besides the
+handoff shown whole, it stays under ``PACKET_MAX_CHARS``: that handoff is never
+cut and takes no room from the rest, notes are cut at a sentence boundary, and
+``mnemos_recall(<id>)`` returns a note whole.
 """
 
 from __future__ import annotations
@@ -74,7 +76,7 @@ from ..authorship import (
 )
 from ..dream_journal import DREAM_JOURNAL_TAG
 from ..retrieval.reactive import ReactiveRetriever, RetrievalResult
-from ..store.fts import distinctive_terms
+from ..place import place_name, place_of, place_words
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -82,9 +84,13 @@ if TYPE_CHECKING:
 
 _CHARS_PER_TOKEN = 4
 
-# A briefing longer than this is no longer read closely. The reader's handoff
-# is never cut, so a handoff longer than this alone makes a longer packet.
-PACKET_MAX_CHARS = 6000
+# A briefing longer than this is no longer read closely. The handoff shown
+# whole is never cut and is not counted here: a long one used to push out
+# everything else (on a real store, Oct 12 2026, a 4,800-character handoff
+# left no beliefs, nothing that had been changing and no question). With 6,000
+# here, the short lines for the other live threads were the first thing cut,
+# and a session woke with one thread of the eight in progress.
+PACKET_MAX_CHARS = 8000
 DEFAULT_TOKEN_BUDGET = PACKET_MAX_CHARS // _CHARS_PER_TOKEN
 
 # At most this many questions per packet. A packet that asks for work every
@@ -113,9 +119,10 @@ _CONTEXT_MARK = "\n\nContext: "
 # A typical note on a real store is about a thousand characters.
 _NOTE_CHARS = (420, 320, 240, 160, 100)
 # Other sessions' handoffs are one short line each: enough to tell which thread
-# it is and who left it. Shown whole, three handoffs would fill most of the
-# packet (a typical one is about 2,000 characters).
-_OTHER_HANDOFF_CHARS = 280
+# it is and who left it (handoffs open with a headline). Shown whole, they
+# would fill the packet (a typical one is about 2,000 characters), and up to
+# seven of them are listed.
+_OTHER_HANDOFF_CHARS = 200
 # A light wake (``wake="light"``) cuts the reader's handoff here: a quick
 # session needs where things stand, and the id reads the rest whole.
 LIGHT_HANDOFF_CHARS = 700
@@ -237,7 +244,9 @@ def build_context_packet(
     if older_than_store is None:
         older_than_store = _older_than(store)
 
-    handoffs = store.live_handoffs(**scope, reader_session=reader_session)
+    handoffs = store.live_handoffs(
+        **scope, reader_session=reader_session, reader_place=place_of(workdir),
+    )
     handoff = handoffs[0] if handoffs else None
 
     # Every standing memory in scope, the newest mark first, each said once, as
@@ -337,7 +346,7 @@ def build_context_packet(
         "mnemos_engrams": [_serialize_retrieval_result(result) for result in found],
     }
 
-    max_chars = _max_chars(token_budget)
+    max_chars = _max_chars(token_budget) + handoff_room(packet)
     text, shown = _render(packet, max_chars=max_chars)
     packet["shown"] = shown
     # The opening, and the first restart's line in it, show only with a body.
@@ -372,7 +381,7 @@ def format_context_packet(
     packet: dict[str, Any], *, token_budget: int = DEFAULT_TOKEN_BUDGET,
 ) -> str:
     """The briefing text for a packet ``build_context_packet`` returned."""
-    max_chars = _max_chars(token_budget)
+    max_chars = _max_chars(token_budget) + handoff_room(packet)
     text, shown = _render(packet, max_chars=max_chars)
     return _append_graph({**packet, "shown": shown}, text, max_chars)[0]
 
@@ -657,65 +666,7 @@ def reader_voice(reader_model: str, resident: str) -> str:
     return GUEST
 
 
-# ── Where the session works: ranking only ──
-
-
-def place_words(workdir: str) -> set[str]:
-    """The distinctive words of a folder's name and of its repository's name.
-
-    Kept in the packet as ``place_words``. Scope never comes from the
-    working directory: an MCP server's cwd belongs to whichever client spawned
-    it. A worktree is named for its repository, so a session in
-    ``/tmp/wt-mnemos-r04`` ranks by "mnemos" as one in the checkout does.
-    """
-    if not workdir:
-        return set()
-    try:
-        folder = Path(workdir).expanduser()
-        names = [folder.name]
-        repository = _repository(folder)
-        if repository is not None:
-            names.append(repository.name)
-    except (OSError, ValueError, RuntimeError):
-        return set()
-    words: set[str] = set()
-    for name in names:
-        words |= distinctive_terms(name)
-    return words
-
-
-def place_name(workdir: str) -> str:
-    """Where the session wakes, as the packet's opening says it: the name of
-    the repository the folder is in (a worktree's main checkout), else the
-    folder's own name. Nothing for no folder, the home folder or the root."""
-    if not workdir:
-        return ""
-    try:
-        folder = Path(workdir).expanduser()
-        if folder == Path.home() or folder == Path(folder.anchor):
-            return ""
-        repository = _repository(folder)
-        return (repository or folder).name
-    except (OSError, ValueError, RuntimeError):
-        return ""
-
-
-def _repository(folder: Path) -> Path | None:
-    """The repository a folder is in: the main checkout for a worktree."""
-    for candidate in (folder, *folder.parents):
-        marker = candidate / ".git"
-        if marker.is_dir():
-            return candidate
-        if marker.is_file():
-            try:
-                pointer = marker.read_text(encoding="utf-8", errors="replace").strip()
-            except OSError:
-                return candidate
-            gitdir = pointer.removeprefix("gitdir:").strip()
-            if "/.git/worktrees/" in gitdir:
-                return Path(gitdir.split("/.git/worktrees/", 1)[0])
-            return candidate
-    return None
+# ── Where the session works: ranking only (see ``mnemos.place``) ──
 
 
 # ── What is marked standing ──
@@ -741,6 +692,18 @@ def _max_chars(token_budget: int) -> int:
     return max(800, int(token_budget) * _CHARS_PER_TOKEN)
 
 
+def handoff_room(packet: dict[str, Any]) -> int:
+    """The room the handoff shown whole takes, which the budget leaves out:
+    it is never cut, and a long one must not push out the rest."""
+    handoff = packet.get("handoff")
+    if not handoff:
+        return 0
+    text = handoff.get("content") or ""
+    if packet.get("wake") == "light":
+        return len(cut_at_sentence(text, LIGHT_HANDOFF_CHARS)[0])
+    return len(text)
+
+
 def _render(packet: dict[str, Any], *, max_chars: int) -> tuple[str, dict[str, Any]]:
     """The briefing text, and what it shows.
 
@@ -762,19 +725,24 @@ def _render(packet: dict[str, Any], *, max_chars: int) -> tuple[str, dict[str, A
 
 
 def _drop_order(packet: dict[str, Any]) -> list[tuple[str, str]]:
-    """What leaves the packet first when it does not fit: other sessions'
-    notes, then the quiet hour's line, then what has been changing (the oldest
-    first), then what I keep coming back to (the last first), then what the
-    person wrote into my memory (the newest first), then the journal line; the
-    question, beliefs and standing lines go last. The oldest standing
-    mark leaves first: standing says how to work in this session. The person's
-    replies never go: one left out would be marked delivered unread."""
+    """What leaves the packet first when it does not fit: the quiet hour's
+    line, then what has been changing (the oldest first), then what I keep
+    coming back to (the last first), then other sessions' notes (the last
+    listed first: the farthest from here, the oldest), then what the person
+    wrote into my memory (the newest first), then the journal line; the
+    question, beliefs and standing lines go last. The oldest standing mark
+    leaves first: standing says how to work in this session. The person's
+    replies never go: one left out would be marked delivered unread.
+
+    The other threads stay longer than they did: several sessions are often
+    live at once, and a session that doesn't know the others exist repeats or
+    undoes their work. Their lines are cut short before anything leaves."""
     standing = (packet.get("standing") or [])[:STANDING_SHOWN]
     return [
-        *(("other", entry["id"]) for entry in reversed(packet.get("other_handoffs") or [])),
         ("report", ""),
         *(("changing", item["id"]) for item in reversed(packet.get("changing") or [])),
         *(("returning", ",".join(entry["ids"])) for entry in reversed(packet.get("returning") or [])),
+        *(("other", entry["id"]) for entry in reversed(packet.get("other_handoffs") or [])),
         *(("person_words", item["id"]) for item in reversed(packet.get("person_words") or [])),
         ("journal", ""),
         ("question", ""),

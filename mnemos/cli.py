@@ -604,8 +604,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Retrieval cue for --include-graph (the packet itself takes no cue)",
     )
     p_hook_start.add_argument(
-        "--token-budget", type=int, default=1500,
-        help="Approximate packet size in tokens (1500 is about 6,000 characters)",
+        "--token-budget", type=int, default=2000,
+        help=(
+            "Approximate packet size in tokens, besides the handoff shown whole "
+            "(2000 is about 8,000 characters)"
+        ),
     )
     p_hook_start.add_argument(
         "--person-name", default=None,

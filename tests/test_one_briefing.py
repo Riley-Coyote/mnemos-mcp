@@ -28,6 +28,7 @@ from mnemos.core.belief import Belief
 from mnemos.core.engram import Engram
 from mnemos.core.identity import AgentIdentity, IdentityProfile, MemoryProfile
 from mnemos.dream_journal import fetch_active_dream_entry, write_dream_entry
+from mnemos.interface.context_packet import PACKET_MAX_CHARS
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.simple_scope import MnemosScope
 from mnemos.store.sqlite_store import EngramStore
@@ -319,8 +320,7 @@ Next: ask Riley whether the tone is right.
 also from the last three days:
 - me, 5 hours ago, in another session: Release check for the ferry app. \
 The staging deploy passed on the second try after the cache fix. Production waits for \
-Riley's go-ahead in the morning. I left the rollback script in scripts/rollback.sh and \
-tested it twice against staging. […]
+Riley's go-ahead in the morning. […]
 - Fable 5, a colleague, 26 hours ago: Fable here: the timetable scraper now runs \
 nightly at 02:00 and writes to data/timetable.json.
 A colleague's note is theirs: I take what's useful and don't claim the work.
@@ -346,7 +346,7 @@ def test_the_packet_reads_exactly_as_the_golden_briefing(tmp_path):
     db, _ = _briefing_store(tmp_path)
     packet = _hook(db, tmp_path, cwd=_folder(tmp_path, "ferry-app"), extra=PERSON)
     assert _ids_hidden(packet) == GOLDEN
-    assert len(packet) < 6000
+    assert len(packet) < PACKET_MAX_CHARS
 
 
 def test_the_hook_and_mnemos_context_give_the_same_packet(tmp_path, monkeypatch):
@@ -809,9 +809,9 @@ def test_a_note_left_out_for_room_still_comes_back_for_a_query(tmp_path, monkeyp
     db = tmp_path / "memory.db"
     store = EngramStore(db)
     try:
-        # The session's own handoff is never cut. This one leaves room for the
-        # briefing's first section only: the note it carries and its question
-        # are left out, and a few hundred characters remain.
+        # The session's own handoff is never cut, and takes no room from the
+        # rest: a long one no longer pushes the question out. The note isn't
+        # in the briefing (notes come back through recall).
         handoff = store.write_handoff(
             ("Where I stopped: the harbour ledger, checked page by page. " * 100)[:5601],
             **SCOPE, author_model=OPUS, author_session=OWN,
@@ -841,19 +841,19 @@ def test_a_note_left_out_for_room_still_comes_back_for_a_query(tmp_path, monkeyp
 
     packet, heading, results = asked.partition('### For "lighthouse wick"\n')
     assert heading, f"no results were appended:\n{asked[-300:]}"
-    assert LIGHTHOUSE not in packet and "mnemos_reflect(" not in packet, (
-        "premise: the budget left the note and the question out"
-    )
+    assert LIGHTHOUSE not in packet, "premise: the briefing left the note out"
+    assert "mnemos_reflect(" in packet, "the long handoff pushed the question out"
     assert LIGHTHOUSE in results, "a note the packet didn't show was treated as shown"
-    assert len(asked) < 6000
+    assert len(asked) < PACKET_MAX_CHARS + 5601
 
 
 def test_graph_recall_after_the_packet_stays_within_the_budget(tmp_path):
     db, _ = _briefing_store(tmp_path)
     store = EngramStore(db)
     try:
-        # Long enough that the graph's six entries (its own cap) don't all fit:
-        # the carrying section that used to take this room is gone (Ready C).
+        # The handoff shown whole is never cut and takes no room from the rest;
+        # the tighter budget below is what leaves some of the graph's six
+        # entries (its own cap) out.
         store.write_handoff(
             ("Where I stopped: the harbour ledger, checked page by page. " * 50)[:3700],
             **SCOPE, author_model=OPUS, author_session=OWN,
@@ -871,10 +871,13 @@ def test_graph_recall_after_the_packet_stays_within_the_budget(tmp_path):
         store.close()
     before = {engram_id: _accessed(db, engram_id) for engram_id in found}
 
-    for budget, extra in ((6000, ()), (4000, ("--token-budget", "1000"))):
+    tight = 2400
+    for budget, extra in ((tight, ("--token-budget", str(tight // 4))), (PACKET_MAX_CHARS, ())):
         packet = _hook(db, tmp_path, extra=("--include-graph", "--query", "harbour ledger", *extra))
-        assert len(packet) < budget, f"{len(packet)} characters against a budget of {budget}"
-        if budget == 6000:
+        assert len(packet) < budget + 3700, (
+            f"{len(packet)} characters against a budget of {budget} and the handoff"
+        )
+        if budget == tight:
             graph = packet.split("### Mnemos Graph\n", 1)[1].splitlines()
             assert 0 < len(graph) < len(found), "premise: some entries fit and some don't"
             assert all(line.endswith("%]") for line in graph), "an entry was cut"

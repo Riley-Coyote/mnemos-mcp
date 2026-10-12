@@ -77,8 +77,9 @@ def _home(tmp_path: Path) -> Path:
 
 
 def _handoff_from(session: str, text: str, db_path: Path, tmp_path: Path,
-                  model: str = "claude-opus-5-5") -> str:
-    """Leave a handoff from another process, as that session's MCP server does."""
+                  model: str = "claude-opus-5-5", cwd: Path | None = None) -> str:
+    """Leave a handoff from another process, as that session's MCP server does:
+    Claude Code starts each session's server in the session's folder."""
 
     config = tmp_path / "claude-config"
     _transcript(config, session, model)
@@ -98,6 +99,7 @@ def _handoff_from(session: str, text: str, db_path: Path, tmp_path: Path,
         capture_output=True,
         text=True,
         timeout=120,
+        cwd=cwd,
         env={
             "HOME": str(_home(tmp_path)),
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -132,15 +134,19 @@ def _hook(db_path: Path, tmp_path: Path, payload: dict) -> str:
     return json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
 
 
-def _start(session: str, source: str = "startup", model: str = "claude-opus-5-5") -> dict:
+def _start(session: str, source: str = "startup", model: str = "claude-opus-5-5",
+           cwd: Path | None = None) -> dict:
     # The payload Claude Code sends on SessionStart (checked against a real
     # run: session_id, transcript_path, cwd, hook_event_name, source).
-    return {
+    payload = {
         "hook_event_name": "SessionStart",
         "session_id": session,
         "source": source,
         "model": model,
     }
+    if cwd is not None:
+        payload["cwd"] = str(cwd)
+    return payload
 
 
 def _active(store: EngramStore) -> list[dict]:
@@ -311,23 +317,23 @@ class TestThePacketStaysSmall:
             runtime.close()
         return notes
 
-    def test_one_note_whole_and_two_more_as_short_signed_lines(self, tmp_path, monkeypatch):
+    def test_one_note_whole_and_every_other_thread_as_a_short_signed_line(
+        self, tmp_path, monkeypatch,
+    ):
         db_path = tmp_path / "shared.db"
         notes = self._seed(db_path, tmp_path, monkeypatch, count=6)
 
         packet = _hook(db_path, tmp_path, _start(FRESH))
-        newest, second, third = notes[-1], notes[-2], notes[-3]
+        newest, others = notes[-1], notes[:-1]
         assert newest in packet
-        for note in (second, third):
+        for note in others:
             assert note not in packet
-            assert note[:60] in packet
-        for older in notes[:-3]:
-            assert older[:30] not in packet
+            assert note[:30] in packet
         # The other sessions' lines are short: they name the thread and how to
         # read it whole, and leave the rest of the packet to continuity.
         left_off = packet.split("### where i was\n", 1)[1].split("\n\n### ", 1)[0]
         assert newest in left_off
-        assert len(left_off) < len(newest) + 1000
+        assert len(left_off) < len(newest) + 300 * len(others)
 
     def test_handoffs_never_take_continuity_slots(self, tmp_path, monkeypatch):
         db_path = tmp_path / "shared.db"
@@ -386,6 +392,174 @@ class TestThePacketStaysSmall:
             assert [row["surface_count"] for row in _active(store)] == [1, 1]
         finally:
             store.close()
+
+
+def _repo(root: Path, name: str) -> Path:
+    folder = root / name
+    (folder / ".git").mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _worktree(repo: Path, root: Path, name: str) -> Path:
+    """A git worktree of ``repo``: its ``.git`` is a file pointing home."""
+    folder = root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / ".git").write_text(f"gitdir: {repo}/.git/worktrees/{name}\n")
+    return folder
+
+
+def _folder(root: Path, name: str) -> Path:
+    folder = root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def _thread(headline: str, sentences: int = 30) -> str:
+    """A handoff the way they are written: a headline, then the detail."""
+    word = headline.split()[0].lower().strip(",.")
+    return f"{headline}. " + " ".join(
+        f"Step {step} of the {word} work is done and checked." for step in range(sentences)
+    )
+
+
+SESSIONS = [f"{index:08d}-3333-4333-8333-333333333333" for index in range(8)]
+
+
+class TestWhereTheSessionStarts:
+    """Riley runs a lead session that hands work to project sessions, each in
+    its own folder, so eight threads are often live at once (Oct 12, 2026: 8
+    in 14 hours). A new session used to wake with the newest note whole and
+    two short lines; on a real store the briefing was already full, so the
+    two lines were cut and it woke with one note of eight. A project session
+    needs its own folder's thread first; the lead needs to see every thread."""
+
+    def test_a_new_session_wakes_to_its_own_folders_thread_first(self, tmp_path):
+        db_path = tmp_path / "shared.db"
+        repos = tmp_path / "Repositories"
+        mnemos = _repo(repos, "mnemos")
+        truemark = _repo(repos, "TrueMark")
+        desk = _folder(tmp_path / "CLAUDE", "the-second-desk")
+        lab = _thread("Mnemos lab, the testing thread")
+        _handoff_from(SESSIONS[0], lab, db_path, tmp_path, cwd=mnemos)
+        _handoff_from(SESSIONS[1], _thread("TrueMark, the phone scroll"), db_path, tmp_path, cwd=truemark)
+        _handoff_from(SESSIONS[2], _thread("Lead session, the second desk"), db_path, tmp_path, cwd=desk)
+
+        # A new session in a worktree of the mnemos repository.
+        worktree = _worktree(mnemos, mnemos / ".claude" / "worktrees", "xenodochial-ellis")
+        packet = _hook(db_path, tmp_path, _start(FRESH, cwd=worktree))
+        assert re.search(r"### where i was\n[^\n]*:\nMnemos lab, the testing thread", packet), packet
+        assert lab in packet
+        assert "- me, " in packet.split("Lead session, the second desk", 1)[0]
+        assert packet.index("Mnemos lab") < packet.index("Lead session") < packet.index("TrueMark")
+
+    def test_a_related_folder_counts_when_no_note_was_written_in_this_one(self, tmp_path):
+        # The lab thread was written in mnemos-engine-page; the session that
+        # picks it up works in the mnemos repository.
+        db_path = tmp_path / "shared.db"
+        lab = _thread("Mnemos lab, the testing thread")
+        _handoff_from(SESSIONS[0], lab, db_path, tmp_path,
+                      cwd=_folder(tmp_path / "Repositories", "mnemos-engine-page"))
+        _handoff_from(SESSIONS[1], _thread("Lead session, the second desk"), db_path, tmp_path,
+                      cwd=_folder(tmp_path / "CLAUDE", "the-second-desk"))
+
+        mnemos = _repo(tmp_path / "Repositories", "mnemos")
+        packet = _hook(db_path, tmp_path, _start(FRESH, cwd=mnemos))
+        assert re.search(r"### where i was\n[^\n]*:\nMnemos lab", packet), packet
+
+    def test_this_folders_threads_come_before_the_rest(self, tmp_path):
+        db_path = tmp_path / "shared.db"
+        mnemos = _repo(tmp_path, "mnemos")
+        _handoff_from(SESSIONS[0], _thread("Mnemos race fix"), db_path, tmp_path, cwd=mnemos)
+        _handoff_from(SESSIONS[1], _thread("Mnemos handoff fix"), db_path, tmp_path, cwd=mnemos)
+        _handoff_from(SESSIONS[2], _thread("TrueMark, the phone scroll"), db_path, tmp_path,
+                      cwd=_repo(tmp_path, "TrueMark"))
+
+        packet = _hook(db_path, tmp_path, _start(FRESH, cwd=mnemos))
+        assert re.search(r"### where i was\n[^\n]*:\nMnemos handoff fix", packet), packet
+        assert packet.index("- me, ") < packet.index("Mnemos race fix") < packet.index("TrueMark")
+
+    def test_with_no_thread_from_its_folder_a_session_gets_the_newest_whole(self, tmp_path):
+        db_path = tmp_path / "shared.db"
+        older = _thread("TrueMark, the phone scroll")
+        newer = _thread("Prompt Ghost, the notch dashboard")
+        _handoff_from(SESSIONS[0], older, db_path, tmp_path, cwd=_repo(tmp_path, "TrueMark"))
+        _handoff_from(SESSIONS[1], newer, db_path, tmp_path, cwd=_repo(tmp_path, "prompt-ghost"))
+
+        packet = _hook(db_path, tmp_path, _start(FRESH, cwd=_folder(tmp_path, "elsewhere")))
+        assert newer in packet
+        assert older not in packet
+        assert re.search(r"^- me, [^:]*: TrueMark, the phone scroll\.", packet, re.M), packet
+
+    def test_a_resumed_session_gets_its_own_note_wherever_it_starts(self, tmp_path):
+        db_path = tmp_path / "shared.db"
+        here = _repo(tmp_path, "sanctuary")
+        _handoff_from(LIGHTS, LIGHTS_NOTE, db_path, tmp_path, cwd=_repo(tmp_path, "lights"))
+        _handoff_from(STEWARD, STEWARD_NOTE, db_path, tmp_path, cwd=here)
+
+        packet = _hook(db_path, tmp_path, _start(LIGHTS, source="resume", cwd=here))
+        assert re.search(r"### where i was\n[^\n]*, this session:\nWhat Lights Up", packet), packet
+
+    @staticmethod
+    def _lived_in(db_path: Path) -> None:
+        """The weight a lived-in memory's briefing carries: standing rules and
+        what has been changing, about 4,000 characters (a real one, Oct 12
+        2026, carried 4,700 besides its handoffs)."""
+        runtime = _runtime(db_path)
+        try:
+            for index in range(6):
+                runtime.capture(
+                    f"Riley's standing rule {index}: reply briefly, in plain everyday words, "
+                    "with no jargon or code names, and check the real render in a browser "
+                    "before calling any visual work done, because reasoning about a page "
+                    "is not seeing it, and a fix that wasn't looked at has shipped broken "
+                    "before.",
+                    standing=True,
+                    signed_as="claude-opus-5-5",
+                )
+                runtime.capture(
+                    f"Lesson {index} from the week's work on the lab.",
+                    impact=f"What I learned {index}: a number I haven't checked against "
+                    "the real run is a guess, and I should say so plainly when I give it, "
+                    "rather than letting it pass for something I measured.",
+                    signed_as="claude-opus-5-5",
+                )
+        finally:
+            runtime.close()
+
+    def test_a_long_note_does_not_push_out_the_rest_of_the_wake(self, tmp_path):
+        # A 4,800-character handoff on a real store left no beliefs, nothing
+        # that had been changing and no question: the handoff is never cut,
+        # and it counted against the same room as everything else.
+        db_path = tmp_path / "shared.db"
+        self._lived_in(db_path)
+        long_note = _thread("Mnemos lab, the testing thread", sentences=110)
+        assert len(long_note) > 4500
+        _handoff_from(SESSIONS[0], long_note, db_path, tmp_path)
+
+        packet = _hook(db_path, tmp_path, _start(FRESH))
+        assert long_note in packet
+        assert "### what's been changing in me" in packet, packet
+        assert packet.count("Riley's standing rule") == 5, packet
+
+    def test_the_lead_wakes_with_every_live_thread(self, tmp_path, monkeypatch):
+        db_path = tmp_path / "shared.db"
+        self._lived_in(db_path)
+        desk = _folder(tmp_path / "CLAUDE", "the-second-desk")
+        projects = ["TrueMark", "prompt-ghost", "mnemos", "sanctuary", "anima", "vessel", "sigil"]
+        headlines = {}
+        for index, name in enumerate(projects):
+            if index == 3:
+                lead = _thread("Lead session, the second desk", sentences=30)
+                _handoff_from(SESSIONS[7], lead, db_path, tmp_path, cwd=desk)
+            headlines[name] = f"{name} thread {index}, where it stands"
+            _handoff_from(SESSIONS[index], _thread(headlines[name], sentences=45),
+                          db_path, tmp_path, cwd=_repo(tmp_path / "Repositories", name))
+
+        packet = _hook(db_path, tmp_path, _start(FRESH, cwd=desk))
+        assert re.search(r"### where i was\n[^\n]*:\nLead session, the second desk", packet), packet
+        assert lead in packet
+        missing = [name for name, headline in headlines.items() if headline not in packet]
+        assert not missing, f"threads the lead never saw: {missing}\n{packet}"
 
 
 class TestSignatures:

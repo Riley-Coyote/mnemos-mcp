@@ -40,6 +40,34 @@ The code version is 22, so a session or job still running the code before
 stops maintaining a store this code has opened, rather than removing links by
 the old rule.
 
+### A session wakes to its own folder's thread, and sees every live one
+
+When several sessions work at once, each leaves its own handoff. A new session
+was handed the newest one whole and two more as short lines, and on a lived-in
+store even those two lines were the first thing the briefing cut for room: on
+one real store, with eight threads left in fourteen hours, a new session woke
+with one. And the handoff shown whole counted against the same room as
+everything else, so a long one (4,800 characters) pushed out the beliefs, what
+had been changing and the waiting question.
+
+Now:
+
+- A handoff records the place it was written: the repository its session
+  works in (a worktree counts as its repository), else the folder.
+- A session that left a handoff gets its own back first, as before.
+  Otherwise it gets the newest handoff written where it works, or in a place
+  whose name shares a word with it (`mnemos` and `mnemos-engine-page`). Only
+  when there is none does it get the newest overall.
+- Every other handoff left in the last three days follows as one short line,
+  this place's first, so a session that coordinates the others sees them all.
+- The handoff shown whole takes no room from the rest. Besides it, the
+  briefing holds up to 8,000 characters (it was 6,000; the hook's default
+  `--token-budget` is now 2000), and the other threads' lines are cut short
+  before anything leaves.
+
+Handoffs written before this have no place yet. Each one gets its place the
+next time its session writes its handoff again.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the
