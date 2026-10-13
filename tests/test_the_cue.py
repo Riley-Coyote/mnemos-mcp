@@ -634,6 +634,73 @@ def test_the_hook_answers_from_words_when_no_answerer_is_there(tmp_path, meaning
     assert _seen("session-one", db)["offers"][0]["via"] == "words"
 
 
+def test_a_first_message_asks_another_sessions_answerer_while_its_own_loads(tmp_path, meaning, home):
+    """A session's answerer opens only once its model has loaded, seconds
+    after the session starts, so its first message was answered from words.
+    Another session's answerer for the same memories and scope answers it
+    instead: asked what this session would ask its own, with what this
+    session was already shown left out, it gives the same answer."""
+    found = _gate_memories()
+    db = _store(tmp_path / "memory.db", *found.values())
+    cue.record_briefing("session-one", db_path=str(db), ids=[found["worded"].id], texts=[], **SCOPE)
+    other = _answerer(db, claude_pid=4242)
+    try:
+        block = _hook(db, MESSAGE, CLAUDE_PID="999999")
+        assert other.answered == 1
+    finally:
+        other.stop()
+
+    assert found["near"].id in block, "meaning found it"
+    assert found["worded"].id not in block, "what this session's briefing showed stays out"
+    offer = _seen("session-one", db)["offers"][0]
+    assert offer["via"] == "meaning" and offer["answerer"] == "another session"
+
+
+def test_another_sessions_answerer_for_other_memories_is_never_asked(tmp_path, meaning, home):
+    found = _gate_memories()
+    db = _store(tmp_path / "memory.db", *found.values())
+    elsewhere = cue.CueAnswerer(str(db), claude_pid=4242, **{**SCOPE, "project_scope": "elsewhere"})
+    cue.mark_hook_in_use()
+    assert elsewhere.start() and elsewhere.ready.wait(10)
+    try:
+        block = _hook(db, MESSAGE, CLAUDE_PID="999999")
+        assert elsewhere.answered == 0
+    finally:
+        elsewhere.stop()
+
+    assert found["worded"].id in block and found["near"].id not in block
+    seen = _seen("session-one", db)
+    assert seen["offers"][0]["via"] == "words" and "answerer" not in seen["offers"][0]
+    assert seen["words_because"] == {cue.NO_ANSWERER: 1}
+
+
+def test_of_the_other_sessions_answerers_the_last_to_answer_is_asked_first(tmp_path, meaning, home):
+    """The one that answered last is likeliest to be awake. A dead one's socket
+    (a server that crashed) is passed over however recent it looks."""
+    found = _gate_memories()
+    db = _store(tmp_path / "memory.db", *found.values())
+    used = _answerer(db, claude_pid=4242)
+    newer = _answerer(db, claude_pid=4343)  # opened after, but not asked since
+    dead = cue.answerer_path(4444, used.key)
+    try:
+        time.sleep(0.05)
+        assert cue.ask_answerer(used.key, MESSAGE, environ={"CLAUDE_PID": "4242"}) is not None
+        crashed = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        crashed.bind(str(dead))
+        crashed.close()
+        later = time.time() + 60
+        os.utime(dead, (later, later))
+
+        block = _hook(db, MESSAGE, CLAUDE_PID="999999")
+        assert (used.answered, newer.answered) == (2, 0)
+    finally:
+        used.stop()
+        newer.stop()
+        dead.unlink(missing_ok=True)
+    assert found["near"].id in block
+    assert _seen("session-one", db)["offers"][0]["answerer"] == "another session"
+
+
 def test_a_server_that_cannot_start_its_answerer_runs_the_same(monkeypatch):
     import mnemos.simple_mcp as simple_mcp
 

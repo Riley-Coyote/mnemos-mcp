@@ -47,7 +47,10 @@ words, with its date and its id. Or nothing, which is the usual answer.
   Claude Code process that spawned it. The hook finds it by ``CLAUDE_PID``,
   which Claude Code gives every hook, and which ``/clear`` does not change
   (``/clear`` gives the session a new id, and keeps its MCP servers running
-  with the old one). With no answerer, a slow one, or one speaking an older
+  with the old one). Until the session's own answerer is up (its model takes
+  seconds to load, so a first message always came before it), the hook asks
+  another session's answerer for the same memories and scope, the one that
+  answered last. With no answerer, a slow one, or one speaking an older
   protocol, the hook answers from words alone. The model loads at the server's
   start where the hook is in use, and otherwise only when a cue first asks.
 - **The person is never slowed** (WP-E2). The words answer starts the moment
@@ -98,7 +101,7 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Iterator, Mapping, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -197,6 +200,9 @@ NO_ANSWERER = "no answerer"
 WARMING = "warming"
 ANOTHER_PROTOCOL = "another protocol"
 SOCKET_TOO_LONG = "socket path too long"
+# Who answered, in an offer, when it wasn't the session's own answerer: its
+# own was not up yet, and another session's for the same memories was.
+ANOTHER_SESSION = "another session"
 
 # Jev's score a line needs to show, with the switch on (WP-R16b). On the lab's
 # 20 development prompts the cue's candidates before its cap are 62 lines, 26
@@ -742,6 +748,35 @@ def claude_pids(environ: Mapping[str, str] | None = None, *, deadline: float | N
     return found
 
 
+def _answerers(key: str, pids: Sequence[int]) -> Iterator[tuple[Path, bool]]:
+    """The sockets to try, each with whether it is another session's: this
+    session's answerer's (one per pid in ``pids``), then, read only if none of
+    those answered, the other sessions' answerers' for the same ``key``, the
+    one that answered last first (an answerer marks its socket each time it
+    answers). Those of any other key never."""
+    for pid in pids:
+        yield answerer_path(pid, key), False
+    own = {int(pid) for pid in pids}
+    found = []
+    try:
+        entries = list(os.scandir(run_dir()))
+    except OSError:
+        return
+    for entry in entries:
+        name = entry.name
+        if not (name.startswith("cue-") and name.endswith(f"-{key}.sock")):
+            continue
+        pid = name[len("cue-"):-len(f"-{key}.sock")]
+        if not pid.isdigit() or int(pid) in own:
+            continue
+        try:
+            found.append((entry.stat(follow_symlinks=False).st_mtime, entry.path))
+        except OSError:
+            continue
+    for _, path in sorted(found, reverse=True):
+        yield Path(path), True
+
+
 def ask_answerer(
     key: str,
     text: str,
@@ -758,6 +793,13 @@ def ask_answerer(
     """Ask this session's answerer for the cue: its reply, or None when there
     is none, it is slow, it fails, or it speaks another protocol.
 
+    An answerer opens its socket only once its model has loaded, seconds after
+    its session starts. Until this session's is there, another session's
+    answerer for the same store and scope (the same key) is asked instead, the
+    one that answered last first (``_answerers``): told what this session
+    would tell its own, it gives the same answer. An answerer for any other
+    key is never asked.
+
     It waits ``answer_seconds`` once connected, and never past ``until`` (a
     ``time.monotonic()`` value) when given, and tells the answerer how long it
     waits (``wait``). ``judge`` ("jev") asks it to have its candidates judged
@@ -769,9 +811,11 @@ def ask_answerer(
     where this session's would be), ``no answerer``, ``timeout`` (it didn't
     answer in ``answer_seconds``), ``warming`` (its model is loading),
     ``busy`` (its store stayed locked), ``another protocol``, or
-    ``error (<Name>)``."""
+    ``error (<Name>)``; and ``why["answerer"]`` is ``another session`` when
+    it asked another session's answerer."""
     told = why if why is not None else {}
     told["reason"] = None
+    told.pop("answerer", None)
     if not hasattr(socket, "AF_UNIX"):
         told["reason"] = NO_ANSWERER
         return None
@@ -779,8 +823,7 @@ def ask_answerer(
     connect_by = started + connect_seconds
     sock = None
     too_long = ran_out = False
-    for pid in claude_pids(environ, deadline=connect_by):
-        path = answerer_path(pid, key)
+    for path, lent in _answerers(key, claude_pids(environ, deadline=connect_by)):
         if len(os.fsencode(str(path))) >= SOCKET_PATH_MAX:
             too_long = True  # no answerer can open one there (CueAnswerer._bind)
             continue
@@ -802,6 +845,8 @@ def ask_answerer(
             candidate.close()
             continue
         sock = candidate
+        if lent:
+            told["answerer"] = ANOTHER_SESSION
         break
     if sock is None:
         told["reason"] = TIMEOUT if ran_out else SOCKET_TOO_LONG if too_long else NO_ANSWERER
@@ -921,10 +966,13 @@ class CueAnswerer:
     opens the socket, at
     ``~/.mnemos/run/cue-<Claude Code pid>-<scope key>.sock`` (0600, the folder
     0700): a hook never waits on a model still loading, and until the socket
-    is there it answers from words. Where it isn't, loading the model would
-    cost every session several hundred megabytes for nothing, so the socket
-    opens at once and the model loads when the first cue asks; that cue, and
-    any before the model is ready, are told to answer from words.
+    is there it asks another session's answerer for the same memories, or
+    answers from words. Each answer marks the socket's time, so that hook asks
+    the answerer that answered last, the likeliest to be awake. Where the hook
+    isn't in use, loading the model would cost every session several hundred
+    megabytes for nothing, so the socket opens at once and the model loads
+    when the first cue asks; that cue, and any before the model is ready, are
+    told to answer from words.
 
     Queries run on the answerer's own read-only connections to the store and
     its index, one at a time, and change nothing. A store locked through a
@@ -1171,8 +1219,21 @@ class CueAnswerer:
         reply["ms"] = round((time.perf_counter() - started) * 1000, 1)
         conn.sendall((json.dumps(reply) + "\n").encode("utf-8"))
         self.answered += 1
-        # After the reply has gone, so the hook never waits on it.
+        # After the reply has gone, so the hook never waits on them.
+        if reply["ok"]:
+            self._mark_answered()
         self._keep_judged()
+
+    def _mark_answered(self) -> None:
+        """Mark the socket's time: answering has none of its own (connecting
+        and reading leave it as it was), and the hook of a session whose own
+        answerer isn't up yet asks the one that answered last (``_answerers``)."""
+        if self.path is None or self._inode is None:
+            return
+        try:
+            os.utime(self.path)
+        except OSError:
+            pass
 
     def _lines(
         self, text: str, *, exclude: list[str], texts: list[str], limit: int | None = None,
@@ -1436,6 +1497,8 @@ def prompt_hook(
     # it answered by words, when it did.
     failure: str | None = None
     because: str | None = None
+    # Why the answerer didn't answer, and whose did (``ask_answerer``).
+    asked: dict[str, Any] = {}
     try:
         store = ReadOnlyEngramStore(db)
         words: _Words | None = None
@@ -1462,7 +1525,7 @@ def prompt_hook(
                 reply = ask_answerer(
                     key, text, exclude=seen["shown"], texts=seen["texts"], environ=env, judge=jev.JEV,
                     connect_seconds=min(CONNECT_SECONDS, max(0.0, room)),
-                    answer_seconds=max(0.0, room - CONNECT_SECONDS - JUDGE_MARGIN),
+                    answer_seconds=max(0.0, room - CONNECT_SECONDS - JUDGE_MARGIN), why=asked,
                 )
                 ruled = reply is not None and reply.get("judge") == jev.JEV
                 lines, via = (_valid_lines(reply["lines"]) if ruled else []), jev.JEV
@@ -1487,7 +1550,6 @@ def prompt_hook(
                 # The answerer may take until ANSWER_MARGIN before the
                 # deadline: whichever answer is ready then is shown, meaning
                 # if it came, else words.
-                asked: dict[str, Any] = {}
                 reply = ask_answerer(
                     key, text, exclude=seen["shown"], texts=seen["texts"], environ=env,
                     connect_seconds=min(CONNECT_SECONDS, max(0.0, room)),
@@ -1531,6 +1593,7 @@ def prompt_hook(
                 "via": via,
                 **judged_scores,
                 **({"because": because} if because else {}),
+                **({"answerer": asked["answerer"]} if asked.get("answerer") else {}),
                 "ms": round((time.perf_counter() - started) * 1000, 1),
             },
             answered=via,

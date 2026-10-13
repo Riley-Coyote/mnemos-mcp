@@ -133,6 +133,22 @@ once share the cores: one message takes the same 5 ms on one thread as on ten.
 On a copy of that store, a server answering the cue holds 433 MB, and its
 answers took 63 ms at the median and 106 ms at the most.
 
+### A session's first message is answered by meaning
+
+A session's answerer opens only once its model has loaded, seconds after the
+session starts, and the first message nearly always comes sooner, so it was
+answered from words alone: on one machine in a week, 4 of 155 sessions had
+their first message answered by meaning. Now, until a session's own answerer
+is up, the cue asks another session's answerer for the same store and scope.
+It is asked what the session would ask its own, what the session was already
+shown left out, so it gives the same answer. Of several, the cue asks the one
+that answered last, the likeliest to be awake: an answer now marks its
+socket's time, which connecting and reading leave as they were. A socket
+nothing answers on is passed over, and an answerer for any other store or
+scope is never asked. An offer answered this way says so (`"answerer":
+"another session"`). On that machine, finding and trying every other
+session's socket (38 of them, 12 live) took under a millisecond.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the
