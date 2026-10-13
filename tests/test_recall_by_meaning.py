@@ -725,13 +725,14 @@ def test_a_hanging_network_blocks_neither_recall_health_nor_doctor(tmp_path, mon
 
 def test_an_older_sentence_transformers_loads_the_cached_copy_by_its_path(monkeypatch):
     """Before local_files_only, a model's cached copy is loaded by its path,
-    which never asks the Hub."""
+    which never asks the Hub. Such a version already took ``device``, as
+    every one since 0.2 does, and it runs on the CPU too."""
     loaded, asked = [], []
     module = types.ModuleType("sentence_transformers")
 
     class SentenceTransformer:
-        def __init__(self, name_or_path):
-            loaded.append(name_or_path)
+        def __init__(self, model_name_or_path=None, modules=None, device=None):
+            loaded.append((model_name_or_path, device))
 
     module.SentenceTransformer = SentenceTransformer
     hub = types.ModuleType("huggingface_hub")
@@ -747,7 +748,7 @@ def test_an_older_sentence_transformers_loads_the_cached_copy_by_its_path(monkey
     ei._load_local_model("all-MiniLM-L6-v2")
 
     assert asked == [("sentence-transformers/all-MiniLM-L6-v2", {"local_files_only": True})]
-    assert loaded == ["/cache/sentence-transformers/all-MiniLM-L6-v2"]
+    assert loaded == [("/cache/sentence-transformers/all-MiniLM-L6-v2", "cpu")]
 
 
 def test_the_hub_libraries_are_offline_while_the_model_loads(monkeypatch):
@@ -801,6 +802,34 @@ def test_downloading_is_one_explicit_step(monkeypatch, capsys):
     assert main(["embeddings", "download"]) == 0
     assert calls == [("all-MiniLM-L6-v2", {})], "the download step must be allowed the network"
     assert "Downloaded" in capsys.readouterr().out
+
+
+def test_the_local_model_runs_on_the_cpu_with_two_threads(monkeypatch):
+    """Every session's server loads the model. Left to choose, it took the
+    GPU on a Mac: 2.2 GB a process against 0.46 GB on the CPU, and 35 ms a
+    message against 5. With fourteen sessions open, the servers held 26 GB
+    of a 36 GB machine, sat in swap while idle, and missed the cue's window
+    on 260 of 627 messages. The vectors are the same (cosine 1.000000
+    against the stored ones)."""
+    calls = []
+    module = types.ModuleType("sentence_transformers")
+
+    class SentenceTransformer:
+        def __init__(self, name, **kwargs):
+            calls.append(kwargs)
+
+    module.SentenceTransformer = SentenceTransformer
+    monkeypatch.setitem(sys.modules, "sentence_transformers", module)
+    threads = {"now": 10}
+    torch = types.ModuleType("torch")
+    torch.get_num_threads = lambda: threads["now"]
+    torch.set_num_threads = lambda n: threads.update(now=n)
+    monkeypatch.setitem(sys.modules, "torch", torch)
+
+    ei._load_local_model("all-MiniLM-L6-v2")
+
+    assert [call.get("device") for call in calls] == ["cpu"], calls
+    assert threads["now"] == 2, "the model may use every core in each of many processes"
 
 
 # ── The passage index ──

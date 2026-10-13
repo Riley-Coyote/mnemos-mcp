@@ -611,6 +611,18 @@ class _LocalEmbedder:
 
 _DOWNLOAD_HINT = "if it was never downloaded, run: mnemos embeddings download"
 
+# Where the local model runs, and on how many threads. Every session's server
+# loads it. Left to choose, it took the GPU on a Mac: 2.2 GB a process against
+# 0.46 GB on the CPU, and about 35 ms a message against 5, with the same
+# vectors (cosine 1.000000 against those stored from the GPU). With fourteen
+# sessions open on one 36 GB machine, the servers held 26 GB, sat in swap
+# while idle, and the cue's answer missed its window on 260 of 627 messages.
+# One message takes the same 5 ms on one thread as on ten; a batch of 128
+# passages 0.24 s on two, 0.15 s on ten. Two, so that many processes at
+# once share the cores rather than each taking all of them.
+LOCAL_DEVICE = "cpu"
+LOCAL_THREADS = 2
+
 
 def _hub_repo(model_name: str) -> str:
     """The Hub repository a sentence-transformers model name stands for."""
@@ -660,8 +672,20 @@ def _load_local_model(model_name: str) -> Any:
     fails at once, and semantic recall reports that it is off and why. The
     Hub libraries are offline while it loads (``_hub_offline``).
     """
+    _limit_threads()
     with _hub_offline():
         return _load_cached_model(model_name)
+
+
+def _limit_threads() -> None:
+    """At most ``LOCAL_THREADS`` threads for the model's work in this process.
+    Only a process that loads the model imports torch."""
+    try:
+        import torch
+    except ImportError:  # no torch, no model: the load reports why
+        return
+    if torch.get_num_threads() > LOCAL_THREADS:
+        torch.set_num_threads(LOCAL_THREADS)
 
 
 def _load_cached_model(model_name: str) -> Any:
@@ -681,14 +705,15 @@ def _load_cached_model(model_name: str) -> Any:
         was_enabled, enable = False, None
     try:
         try:
-            return SentenceTransformer(model_name, local_files_only=True)
+            return SentenceTransformer(model_name, local_files_only=True, device=LOCAL_DEVICE)
         except TypeError:
             # sentence-transformers before local_files_only: load the cached
             # copy by its path, which never asks the Hub.
             from huggingface_hub import snapshot_download
 
             return SentenceTransformer(
-                snapshot_download(repo_id=_hub_repo(model_name), local_files_only=True)
+                snapshot_download(repo_id=_hub_repo(model_name), local_files_only=True),
+                device=LOCAL_DEVICE,
             )
     finally:
         if was_enabled and enable is not None:

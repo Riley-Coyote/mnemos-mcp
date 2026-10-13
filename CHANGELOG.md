@@ -119,6 +119,20 @@ few whole sentences, as meaning search reads the memory. A row whose opening
 holds every word the question matched reads as before. Handoffs, journal
 entries and notes in recall's answer are shown the same way.
 
+### The local model runs on the CPU, and takes a fifth of the memory
+
+Every session's Mnemos server loads the local embedding model. Left to choose,
+it took the GPU on a Mac, where one process held 2.2 GB and embedded a message
+in about 35 ms; on the CPU it holds 0.46 GB and takes 5 ms, and the vectors
+are the same (cosine 1.000000 against those stored from the GPU). On one
+36 GB machine with fourteen sessions open, the servers held 26 GB between
+them and sat in swap while idle, and the cue's answer, which has to be paged
+back in before it can answer, missed its window on 260 of 627 messages. Now
+the model runs on the CPU, on at most two threads, so that many servers at
+once share the cores: one message takes the same 5 ms on one thread as on ten.
+On a copy of that store, a server answering the cue holds 433 MB, and its
+answers took 63 ms at the median and 106 ms at the most.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the
