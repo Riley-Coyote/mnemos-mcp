@@ -314,7 +314,9 @@ def test_quiet_memories_never_relay_and_only_a_dormant_one_is_lit(store):
              .retrieve("lighthouse keeper", max_results=None, **SCOPE)}
 
     assert quiet_seed.id in found, "the cue brings back a quiet memory it matches"
-    assert found[dormant.id].score == pytest.approx(0.25), "a link lights a dormant memory at a discount"
+    assert found[dormant.id].score == pytest.approx(0.5), (
+        "a link lights a dormant memory as it lights an active one: the hop's decay alone"
+    )
     assert found[dormant.id].retrieval_path == "resonance"
     assert not set(found) & {beyond.id, past_quiet.id, archived.id}
 
@@ -594,6 +596,55 @@ def test_a_row_carries_up_to_300_characters_of_its_own_words(tmp_path):
     assert cut.endswith("…") and len(cut) <= 300
     assert long.startswith(cut[:-1])
     assert "The lighthouse lens came from Paris." in rows, "a row carried the capture's context"
+
+
+# A long memory whose answer sits past a row's first 300 characters. In a lab
+# replay of real recall calls, more than half the facts sat that far into the
+# memory holding them, and 20 of the 35 facts whose memory recall found never
+# showed in its row.
+_SEASON = (
+    "The harbour season opened late this year because the spring storms kept the "
+    "pontoons out of the water until May, and the volunteers spent the first weeks "
+    "scraping hulls, re-roping the moorings and repainting the slipway markers. "
+    "Most of the regular crews came back, two families sold their dinghies, and the "
+    "café by the chandlery changed hands again. "
+)
+_ANSWER = "The spare key to the boathouse hangs on the nail behind the tide clock."
+_LATER = (
+    " After the regatta the committee agreed to replace the starting gun, to move the "
+    "noticeboard nearer the gate, and to keep the clubhouse open on Thursday evenings "
+    "through October so the late sailors have somewhere dry to wait for the tide."
+)
+
+
+@pytest.mark.parametrize("kind", ["memory", "handoff"])
+def test_a_row_shows_the_passage_that_holds_the_querys_words(tmp_path, kind):
+    rt = _runtime(tmp_path / "memory.db")
+    text = _SEASON + _ANSWER + _LATER
+    assert text.index(_ANSWER) > 300, "premise: the answer sits past the opening"
+    if kind == "memory":
+        rt.capture(text)
+    else:
+        rt.handoff(text)
+
+    rows = _rows(rt.recall("boathouse spare key", max_results=5))
+
+    [row] = [row for row in rows if row.startswith("The harbour season opened late")]
+    assert _ANSWER in row, f"the row hid the passage the query's words are in:\n{row}"
+    assert " … " in row, "the row didn't mark what it left out between the opening and the passage"
+    assert len(row) <= 450, f"a row of {len(row)} characters"
+
+
+def test_a_row_whose_opening_holds_every_word_the_query_matched_is_cut_as_before(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    text = _SEASON + _ANSWER + _LATER
+    rt.capture(text)
+
+    [row] = [row for row in _rows(rt.recall("harbour pontoons storms", max_results=5))
+             if row.startswith("The harbour season opened late")]
+
+    assert row.endswith("…") and len(row) <= 300 and " … " not in row
+    assert text.startswith(row[:-1])
 
 
 # ── 9. The model loads from this machine only ──

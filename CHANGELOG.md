@@ -84,6 +84,41 @@ a "nothing found" from words alone isn't a full search. A setup without the
 package and without vectors is keyword-only by choice, and recall says
 nothing of it.
 
+### An old memory that answers the question is no longer found at half strength
+
+A memory nobody has recalled for a while goes quiet (dormant). Recall still
+found one that matched the question, but started it at half the score of an
+active memory with the same match, and a link lit it at half too. So a newer
+memory that only brushed the question came first: "ferry timetable kitchen
+drawer" scored a year-old memory that says exactly that at 0.5, and a newer
+one that shares two of its words at 0.98. In a store used for months, most of
+what is older than three months is quiet: on one real store, of the memories
+from two summer months, about 5,600 were quiet and fewer than 500 active.
+
+In a lab replay of the recall calls real sessions made, the memory holding
+the answer was found for 6 of 29 facts from a year before; at its full score,
+for 10. Across all 114 facts it went from 35 to 42, and the facts held by
+active memories were found as often as before (29 of 68).
+
+Now a quiet memory competes on its match, as an active one does. Going quiet
+still says how long since it was used: it relays nothing until it wakes, at
+most ten of them are drawn into one recall, and a returned one wakes.
+
+### A recall row shows the part of a memory the question is about
+
+Each row of a recall carries the first 300 characters of a memory, so the
+answer to a question often wasn't in it when it sat further in, and the
+agent had to fetch the memory by its id to see it, or went without. In the
+same lab replay, the facts sat past the first 300 characters of the memory
+holding them for 62 of 105, and of the 35 facts whose memory recall found,
+20 never showed in its row.
+
+Now, when a passage further in holds a word of the question the opening
+doesn't, the row shows the first 120 characters, " … ", and that passage: a
+few whole sentences, as meaning search reads the memory. A row whose opening
+holds every word the question matched reads as before. Handoffs, journal
+entries and notes in recall's answer are shown the same way.
+
 ## 0.4.0 (2026-10-08)
 
 The agent gets a life of its own between your conversations, and only the

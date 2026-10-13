@@ -64,7 +64,7 @@ from .retrieval.reactive import MATCHED_WORDS, ReactiveRetriever, RetrievalResul
 # Re-exported: MnemosScope and resolve_scope moved to simple_scope but
 # remain importable from here for existing consumers.
 from .simple_scope import MnemosScope, resolve_scope  # noqa: F401
-from .store.embedding_index import WRITE_EMBED_SECONDS, EmbeddingIndex
+from .store.embedding_index import WRITE_EMBED_SECONDS, EmbeddingIndex, passages
 from .core.engram import Engram
 from .core.placeholders import TEMPLATED_IMPACTS, is_templated
 from .store.archive import resharpen
@@ -124,6 +124,12 @@ UNREACHABLE_COMMAND = 'mnemos_recall("<its words>", include_archived=true)'
 # without fetching it by its id. At 180, 38 of the 69 recall calls in the lab's
 # first baseline fetched a note by its id right after a list.
 ROW_CHARS = 300
+# When the query's words sit further into an item than its row's first
+# ``ROW_CHARS`` characters, the row shows this much of its opening and then the
+# passage that holds them. In a lab replay of real recall calls, more than half
+# the facts sat past the first 300 characters of the memory holding them, and
+# 20 of the 35 facts whose memory recall found never showed in its row.
+ROW_OPENING_CHARS = 120
 
 # Passages recall's meaning index may embed in one automatic maintenance (the
 # one a capture or a correction runs): at most a few seconds, so a store whose
@@ -4001,7 +4007,7 @@ class MnemosRuntime:
             heading,
             [
                 ("Continuity notes:", [(("note", entry["id"]), _format_continuity(entry, query)) for entry in continuity]),
-                ("Relevant memories:", [(("memory", index), _format_memory(result)) for index, result in enumerate(memories)]),
+                ("Relevant memories:", [(("memory", index), _format_memory(result, query)) for index, result in enumerate(memories)]),
             ],
             room,
         )
@@ -4880,7 +4886,7 @@ class MnemosRuntime:
             lines.append(words_only)
         if memories:
             lines.extend(["", "Durable memories:"])
-            lines.extend(_format_memory(result) for result in memories)
+            lines.extend(_format_memory(result, query) for result in memories)
         # Whose each one is depends on who reads it: resolved once here, and
         # only when something signed was found (reading the model may read the
         # session's transcript).
@@ -4889,20 +4895,20 @@ class MnemosRuntime:
         )
         if handoffs:
             lines.extend(["", "Handoffs:"])
-            lines.extend(_format_handoff(result, reader, session) for result in handoffs)
+            lines.extend(_format_handoff(result, reader, session, query) for result in handoffs)
         if journal:
             lines.extend(["", "Journal:"])
-            lines.extend(_format_journal(result, reader, session) for result in journal)
+            lines.extend(_format_journal(result, reader, session, query) for result in journal)
         if notes:
             lines.extend(["", "Notes:"])
-            lines.extend(_format_note(result) for result in notes)
+            lines.extend(_format_note(result, query) for result in notes)
         returned = list(memories)
         if faded:
             restored = [self._restore_faded(engram) for engram in faded]
             self._traced_read(*(engram.id for engram in restored))
             one = len(restored) == 1
             lines.extend(["", "From the archive:"])
-            lines.extend(_format_archived(engram) for engram in restored)
+            lines.extend(_format_archived(engram, query) for engram in restored)
             if all(engram.state == "active" for engram in restored):
                 lines.append(
                     "It had faded out of ordinary recall; recalling it brought it back."
@@ -6564,6 +6570,44 @@ def _cut_from(words: str | None, encoded: str | None) -> bool:
     return words in (_rule_based_soften(encoded, 1.0), _rule_based_soften(encoded, 0.0))
 
 
+def _row_words(text: str, query: str) -> str:
+    """An item's words for its row in an answer to ``query``: its opening, as
+    ``_own_words`` gives it; or, when a passage further in holds a word of the
+    query the opening doesn't, a short opening, " … ", and that passage (the
+    one holding the most such words, then the most of the query's words, the
+    first of equals), as meaning search reads it (``passages``)."""
+    words = " ".join((text or "").split(_CAPTURE_CONTEXT, 1)[0].split())
+    opening = _own_words(words)
+    wanted = {word.lower() for word in search_words(query or "")}
+    if not wanted or len(words) <= ROW_CHARS:
+        return opening
+
+    def held(passage: str) -> set[str]:
+        return wanted & {word.lower() for word in fts_words(passage, min_len=1)}
+
+    shown = held(opening)
+    best, best_key = "", (0, 0)
+    for window in passages(words)[1:]:
+        found = held(window)
+        key = (len(found - shown), len(found))
+        if key > best_key:
+            best, best_key = window, key
+    start = words.find(best) if best_key[0] else -1
+    if start < 0:
+        return opening
+    end = start + len(best)
+    head = _own_words(words, ROW_OPENING_CHARS)
+    if start <= len(head.rstrip("…")):
+        # The passage begins inside the opening: the opening runs on to its end.
+        shown_words = words[:end]
+    else:
+        shown_words = f"{head.rstrip('…').rstrip(' ,;:')} … {best}"
+    if end >= len(words):
+        return shown_words
+    # More follows: after a whole sentence, set apart from its full stop.
+    return shown_words + (" …" if shown_words.endswith((".", "!", "?")) else "…")
+
+
 def _own_words(text: str, limit: int = ROW_CHARS) -> str:
     """Up to ``limit`` characters of an item's own words, on one line: a
     memory's words without the context its capture keeps after them, cut at a
@@ -6582,7 +6626,7 @@ def _format_continuity(entry: dict[str, Any], query: str) -> str:
     held = {word.lower() for word in fts_words(entry["content"] or "", min_len=1)}
     words = [word for word in search_words(query) if word.lower() in held][:MATCHED_WORDS]
     return (
-        f"- [{'words: ' + ', '.join(words) if words else 'words'}] {_own_words(entry['content'])}\n"
+        f"- [{'words: ' + ', '.join(words) if words else 'words'}] {_row_words(entry['content'], query)}\n"
         f"  id={entry['id']} domain={entry['domain']} confidence={entry['confidence']:.2f} "
         f"{note_signature(entry)}"
     )
@@ -6607,9 +6651,10 @@ def how_found(result: Any) -> str:
     return f"[{'; '.join(found) or 'linked'}]"
 
 
-def _format_memory(result: Any) -> str:
+def _format_memory(result: Any, query: str = "") -> str:
     """A memory in a list: its own words (not the impact, which a lesson
-    already is and which is fetched by id), enough to use without fetching."""
+    already is and which is fetched by id), enough to use without fetching:
+    for ``query``, the passage that holds its words (``_row_words``)."""
     engram = result.engram
     # A dormant memory the cue matched comes back marked as one: recall wakes
     # it, and the reader should know it had gone quiet.
@@ -6620,12 +6665,12 @@ def _format_memory(result: Any) -> str:
         name = " ".join(os.environ.get("MNEMOS_PERSON_NAME", "").split())
         whose = f"; in {name}'s words" if name else "; in the person's words"
     return (
-        f"- {how_found(result)} {_own_words(engram.content or engram.impact or '')}\n"
+        f"- {how_found(result)} {_row_words(engram.content or engram.impact or '', query)}\n"
         f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}{whose}"
     )
 
 
-def _format_handoff(result: Any, reader: str, session: str) -> str:
+def _format_handoff(result: Any, reader: str, session: str, query: str = "") -> str:
     """A handoff recall found: its own words, whether it is still in use,
     when it was left, and whose it is to this reader (as the packet says it:
     yours, a colleague's, or unsigned)."""
@@ -6640,7 +6685,7 @@ def _format_handoff(result: Any, reader: str, session: str) -> str:
         kind = "handoff"
     left = (note.get("created_at") or "")[:10]
     return (
-        f"- {how_found(result)} {_own_words(note.get('content') or '')}\n"
+        f"- {how_found(result)} {_row_words(note.get('content') or '', query)}\n"
         f"  id={note.get('id')} kind={kind}; left {left}: {label}"
     )
 
@@ -6663,13 +6708,13 @@ def _index_lines(indexed: Mapping[str, Any]) -> list[str]:
     return [f"{line}; {waiting} still waiting" if waiting else line]
 
 
-def _format_note(result: Any) -> str:
+def _format_note(result: Any, query: str = "") -> str:
     """A note recall found that has no memory of its own: a continuity note,
     or one of Mnemos's reports."""
     note = result.note or {}
     kind = "report" if note.get("entry_kind") == "maintenance_report" else "note"
     return (
-        f"- {how_found(result)} {_own_words(note.get('content') or '')}\n"
+        f"- {how_found(result)} {_row_words(note.get('content') or '', query)}\n"
         f"  id={note.get('id')} kind={kind} {note_signature(note)}, "
         f"{_age_text(note.get('created_at') or '')}"
     )
@@ -6729,23 +6774,23 @@ def _signed_row(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
-def _format_journal(result: Any, reader: str, session: str) -> str:
+def _format_journal(result: Any, reader: str, session: str, query: str = "") -> str:
     """A journal entry recall found, marked as journal: its own words, when and
     how it was written, and whose it is to this reader (as a handoff says it)."""
     entry = result.note or {}
     label, _whose = whose_handoff(_signed_row(entry), reader, session)
     return (
-        f"- {how_found(result)} {_own_words(entry.get('content') or '')}\n"
+        f"- {how_found(result)} {_row_words(entry.get('content') or '', query)}\n"
         f"  id={entry.get('id')} kind=journal; written {(entry.get('created_at') or '')[:10]} "
         f"({entry.get('written') or 'in_conversation'}): {label}"
     )
 
 
-def _format_archived(engram: Engram) -> str:
+def _format_archived(engram: Engram, query: str = "") -> str:
     """A memory recall found in the archive: no score, since recall's
     resonance never reaches the archive; the query named it."""
     return (
-        f"- {_own_words(engram.content or engram.impact or '')}\n"
+        f"- {_row_words(engram.content or engram.impact or '', query)}\n"
         f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}"
     )
 

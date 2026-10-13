@@ -10,10 +10,9 @@ and every health check green. Mnemos had the same shape one step earlier:
   * the dream report told the agent dormant memories were "ready to wake if
     needed".
 
-Now recall seeds a dormant memory that matches the cue, at half the score, or
-lights it through a link from a memory that is, at the same discount, and a
-returned one wakes. Quiet memories never relay, and an archived one is never
-lit.
+Now recall seeds a dormant memory that matches the cue, or lights it through a
+link from a memory that is, as it would an active one, and a returned one
+wakes. Quiet memories never relay, and an archived one is never lit.
 Decay keeps fading a dormant memory until it wakes or reaches the archive. A
 memory that faded into the archive comes back by its id, or through
 ``mnemos_recall`` with ``include_archived``; one the agent forgot or replaced
@@ -240,9 +239,10 @@ def test_a_strong_cue_finds_a_dormant_memory_and_it_wakes(tmp_path):
     assert _row(db, ferry) == woke, "the same session woke or reinforced it twice"
 
 
-def test_a_dormant_memory_starts_at_half_its_score(tmp_path):
-    """Seeded when the cue matches it, at half the activation an active memory
-    starts with, so an equal active match comes first."""
+def test_a_dormant_memory_starts_at_its_full_score(tmp_path):
+    """Seeded when the cue matches it, at the activation an active memory
+    with the same match starts with: going quiet says how long since it was
+    used, not how well it answers."""
     db = tmp_path / "memory.db"
     store = EngramStore(str(db))
     try:
@@ -259,9 +259,38 @@ def test_a_dormant_memory_starts_at_half_its_score(tmp_path):
     quiet = _found(db, CUE)
 
     assert ferry in quiet, "recall did not seed a dormant memory the cue matched"
-    assert quiet[ferry] == pytest.approx(awake[ferry] / 2, abs=1e-4)
+    assert quiet[ferry] == pytest.approx(awake[ferry], abs=1e-4), (
+        "a dormant memory started below an active one with the same match"
+    )
     assert quiet[harbour] == pytest.approx(awake[harbour], abs=1e-4), (
         "a dormant seed changed how an active memory scores"
+    )
+
+
+def test_an_old_quiet_memory_the_cue_names_comes_before_a_new_one_it_brushes(tmp_path):
+    """A memory from a year ago that holds the answer went quiet; a newer one
+    shares two of the question's words and nothing more. The answer comes
+    first. In a lab replay of real recall calls, most memories over three
+    months old were quiet, and at half their score the ones holding the
+    answer were found for 6 of 29 facts from that time, 10 at their full
+    score; the newer memories lost nothing."""
+    db = tmp_path / "memory.db"
+    store = EngramStore(str(db))
+    try:
+        ferry = _engram(store, FERRY)
+        brushes = _engram(store, "The ferry company printed a new timetable for the summer.")
+        for text in OTHERS:
+            _engram(store, text)
+    finally:
+        store.close()
+    _go_quiet(db, ferry, hours_ago=24 * 365)
+
+    found = _found(db, CUE)
+
+    assert brushes in found, "premise: the newer memory matches some of the cue"
+    assert found[ferry] > found[brushes], (
+        f"the quiet memory the cue names ({found.get(ferry)}) came after a newer "
+        f"one it only brushes ({found[brushes]})"
     )
 
 
@@ -307,8 +336,8 @@ def test_every_recall_path_wakes_what_it_returns_and_older_code_none(tmp_path):
 
 
 def test_a_dormant_memory_lit_through_a_link_wakes_when_returned(tmp_path):
-    """The cue matches A alone. A link from A lights a dormant B, at the
-    discount a dormant seed gets, and B wakes when it is returned."""
+    """The cue matches A alone. A link from A lights a dormant B, as it would
+    an active one (the hop's decay alone), and B wakes when it is returned."""
     db, (ferry, lighthouse) = _stored(tmp_path, FERRY, OTHERS[1])
     store = EngramStore(str(db))
     try:
@@ -316,7 +345,7 @@ def test_a_dormant_memory_lit_through_a_link_wakes_when_returned(tmp_path):
     finally:
         store.close()
     _go_quiet(db, lighthouse)
-    assert _found(db, CUE)[lighthouse] == pytest.approx(0.25)
+    assert _found(db, CUE)[lighthouse] == pytest.approx(0.5)
     assert _row(db, lighthouse, "state")["state"] == "dormant"
 
     store = EngramStore(str(db))
@@ -335,8 +364,8 @@ def test_a_dormant_memory_lit_through_a_link_wakes_when_returned(tmp_path):
 @pytest.mark.parametrize("quiet_state", ["dormant", "archived"])
 def test_quiet_memories_never_relay(tmp_path, quiet_state):
     """A → Q → B: the cue matches A alone. Through an active Q, resonance
-    reaches B; through a quiet Q it must not. A dormant Q is itself lit, at
-    the discount a dormant seed gets; an archived Q gets nothing."""
+    reaches B; through a quiet Q it must not. A dormant Q is itself lit, as
+    an active one would be; an archived Q gets nothing."""
     db = tmp_path / "memory.db"
     store = EngramStore(str(db))
     try:
@@ -354,6 +383,7 @@ def test_quiet_memories_never_relay(tmp_path, quiet_state):
 
     found = _found(db, CUE)
     assert middle in found and far in found, "premise: the path carries activation while active"
+    lit_awake = found[middle]
 
     if quiet_state == "dormant":
         _go_quiet(db, middle)
@@ -364,7 +394,9 @@ def test_quiet_memories_never_relay(tmp_path, quiet_state):
 
     assert far not in found, f"a {quiet_state} memory passed activation on"
     if quiet_state == "dormant":
-        assert found[middle] == pytest.approx(0.25), "a link lights a dormant memory at a discount"
+        assert found[middle] == pytest.approx(lit_awake), (
+            "a link lit a dormant memory less than it lights an active one"
+        )
     else:
         assert middle not in found, "an archived memory was reached through a link"
     assert seeded_quiet in found, "premise: the cue itself matches the dormant seed"

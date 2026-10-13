@@ -45,10 +45,14 @@ the best keyword match for "how does Riley like to be told about mistakes"
 finished 12th behind memories with 20 to 32 links.
 
 Quiet memories. A dormant memory is found by the cue itself (it is seeded when
-it matches, at half the activation an active memory would start with) or lit
-through a link from a memory that is, at the same discount; a returned one
-wakes (``EngramStore.record_return``). It relays nothing until it does. An
-archived memory takes no part in resonance. Decay used to be the only way out
+it matches, as an active memory would be) or lit through a link from a memory
+that is; a returned one wakes (``EngramStore.record_return``). It relays
+nothing until it does. An archived memory takes no part in resonance.
+Going quiet says how long since a memory was used, not how well it answers:
+it used to start at half its score, and in a lab replay of real recall calls
+on a store where most memories over three months old were quiet, the ones
+holding the answer were found for 6 of 29 facts from that time, 10 at their
+full score, with nothing lost among the newer ones. Decay used to be the only way out
 of the active set and recall the only way back, and recall never looked, so a
 memory that went dormant stayed there, with every check green.
 """
@@ -82,9 +86,6 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 _EMBEDDING_SEED_FAILURE_LOGGED = False
 
-# A dormant memory that matches the cue starts at this share of the activation
-# its match would give an active one, so an equal active match comes first.
-DORMANT_SEED_SHARE = 0.5
 # How many dormant memories one cue may seed, apart from the active seeds, so
 # a store where most memories have gone quiet cannot crowd the active ones out.
 DORMANT_SEED_LIMIT = 10
@@ -494,8 +495,7 @@ class ReactiveRetriever:
             _log_seed_failure_once(exc)
 
         # 1d. FUSE: reciprocal rank over the lists. Each seed starts at
-        # its fused score relative to the best match, and a dormant memory at
-        # half of that, so an equal active match comes first.
+        # its fused score relative to the best match, a dormant one too.
         fused = fuse([
             (memory_words, WORDS_WEIGHT),
             (shared_words, WORDS_WEIGHT),
@@ -505,11 +505,7 @@ class ReactiveRetriever:
         if not fused:
             return []
         best = max(fused.values())
-        seed_activation: dict[str, float] = {}
-        for item_id, score in fused.items():
-            engram = engrams.get(item_id)
-            share = DORMANT_SEED_SHARE if engram is not None and engram.state == "dormant" else 1.0
-            seed_activation[item_id] = share * score / best
+        seed_activation = {item_id: score / best for item_id, score in fused.items()}
 
         # 2. RESONANCE, among memories. Each hop only memories reached for the
         # first time pass activation on; a memory already lit never fires
@@ -521,7 +517,7 @@ class ReactiveRetriever:
         # flows back to what is lit already. Links are walked both ways. What
         # arrives at a memory is summed before the floor, so faint links that
         # agree can light what one alone could not. A dormant memory receives
-        # at ``DORMANT_SEED_SHARE`` and can come back this way, but relays
+        # as an active one does and can come back this way, but relays
         # nothing until it wakes; an archived memory, and one out of scope,
         # neither receive nor relay. A memory lit through links can match the
         # best seed, never outrank it: what was asked for comes first, then
@@ -547,10 +543,7 @@ class ReactiveRetriever:
                 if sender_activation < self._threshold:
                     continue
                 for neighbour, share in self._carrying(sender, reached, state):
-                    sent = sender_activation * hop_decay * share
-                    if state(neighbour) == "dormant":
-                        sent *= DORMANT_SEED_SHARE
-                    arriving[neighbour] += sent
+                    arriving[neighbour] += sender_activation * hop_decay * share
             landed = {
                 target: min(amount, 1.0) for target, amount in arriving.items() if amount >= floor
             }
