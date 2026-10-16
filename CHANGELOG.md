@@ -2,6 +2,23 @@
 
 ## 0.4.1 (unreleased)
 
+### Recall shows what it finds, and says when
+
+The lab's side-by-side put plain memory files against Mnemos on 118 facts from
+two years of real work: files 48.5, Mnemos 41.5. A replay of Mnemos's own
+recall calls said why. Its rows hid what it found: the right memory came back
+for 42 facts, but its 300-character row held the fact for 26. Its lists were
+short: at 20 rows the right memory came back for 59. And nothing said when: 7
+of its 12 wrong answers had a newer memory holding the fact in the store.
+
+Now a memory's row carries its words whole, up to 2,000 characters, and the
+day it was kept. The recall tool asks for 15 rows on a question about the
+past, and for more than one search, in other words too, and says the newer of
+two memories that disagree usually holds; a call that gives no number gets 10.
+Replayed on the same calls, rows showed the fact for 41 of the 42 facts recall
+reached, and at 15 rows the right memory came back for 59 and showed for 57.
+Handoffs, the journal and notes keep their 300-character rows.
+
 ### A clean way out
 
 Setup writes hooks into Claude Code's settings and Codex's hooks, registers

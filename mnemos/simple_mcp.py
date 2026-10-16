@@ -393,7 +393,7 @@ def register_simple_tools(server: FastMCP) -> None:
     )
     def mnemos_recall(
         query: str,
-        max_results: int = 5,
+        max_results: int = 10,
         include_archived: bool = False,
         standing: bool = False,
     ) -> str:
@@ -403,11 +403,17 @@ def register_simple_tools(server: FastMCP) -> None:
         meaning (with how close), by the query's words (which ones), or
         through a link.
 
-        Each row carries up to 300 characters of its own words, usually
-        enough to use it. To read one whole, pass its id as the query:
-        a memory's, a note's, a handoff's, a journal entry's or a reply
-        to one of your notes, including the ids the packet shows
+        A memory's row carries its words whole (up to 2,000 characters)
+        and the day it was kept; a handoff's, journal entry's or note's
+        row, up to 300 characters. To read one whole, pass its id as the
+        query: a memory's, a note's, a handoff's, a journal entry's or a
+        reply to one of your notes, including the ids the packet shows
         (mnemos_recall("<id>")).
+
+        For a question about the past, ask for 15 (max_results=15), and
+        search more than once, in other words too: a name, a place, the
+        thing's own terms. A thin result isn't the memory saying no. When
+        two memories disagree, the newer one usually holds.
 
         Handoffs are searched with the memories: the ones in use and the
         older ones a newer handoff replaced, each marked with who left

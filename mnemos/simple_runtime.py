@@ -130,6 +130,21 @@ ROW_CHARS = 300
 # the facts sat past the first 300 characters of the memory holding them, and
 # 20 of the 35 facts whose memory recall found never showed in its row.
 ROW_OPENING_CHARS = 120
+# How much of a memory's own words its row carries: the whole of nearly every
+# memory. Rows of ``ROW_CHARS`` hid what recall found: replaying the 165
+# recall calls of the lab's side-by-side (L18, 2026-10-16), the right memory
+# came back for 42 of 118 facts and its row held the fact for 26; whole rows
+# held all 42, at 1,001 characters a row on average and 3,084 at most. A
+# longer memory shows its opening and the passage that holds the query's
+# words, as a short row does. Handoffs, the journal and notes keep
+# ``ROW_CHARS``: their words reach the briefing whole, and fetched by id.
+MEMORY_ROW_CHARS = 2000
+# How many rows a recall returns when it isn't told. In the lab every call
+# said how many it wanted (8, mostly), and that choice was what mattered: the
+# right memory came back for 42 of the 118 facts at the calls' own lengths
+# and for 59 at 15 or 20 (L18b). So the tool asks for 15 on a question about
+# the past (its description), and gives 10 to a call that doesn't say.
+RECALL_RESULTS = 10
 
 # Passages recall's meaning index may embed in one automatic maintenance (the
 # one a capture or a correction runs): at most a few seconds, so a store whose
@@ -4806,7 +4821,7 @@ class MnemosRuntime:
     def recall(
         self,
         query: str,
-        max_results: int = 5,
+        max_results: int = RECALL_RESULTS,
         include_archived: bool = False,
         standing: bool = False,
     ) -> str:
@@ -4819,8 +4834,10 @@ class MnemosRuntime:
         the memories; filtered, then cut to ``max_results``. It is shown by
         kind, each group in that order with its scores. A capture's note and
         memory are one object, so a capture comes back once, as its memory.
-        Each row carries up to ``ROW_CHARS`` characters of its own words,
-        enough to use without fetching it by its id.
+        A memory's row carries its own words whole, up to
+        ``MEMORY_ROW_CHARS``, and the day it was kept; a handoff's, journal
+        entry's or note's, up to ``ROW_CHARS``, enough to use without fetching
+        it by its id.
 
         Every handoff in the scope is searched: the ones in use, and the older
         ones a newer handoff replaced, which say so and who left them when.
@@ -6570,16 +6587,17 @@ def _cut_from(words: str | None, encoded: str | None) -> bool:
     return words in (_rule_based_soften(encoded, 1.0), _rule_based_soften(encoded, 0.0))
 
 
-def _row_words(text: str, query: str) -> str:
-    """An item's words for its row in an answer to ``query``: its opening, as
-    ``_own_words`` gives it; or, when a passage further in holds a word of the
-    query the opening doesn't, a short opening, " … ", and that passage (the
-    one holding the most such words, then the most of the query's words, the
-    first of equals), as meaning search reads it (``passages``)."""
+def _row_words(text: str, query: str, limit: int = ROW_CHARS) -> str:
+    """An item's words for its row in an answer to ``query``: its opening, up
+    to ``limit`` characters, as ``_own_words`` gives it; or, when a passage
+    further in holds a word of the query the opening doesn't, a short opening,
+    " … ", and that passage (the one holding the most such words, then the
+    most of the query's words, the first of equals), as meaning search reads
+    it (``passages``)."""
     words = " ".join((text or "").split(_CAPTURE_CONTEXT, 1)[0].split())
-    opening = _own_words(words)
+    opening = _own_words(words, limit)
     wanted = {word.lower() for word in search_words(query or "")}
-    if not wanted or len(words) <= ROW_CHARS:
+    if not wanted or len(words) <= limit:
         return opening
 
     def held(passage: str) -> set[str]:
@@ -6652,9 +6670,10 @@ def how_found(result: Any) -> str:
 
 
 def _format_memory(result: Any, query: str = "") -> str:
-    """A memory in a list: its own words (not the impact, which a lesson
-    already is and which is fetched by id), enough to use without fetching:
-    for ``query``, the passage that holds its words (``_row_words``)."""
+    """A memory in a list: its own words whole, up to ``MEMORY_ROW_CHARS``
+    (not the impact, which a lesson already is and which is fetched by id;
+    past that, the passage that holds the query's words, ``_row_words``), and
+    the day it was kept, so the newer of two that disagree can be told."""
     engram = result.engram
     # A dormant memory the cue matched comes back marked as one: recall wakes
     # it, and the reader should know it had gone quiet.
@@ -6668,9 +6687,17 @@ def _format_memory(result: Any, query: str = "") -> str:
     elif getattr(engram, "author_kind", "") == "tool":
         whose = "; from a tool, not yours"
     return (
-        f"- {how_found(result)} {_row_words(engram.content or engram.impact or '', query)}\n"
-        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}{whose}"
+        f"- {how_found(result)} {_row_words(engram.content or engram.impact or '', query, MEMORY_ROW_CHARS)}\n"
+        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}"
+        f"{_kept(engram)}{quiet}{whose}"
     )
+
+
+def _kept(engram: Any) -> str:
+    """"; kept 2026-03-14": the day a memory was kept, as the cue dates its
+    lines; ``""`` for one with no date."""
+    day = str(getattr(engram, "created_at", "") or "")[:10]
+    return f"; kept {day}" if day else ""
 
 
 def _format_handoff(result: Any, reader: str, session: str, query: str = "") -> str:
@@ -6793,8 +6820,8 @@ def _format_archived(engram: Engram, query: str = "") -> str:
     """A memory recall found in the archive: no score, since recall's
     resonance never reaches the archive; the query named it."""
     return (
-        f"- {_row_words(engram.content or engram.impact or '', query)}\n"
-        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}"
+        f"- {_row_words(engram.content or engram.impact or '', query, MEMORY_ROW_CHARS)}\n"
+        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{_kept(engram)}"
     )
 
 

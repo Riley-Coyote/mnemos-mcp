@@ -47,7 +47,7 @@ from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.core.engram import Connection, Engram
 from mnemos.core.types import ConnectionRelation
 from mnemos.retrieval.reactive import SPREAD_FAN, ReactiveRetriever
-from mnemos.simple_runtime import MnemosRuntime
+from mnemos.simple_runtime import MEMORY_ROW_CHARS, ROW_CHARS, MnemosRuntime
 from mnemos.store.embedding_index import EmbeddingIndex
 from mnemos.store.sqlite_store import SCHEMA_VERSION, EngramStore
 
@@ -578,22 +578,23 @@ def test_another_scopes_handoff_never_comes_back(tmp_path):
 # ── 8. A row is enough to use ──
 
 
-def test_a_row_carries_up_to_300_characters_of_its_own_words(tmp_path):
+def test_a_memory_row_carries_its_words_whole_up_to_its_limit(tmp_path):
+    """A memory's row is its words whole up to ``MEMORY_ROW_CHARS`` (300
+    until L18 showed rows hiding 16 of the 42 facts recall reached), cut at a
+    word with "…" past it; never its impact, never its capture's context."""
     rt = _runtime(tmp_path / "memory.db")
-    medium = ("The lighthouse keeper keeps the logbook in the tin box under the stairs, "
-              "with the tide tables and the spare lamp wicks, and she writes in it at dusk "
-              "and at dawn, whatever the weather, in pencil because ink runs in the damp air.")
-    long = " ".join(f"lighthouse sentence {i} of a long account of the season." for i in range(30))
+    medium = " ".join(f"lighthouse note {i}: the keeper logs the tide at dusk and at dawn." for i in range(14))
+    long = " ".join(f"lighthouse sentence {i} of a long account of the season." for i in range(45))
     rt.capture(medium, impact="What changed: the log is kept in two places now.")
     rt.capture(long)
     rt.capture("The lighthouse lens came from Paris.", context="Asked about its history.")
 
     rows = _rows(rt.recall("lighthouse", max_results=5))
 
-    assert 180 < len(medium) <= 300
-    assert medium in rows, "a 250-character memory was cut, or shown as its impact"
+    assert ROW_CHARS < len(medium) <= MEMORY_ROW_CHARS < len(long)
+    assert medium in rows, "a memory under its limit was cut, or shown as its impact"
     cut = next(row for row in rows if row.startswith("lighthouse sentence 0"))
-    assert cut.endswith("…") and len(cut) <= 300
+    assert cut.endswith("…") and len(cut) <= MEMORY_ROW_CHARS
     assert long.startswith(cut[:-1])
     assert "The lighthouse lens came from Paris." in rows, "a row carried the capture's context"
 
@@ -620,8 +621,11 @@ _LATER = (
 @pytest.mark.parametrize("kind", ["memory", "handoff"])
 def test_a_row_shows_the_passage_that_holds_the_querys_words(tmp_path, kind):
     rt = _runtime(tmp_path / "memory.db")
-    text = _SEASON + _ANSWER + _LATER
-    assert text.index(_ANSWER) > 300, "premise: the answer sits past the opening"
+    # A handoff's row runs to ROW_CHARS and a memory's to MEMORY_ROW_CHARS:
+    # the answer sits past whichever applies.
+    text = _SEASON * (1 if kind == "handoff" else 8) + _ANSWER + _LATER
+    limit = ROW_CHARS if kind == "handoff" else MEMORY_ROW_CHARS
+    assert text.index(_ANSWER) > limit, "premise: the answer sits past the opening"
     if kind == "memory":
         rt.capture(text)
     else:
@@ -637,13 +641,13 @@ def test_a_row_shows_the_passage_that_holds_the_querys_words(tmp_path, kind):
 
 def test_a_row_whose_opening_holds_every_word_the_query_matched_is_cut_as_before(tmp_path):
     rt = _runtime(tmp_path / "memory.db")
-    text = _SEASON + _ANSWER + _LATER
+    text = _SEASON * 8 + _ANSWER + _LATER
     rt.capture(text)
 
     [row] = [row for row in _rows(rt.recall("harbour pontoons storms", max_results=5))
              if row.startswith("The harbour season opened late")]
 
-    assert row.endswith("…") and len(row) <= 300 and " … " not in row
+    assert row.endswith("…") and len(row) <= MEMORY_ROW_CHARS and " … " not in row
     assert text.startswith(row[:-1])
 
 
