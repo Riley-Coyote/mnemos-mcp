@@ -14,6 +14,12 @@ With no dedicated provider configured, Mnemos:
 - avoids OpenRouter, Anthropic, OpenAI, and OpenClaw requirements
 - does not read arbitrary files or browser history
 - does not transmit memory data over the network
+- loads its local meaning model offline; the one step that uses the network is
+  `mnemos embeddings download`, which you run yourself
+
+What the agent reads from its memory goes into its own context, and so to the
+model the agent runs on, like everything else in that context. Mnemos itself
+sends memory nowhere.
 
 Simple mode tools still mutate local state:
 
@@ -36,13 +42,37 @@ deterministic. Optional dedicated providers run only when explicitly configured.
 
 ## Dedicated Providers
 
-Dedicated model providers are optional. Mnemos should only use them when the
-user explicitly configures provider environment variables or Mnemos model
-configuration.
+Dedicated model providers are optional, and Mnemos uses one only when the
+person chooses it for Mnemos: `MNEMOS_LLM_PROVIDER`, or the provider given to
+setup. A provider key lying in the environment or a project's `.env`, there for
+another tool, chooses nothing. A chosen provider without its key is no
+provider, never another one.
 
-Provider keys enable richer maintenance, but they may send selected memory
-content to that provider. This must remain an opt-in upgrade path, not a
-baseline requirement.
+A chosen provider is sent memories to classify the links between them and to
+weigh how surprising a new one is. It never writes in the agent's place: it
+rewords no memory, names no lesson and moves no belief.
+
+## Stored Words and Trust
+
+A memory system can carry an attack across sessions: text with instructions in
+it (copied from a web page, say) that is kept, then read back at every start as
+if it were the agent's own thought. Mnemos's answer is to keep whose words a
+memory holds, and to show it:
+
+- The waking note shows as the agent's own only what the agent wrote and
+  signed. A colleague's note (another kind of model) says whose it is; an
+  unsigned one says it's unsigned.
+- The person's words, from `mnemos remember` at a terminal, show once as
+  theirs ("Riley wrote this into my memory: …"), in quotes.
+- Words a tool wrote (an import, the retired transcript indexer) never reach
+  the agent's identity, beliefs or lessons, and can be moved out of recall
+  (`mnemos repair quarantine-tool-written`).
+- The cue presents its lines as "from memory, maybe bearing on this message":
+  memory to weigh, not orders.
+
+What an agent captures in its own words is its own; if it quoted untrusted text
+into a memory, that memory carries it. Correct or forget such a memory
+(`mnemos_correct`), and don't import text you wouldn't hand the agent directly.
 
 ## Scope Isolation
 
@@ -87,3 +117,6 @@ Before a release:
 - verify baseline MCP tools make no sampling requests
 - verify agent/person/project scope isolation
 - verify docs say provider keys are optional
+- verify a provider key alone sends nothing (`scripts/readiness_check.py`, C5)
+- verify `mnemos uninstall --write` removes only Mnemos's own hooks, servers and
+  jobs, and leaves the memories

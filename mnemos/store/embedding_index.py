@@ -530,9 +530,27 @@ def _check_local_deps() -> bool:
         return _HAS_LOCAL
 
 
+# torch says this once, on macOS, when sentence-transformers is imported. It
+# is about a feature Mnemos never uses, and it printed into `mnemos embeddings
+# download` as if something were wrong.
+_TORCH_NOTICE = "torch.distributed.elastic.multiprocessing.redirects"
+# sentence-transformers draws a "Batches" bar on every encode whenever its
+# encoding module's logger is at INFO, which a server logging at INFO makes it:
+# a bar in the log for every capture and recall. That module has a different
+# name in each major version, and every one sits under the package's logger.
+_BAR_LOGGER = "sentence_transformers"
+
+
+def _hush() -> None:
+    """The model's libraries, quiet about what Mnemos never asks of them."""
+    logging.getLogger(_TORCH_NOTICE).setLevel(logging.ERROR)
+    logging.getLogger(_BAR_LOGGER).setLevel(logging.WARNING)
+
+
 def _import_local() -> bool:
     """Import the local backend, recording whether it can run and why not."""
     global _HAS_LOCAL, _LOCAL_UNAVAILABLE
+    _hush()
     try:
         import sentence_transformers  # noqa: F401
         import numpy  # noqa: F401
@@ -688,22 +706,61 @@ def _limit_threads() -> None:
         torch.set_num_threads(LOCAL_THREADS)
 
 
+@contextmanager
+def _quiet_load() -> Iterator[None]:
+    """A model load that prints nothing: no "Loading weights" bar, and no load
+    report. transformers 5 prints one for any weight the checkpoint holds and
+    the model doesn't use (``embeddings.position_ids``, harmless here), as
+    "BertModel LOAD REPORT ... UNEXPECTED", into doctor, search and remember.
+    Nor the Hub's notice on an anonymous download ("Please set a HF_TOKEN"):
+    Mnemos needs no account. A download's own progress bar stays, and errors
+    still raise. Each setting is turned down on its own, so a library without
+    one still has the others turned down, and each is put back afterwards."""
+    _hush()
+    undo = []
+    try:
+        from transformers.utils import logging as hf_logging
+    except ImportError:
+        hf_logging = None
+    try:
+        from huggingface_hub.utils import logging as hub_logging
+    except ImportError:
+        hub_logging = None
+    if hf_logging is not None:
+        try:
+            if hf_logging.is_progress_bar_enabled():
+                hf_logging.disable_progress_bar()
+                undo.append(hf_logging.enable_progress_bar)
+        except AttributeError:
+            pass
+        undo += _quieter(hf_logging)
+    if hub_logging is not None:
+        undo += _quieter(hub_logging)
+    try:
+        yield
+    finally:
+        for step in reversed(undo):
+            step()
+
+
+def _quieter(library_logging: Any) -> list[Any]:
+    """``library_logging`` (a Hugging Face library's logging module) set to
+    say only errors, and the step that puts it back, or nothing when it has
+    no such setting."""
+    try:
+        verbosity = library_logging.get_verbosity()
+        library_logging.set_verbosity_error()
+    except AttributeError:
+        return []
+    return [lambda: library_logging.set_verbosity(verbosity)]
+
+
 def _load_cached_model(model_name: str) -> Any:
     """The model from its local files, by name, or by its path on a
     sentence-transformers too old to load by name from local files only."""
     from sentence_transformers import SentenceTransformer
 
-    # transformers' "Loading weights" bar would print into doctor, search and
-    # remember: off while loading, and back as it was after.
-    try:
-        from transformers.utils import logging as hf_logging
-
-        was_enabled = hf_logging.is_progress_bar_enabled()
-        enable = hf_logging.enable_progress_bar
-        hf_logging.disable_progress_bar()
-    except (ImportError, AttributeError):
-        was_enabled, enable = False, None
-    try:
+    with _quiet_load():
         try:
             return SentenceTransformer(model_name, local_files_only=True, device=LOCAL_DEVICE)
         except TypeError:
@@ -715,9 +772,6 @@ def _load_cached_model(model_name: str) -> Any:
                 snapshot_download(repo_id=_hub_repo(model_name), local_files_only=True),
                 device=LOCAL_DEVICE,
             )
-    finally:
-        if was_enabled and enable is not None:
-            enable()
 
 
 def download_local_model(model_name: str = "all-MiniLM-L6-v2") -> str:
@@ -731,7 +785,8 @@ def download_local_model(model_name: str = "all-MiniLM-L6-v2") -> str:
         raise RuntimeError(_LOCAL_UNAVAILABLE or "sentence-transformers is unavailable")
     from sentence_transformers import SentenceTransformer
 
-    SentenceTransformer(model_name)
+    with _quiet_load():
+        SentenceTransformer(model_name)
     return model_name
 
 

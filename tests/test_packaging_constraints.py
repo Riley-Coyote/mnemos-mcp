@@ -21,12 +21,29 @@ straight into a red CI run, which is the lesson these files exist to teach).
 from __future__ import annotations
 
 import importlib.metadata as metadata
+import re
+from pathlib import Path
 
 import pytest
 from packaging.requirements import Requirement
 from packaging.version import Version
 
 DISTRIBUTION = "mnemos-continuity"
+LOCKFILE = Path(__file__).resolve().parent.parent / "uv.lock"
+
+
+def _locked_version(name: str) -> Version:
+    """The version of ``name`` the lockfile pins: the one CI tests. Read with
+    a pattern, not tomllib, for the reason above."""
+    if not LOCKFILE.exists():
+        pytest.skip("no uv.lock beside the tests")
+    found = re.search(
+        rf'^\[\[package\]\]\nname = "{re.escape(name)}"\nversion = "([^"]+)"',
+        LOCKFILE.read_text(encoding="utf-8"),
+        re.MULTILINE,
+    )
+    assert found, f"{name} is not in uv.lock"
+    return Version(found.group(1))
 
 
 def _requirement(name: str) -> Requirement:
@@ -65,11 +82,13 @@ class TestMcpIsBoundedBelowTheBreakingMajor:
         )
 
     def test_a_working_version_is_still_allowed(self):
-        """The bound must not be so tight it forbids a version that works."""
+        """The bound must not be so tight it forbids a version that works: the
+        one the lockfile pins, which every CI job installs and imports."""
         req = _requirement("mcp")
-        assert req.specifier.contains(Version("1.29.0")), (
-            f"mcp constraint '{req.specifier}' excludes 1.29.0, a version whose "
-            "mcp.server.fastmcp imports cleanly"
+        locked = _locked_version("mcp")
+        assert req.specifier.contains(locked), (
+            f"mcp constraint '{req.specifier}' excludes {locked}, the version "
+            "CI tests, whose mcp.server.fastmcp imports cleanly"
         )
 
 

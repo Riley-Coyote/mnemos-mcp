@@ -724,6 +724,18 @@ def main(argv: list[str] | None = None) -> int:
                 help="Remove only the quiet hours, and keep upkeep",
             )
 
+    # ── uninstall ──
+    p_uninstall = sub.add_parser(
+        "uninstall",
+        help="Take Mnemos out of Claude Code, Claude Desktop and Codex, and unschedule its jobs; the memories stay",
+    )
+    _scope_options(p_uninstall)
+    p_uninstall.add_argument("--name", default="mnemos", help="The MCP server's name (default mnemos)")
+    p_uninstall.add_argument(
+        "--write", action="store_true",
+        help="Remove it instead of printing what would be removed",
+    )
+
     # ── backup ──
     p_backup = sub.add_parser("backup", help="Create, inspect, or restore verified backups")
     backup_sub = p_backup.add_subparsers(dest="backup_command")
@@ -794,6 +806,7 @@ def main(argv: list[str] | None = None) -> int:
         "hook": _cmd_hook,
         "hooks": _cmd_hooks,
         "daemon": _cmd_daemon,
+        "uninstall": _cmd_uninstall,
         "backup": _cmd_backup,
         "embeddings": _cmd_embeddings,
     }
@@ -1577,6 +1590,30 @@ def _codex_hooks_path() -> Path:
 PROMPT_HOOK_TIMEOUT = 2
 
 
+def _is_mnemos_hook(candidate: Any, subcommand: str) -> bool:
+    """Whether a hooks entry is one of Mnemos's own: a command that runs
+    `mnemos hook <subcommand>`. Anyone else's hooks never are."""
+    if not isinstance(candidate, dict):
+        return False
+    for configured_hook in candidate.get("hooks", []):
+        if not isinstance(configured_hook, dict):
+            continue
+        command = configured_hook.get("command", "")
+        if not isinstance(command, str):
+            continue
+        try:
+            parts = shlex.split(command)
+        except ValueError:
+            continue
+        if (
+            len(parts) >= 3
+            and Path(parts[0]).stem.lower().startswith("mnemos")
+            and parts[1:3] == ["hook", subcommand]
+        ):
+            return True
+    return False
+
+
 def _cmd_hooks(args: argparse.Namespace) -> int:
     """Install the SessionStart hook that injects memory before turn one, and
     for Claude Code the cue: the UserPromptSubmit hook that brings the
@@ -1704,32 +1741,11 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
             )
             return 1
 
-    def is_mnemos_hook(candidate: Any, subcommand: str) -> bool:
-        if not isinstance(candidate, dict):
-            return False
-        for configured_hook in candidate.get("hooks", []):
-            if not isinstance(configured_hook, dict):
-                continue
-            command = configured_hook.get("command", "")
-            if not isinstance(command, str):
-                continue
-            try:
-                parts = shlex.split(command)
-            except ValueError:
-                continue
-            if (
-                len(parts) >= 3
-                and Path(parts[0]).stem.lower().startswith("mnemos")
-                and parts[1:3] == ["hook", subcommand]
-            ):
-                return True
-        return False
-
     actions: dict[str, str] = {}
     for event, item in installing.items():
         subcommand = "session-start" if event == "SessionStart" else "prompt"
         listed = hooks[event]
-        existing = [e for e in listed if is_mnemos_hook(e, subcommand)]
+        existing = [e for e in listed if _is_mnemos_hook(e, subcommand)]
         for stale in existing:
             listed.remove(stale)
         listed.append(item)
@@ -1739,7 +1755,7 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
     dropped = False
     if claude_code and not prompt and isinstance(hooks.get("UserPromptSubmit"), list):
         listed = hooks["UserPromptSubmit"]
-        cues = [e for e in listed if is_mnemos_hook(e, "prompt")]
+        cues = [e for e in listed if _is_mnemos_hook(e, "prompt")]
         for cue_hook in cues:
             listed.remove(cue_hook)
         dropped = bool(cues)
@@ -4012,6 +4028,133 @@ def _claude_desktop_config_path() -> Path:
     if sys.platform.startswith("win"):
         return Path(os.environ.get("APPDATA", str(Path.home()))) / "Claude" / "claude_desktop_config.json"
     return Path.home() / ".config" / "Claude" / "claude_desktop_config.json"
+
+
+def _without_mnemos_hooks(path: Path, *, write: bool) -> tuple[int, str]:
+    """Mnemos's hooks in one hooks file: how many there are, removed with
+    ``write``, and why the file was left alone when it was. Anyone else's
+    hooks stay, and an event left with none is taken out."""
+    if not path.exists():
+        return 0, ""
+    try:
+        settings = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return 0, f"left {path} alone: it can't be read ({exc})"
+    hooks = settings.get("hooks") if isinstance(settings, dict) else None
+    if not isinstance(hooks, dict):
+        return 0, ""
+    found = 0
+    for event, subcommand in (("SessionStart", "session-start"), ("UserPromptSubmit", "prompt")):
+        listed = hooks.get(event)
+        if not isinstance(listed, list):
+            continue
+        keep = [entry for entry in listed if not _is_mnemos_hook(entry, subcommand)]
+        found += len(listed) - len(keep)
+        if keep:
+            hooks[event] = keep
+        else:
+            hooks.pop(event, None)
+    if found and write:
+        from .file_security import atomic_write_text
+
+        atomic_write_text(path, json.dumps(settings, indent=2) + "\n", backup_existing=True)
+    return found, ""
+
+
+def _without_desktop_server(path: Path, name: str, *, write: bool) -> tuple[bool, str]:
+    """Claude Desktop's entry for Mnemos's server, when its command is
+    Mnemos's, removed with ``write``. Any other server stays."""
+    if not path.exists():
+        return False, ""
+    try:
+        config = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        return False, f"left {path} alone: it can't be read ({exc})"
+    servers = config.get("mcpServers") if isinstance(config, dict) else None
+    entry = servers.get(name) if isinstance(servers, dict) else None
+    command = entry.get("command", "") if isinstance(entry, dict) else ""
+    if not isinstance(command, str) or not Path(command).stem.lower().startswith("mnemos"):
+        return False, ""
+    if write:
+        from .file_security import atomic_write_text
+
+        del servers[name]
+        atomic_write_text(path, json.dumps(config, indent=2) + "\n", backup_existing=True)
+    return True, ""
+
+
+def _remove_registered_server(tool: str, parts: list[str], *, write: bool) -> str:
+    """Ask a client's own command to forget Mnemos's server (`claude mcp
+    remove`, `codex mcp remove`): what was done, or what to run by hand."""
+    line = shlex.join([tool, *parts])
+    found = shutil.which(tool)
+    if not found:
+        return ""
+    if not write:
+        return f"would run: {line}"
+    result = subprocess.run([found, *parts], capture_output=True, text=True, check=False)
+    said = " ".join((result.stdout + " " + result.stderr).split())
+    if result.returncode == 0:
+        return f"ran: {line}"
+    if "not found" in said.lower() or "no mcp server" in said.lower():
+        return ""
+    return f"{line} said: {said[:200]}"
+
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    """Take Mnemos out of every client its setup writes to, and unschedule
+    its jobs. Its memories stay: they are the agent's, and this says where
+    they are. Without ``--write`` it only says what it would do."""
+    write = bool(args.write)
+    done: list[str] = []
+    problems: list[str] = []
+
+    for label, path in (("Claude Code", _claude_code_settings_path()), ("Codex", _codex_hooks_path())):
+        count, problem = _without_mnemos_hooks(path, write=write)
+        if problem:
+            problems.append(problem)
+        if count:
+            hooks = "hook" if count == 1 else "hooks"
+            done.append(f"{label}: {count} Mnemos {hooks} {'removed from' if write else 'in'} {path}")
+
+    removed, problem = _without_desktop_server(_claude_desktop_config_path(), args.name, write=write)
+    if problem:
+        problems.append(problem)
+    if removed:
+        done.append(
+            f"Claude Desktop: the {args.name} server {'removed from' if write else 'in'} "
+            f"{_claude_desktop_config_path()}"
+        )
+
+    for label, tool, parts in (
+        ("Claude Code", "claude", ["mcp", "remove", "--scope", "user", args.name]),
+        ("Codex", "codex", ["mcp", "remove", args.name]),
+    ):
+        said = _remove_registered_server(tool, parts, write=write)
+        if said.startswith(("ran", "would run")):
+            done.append(f"{label}: {said}")
+        elif said:
+            problems.append(f"{label}: {said}")
+
+    if done:
+        print("Removed:" if write else "Would remove:")
+        for line in done:
+            print(f"  {line}")
+    else:
+        print("No Mnemos hooks or server entries were found.")
+
+    print()
+    blueprint = _blueprint(args)
+    jobs = 0 if blueprint["backend"] == "unsupported" else _daemon_uninstall(blueprint, write=write)
+
+    folder = Path(_cli_scope(args).db_path).expanduser().parent
+    print()
+    print(f"The memories stay, in {folder}. They are the agent's; delete that folder yourself only if you mean to.")
+    if not write:
+        print("Re-run with --write to remove Mnemos.")
+    for problem in problems:
+        print(f"Note: {problem}", file=sys.stderr)
+    return 1 if (jobs or problems) and write else 0
 
 
 if __name__ == "__main__":

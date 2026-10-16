@@ -25,7 +25,7 @@ Path(os.environ['FAKE_CLAUDE_LOG']).write_text(json.dumps({
 mcp = json.loads(Path(argv[argv.index('--mcp-config') + 1]).read_text())
 args = mcp['mcpServers']['mnemos']['args']
 path = args[args.index('--db-path') + 1]
-model = 'claude-opus-5-5'
+model = argv[argv.index('--model') + 1] if '--model' in argv else 'claude-opus-5-5'
 usage = {'input_tokens': 10, 'cache_creation_input_tokens': 100,
          'output_tokens': 5, 'cache_read_input_tokens': 50}
 

@@ -33,7 +33,10 @@ dependencies = [
     # `pip install` resolve 2.x and produce a server that dies on import. CI
     # never caught it because the lockfile pinned an old 1.x; the wheel smoke
     # job in release-hardening.yml now installs unlocked to close that gap.
-    "mcp[cli]>=1.0.0,<2",
+    # The floor is what CI tests, and the first 1.x with the fix for
+    # GHSA-84m7-p3x7-pcfv (an HTTP-transport leak; Mnemos serves over stdio
+    # and was never exposed, but an audit would rightly flag anything older).
+    "mcp[cli]>=1.30.0,<2",
     "ulid-py>=1.1.0",
     "python-dotenv>=1.0.0",
 ]

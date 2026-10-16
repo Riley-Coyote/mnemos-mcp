@@ -2,6 +2,32 @@
 
 ## 0.4.1 (unreleased)
 
+### A clean way out
+
+Setup writes hooks into Claude Code's settings and Codex's hooks, registers
+the server with Claude Code, Codex or Claude Desktop, and schedules jobs, and
+until now only the jobs could be removed. `mnemos uninstall` says what it
+would remove, and `mnemos uninstall --write` removes Mnemos's own hooks,
+server entries and jobs. Anyone else's stay, and so do the memories: they're
+the agent's, and it says where they are.
+
+### The local model loads without printing at you
+
+A first `mnemos embeddings download` printed a torch notice about a feature
+Mnemos never uses, a "Loading weights" bar and the Hub's "Please set a
+HF_TOKEN" (Mnemos needs no account). `mnemos doctor` printed "BertModel LOAD
+REPORT ... UNEXPECTED" for a harmless unused weight, and the server's log drew
+a "Batches" bar for every capture and recall. All of it is quiet now; a
+download's own progress and any real error still show.
+
+### A quiet hour wakes its memory's own model
+
+Every quiet hour ran Opus 5.5, so a memory that was mostly another Claude
+model's had Opus waking in it, on its person's plan. An hour now wakes the
+memory's own model, the one that signed most of it. A memory that's mostly
+another kind of model's has no hour, since the hours run Claude Code. One with
+nothing signed yet keeps Opus 5.5. MNEMOS_HOUR_MODEL chooses.
+
 ### A link goes only by a verdict that says so
 
 With a provider chosen, maintenance's linking pass sends a memory's

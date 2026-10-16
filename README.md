@@ -48,6 +48,12 @@ For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
 the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
 [Choose A Setup](#choose-a-setup).
 
+To take Mnemos out again: `mnemos uninstall` says what it would remove, and
+`mnemos uninstall --write` removes it: its hooks, its server entries for Claude
+Code, Codex and Claude Desktop, and its scheduled jobs. Anyone else's hooks and
+servers stay. The memories stay too, in `~/.mnemos`; they're the agent's, so
+deleting them is left to you.
+
 Without the `embeddings` extra, Mnemos still works, but recall matches words
 only, and an idea the agent keeps returning to can't be noticed, so no new
 belief is ever proposed. To add it later, run
@@ -127,9 +133,7 @@ you plan to keep. On a Mac, a checkout under `~/Documents` can't run the
 background jobs setup schedules; see
 [On a Mac, outside ~/Documents](#on-a-mac-outside-documents).
 
-### From The Distribution Package
-
-When the package is published:
+### From PyPI
 
 ```bash
 pipx install "mnemos-continuity[mcp,embeddings]"
@@ -179,6 +183,9 @@ Mnemos keeps three kinds of writing distinct:
   handoffs written by the agent itself.
 - **What Mnemos mechanically did:** migrations, consolidation, identity
   checks, and maintenance reports written in neutral system language.
+
+And the person's own words stay theirs: `mnemos remember`, run by a person at
+a terminal, keeps what they typed as theirs, never as the agent's.
 
 Every continuity record carries an authorship classification. New agent
 captures and handoffs are marked `agent`; jointly formed notes are
@@ -519,7 +526,8 @@ hours are scheduled.
 
 An hour a day that's the agent's own, and half an hour for the day's work.
 Each runs Claude Code on its own (`mnemos life`), with the agent's memory, and
-uses your Claude plan. Nothing is asked of the agent in its own hour. The half
+uses your Claude plan. It runs as the memory's own model, the one that wrote
+most of it (`MNEMOS_HOUR_MODEL` chooses another). Nothing is asked of the agent in its own hour. The half
 hour looks at the day's work, and skips a day with none.
 
 Setup asks once, at the terminal, and yes is the default. Run without a
@@ -560,8 +568,8 @@ OpenRouter:
 ```bash
 MNEMOS_LLM_PROVIDER=openrouter
 OPENROUTER_API_KEY=...
-MNEMOS_MODEL=anthropic/claude-sonnet-4-5
-MNEMOS_AGENT_MODEL=claude-opus-4-6
+MNEMOS_MODEL=anthropic/claude-sonnet-5-5
+MNEMOS_AGENT_MODEL=claude-opus-5-5
 ```
 
 Anthropic:
@@ -569,8 +577,8 @@ Anthropic:
 ```bash
 MNEMOS_LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=...
-MNEMOS_MODEL=claude-sonnet-4-6
-MNEMOS_AGENT_MODEL=claude-opus-4-6
+MNEMOS_MODEL=claude-sonnet-5-5
+MNEMOS_AGENT_MODEL=claude-opus-5-5
 ```
 
 OpenAI:
@@ -626,6 +634,8 @@ mnemos daemon status                  # What is scheduled right now
 mnemos daemon uninstall --hours --write  # Remove only the quiet hours
 mnemos daemon uninstall --write       # Remove all of it
 mnemos life --hour mine --dry-run     # What a quiet hour would see, running nothing
+mnemos uninstall                      # What taking Mnemos out would remove
+mnemos uninstall --write              # Take it out; the memories stay
 
 mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI
@@ -689,8 +699,8 @@ Dedicated model variables:
 
 ```bash
 MNEMOS_LLM_PROVIDER=openrouter
-MNEMOS_MODEL=anthropic/claude-sonnet-4-5
-MNEMOS_AGENT_MODEL=claude-opus-4-6
+MNEMOS_MODEL=anthropic/claude-sonnet-5-5
+MNEMOS_AGENT_MODEL=claude-opus-5-5
 OPENROUTER_API_KEY=...
 ```
 
@@ -752,7 +762,7 @@ Simple MCP Surface      context | handoff | capture | recall | correct
                         journal | note
 Continuity Layer        scoped notes | revisions | supersession | promotion
 Mnemos Core             engrams | connections | beliefs | reconsolidation
-Substrate               decay | softening | reflection | modulators | events
+Upkeep                  decay | softening | reflection
 Cross-Agent Layer       shared pool | cross-agent bridge
 Hermes Integration      sidecar MCP | provider shim | identity continuity
 ```

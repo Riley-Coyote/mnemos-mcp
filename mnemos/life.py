@@ -28,6 +28,7 @@ from .simple_scope import resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
 HOUR_KINDS = ("mine", "ours")
+# The hour's model when the memory has no resident yet (``hour_model``).
 HOUR_MODEL = "claude-opus-5-5"
 DEFAULT_MINUTES = {"mine": 60, "ours": 30}
 DEFAULT_TOKEN_CEILING = {"mine": 400_000, "ours": 200_000}
@@ -111,13 +112,39 @@ def _records(path):
     return records
 
 
-def _gather(kind, path, since, scope):
+def hour_model(path, scope) -> tuple[str, str]:
+    """The model whose hour this is, or "" and why no hour can run.
+
+    An hour is the agent living, so it is the memory's own mind: its resident,
+    the model line that signed most of it, by its newest id. Until 2026-10-16
+    every hour ran Opus 5.5, so a memory that was Sonnet's had another model
+    waking in it, on its person's plan. A memory that is another kind of
+    model's (the hours run Claude Code) has no hour; one with nothing signed
+    yet has HOUR_MODEL's. MNEMOS_HOUR_MODEL is the person's own choice."""
+    chosen = os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
+    if chosen:
+        return chosen, ""
+    from .interface.context_packet import resident_model
+
+    store = ReadOnlyEngramStore(path)
+    try:
+        resident = resident_model(store, scope)
+    finally:
+        store.close()
+    if not resident:
+        return HOUR_MODEL, ""
+    if not resident.startswith("claude-"):
+        return "", f"The quiet hours run Claude, and this memory is mostly {resident}'s."
+    return resident, ""
+
+
+def _gather(kind, path, since, scope, model=HOUR_MODEL):
     store = ReadOnlyEngramStore(path)
     try:
         handoffs = store.handoffs_since(since, **scope)
         if kind == "ours":
             return handoffs, store.agent_captures_since(since, **scope), [], []
-        questions = store.pending_reflections(**scope, limit=10_000, reader_model=HOUR_MODEL)
+        questions = store.pending_reflections(**scope, limit=10_000, reader_model=model)
         return handoffs, [], questions, store.journal_entries(**scope, limit=1)
     finally:
         store.close()
@@ -164,7 +191,7 @@ def _there(path) -> bool:
         return False
 
 
-def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin):
+def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL):
     read_dirs = [Path.home() / name for name in READ_DIRS if _there(Path.home() / name)]
     mcp = {"mcpServers": {"mnemos": {
         "type": "stdio", "command": mnemos_bin,
@@ -194,7 +221,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
         "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True,
                     "allowUnsandboxedCommands": False},
     }
-    cmd = [claude_bin, "--model", HOUR_MODEL, "--restricted",
+    cmd = [claude_bin, "--model", model, "--restricted",
            "--tools", TOOLS[kind],
            "--strict-mcp-config", "--mcp-config", str(folder / "mcp.json"),
            "--settings", str(folder / "settings.json"),
@@ -213,7 +240,7 @@ def _tokens(usages):
     )}
 
 
-def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens):
+def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_MODEL):
     usage_by_id = {}
     result = None
     model = ""
@@ -253,7 +280,7 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens):
                     continue
                 if event.get("type") == "system" and event.get("subtype") == "init":
                     model = event.get("model") or ""
-                    if isinstance(model, str) and model and model not in (HOUR_MODEL, "<synthetic>"):
+                    if isinstance(model, str) and model and model not in (hour, "<synthetic>"):
                         seen_model = model
                         stop("guard")
                 elif event.get("type") == "assistant":
@@ -266,7 +293,7 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens):
                                 break
                         continue
                     if (isinstance(message_model, str) and message_model
-                            and message_model != HOUR_MODEL):
+                            and message_model != hour):
                         seen_model = message_model
                         stop("guard")
                     usage_key = message.get("id") or event.get("uuid")
@@ -290,7 +317,7 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens):
     cause = stopped[0] if stopped else ""
     if seen_model is not None:
         status, reason = "skipped", (
-            f"The hour ran as {seen_model}, not {HOUR_MODEL}, so nothing it wrote was kept."
+            f"The hour ran as {seen_model}, not {hour}, so nothing it wrote was kept."
         )
     elif cause == "tokens":
         status, reason = "done", f"Stopped at the token ceiling ({max_tokens:,})."
@@ -333,21 +360,24 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         if not live.exists():
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         since = since_for(kind, _records(records_path))
-        handoffs, captures, questions, latest = _gather(kind, live, since, scope)
+        model, why = hour_model(live, scope)
+        handoffs, captures, questions, latest = _gather(kind, live, since, scope, model or HOUR_MODEL)
         prompt = _prompt(kind, resolved.agent_id, since, handoffs, captures, questions, latest)
-        skip = f"No handoffs or captures since {_minute(since)}." if kind == "ours" and not handoffs and not captures else ""
+        skip = why or (f"No handoffs or captures since {_minute(since)}." if kind == "ours" and not handoffs and not captures else "")
         claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
         mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
         if not claude_bin or not mnemos_bin:
             return {"status": "failed", "reason": "The claude command wasn't found." if not claude_bin else "The mnemos command wasn't found."}
         folder = hours / "dry-run"
         store = folder / "store.db" if store_copy else live
-        mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, claude_bin, mnemos_bin)
+        mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, claude_bin, mnemos_bin,
+                                                model or HOUR_MODEL)
         print(f"Dry run · {kind} hour · nothing will run", file=out)
+        print(f"Model: {model or '(none: ' + why + ')'}", file=out)
         print(f"Store: {live} ({'a copy would be used' if store_copy else 'live'})", file=out)
         print(f"Since: {_minute(since)}", file=out)
         if skip:
-            print("Our hour would skip: " + skip, file=out)
+            print("The hour would skip: " + skip, file=out)
         print("\n── prompt (stdin) ──\n" + prompt, file=out)
         print("\n── command ──\n" + shlex.join(cmd), file=out)
         print("\n── mcp.json ──\n" + json.dumps(mcp, indent=2), file=out)
@@ -395,7 +425,12 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 if integrity != "ok":
                     record.update(status="failed", reason="The store copy failed its integrity check.")
                     return record
-            handoffs, captures, questions, latest = _gather(kind, store, since, scope)
+            model, why = hour_model(store, scope)
+            if not model:
+                record.update(status="skipped", reason=why)
+                return record
+            record["model"] = model
+            handoffs, captures, questions, latest = _gather(kind, store, since, scope, model)
             record["waiting"] = {"handoffs": len(handoffs), "captures": len(captures), "questions": len(questions)}
             if kind == "ours" and not handoffs and not captures:
                 record.update(status="skipped", reason=f"No handoffs or captures since {_minute(since)}.")
@@ -407,7 +442,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 return record
             prompt = _prompt(kind, resolved.agent_id, since, handoffs, captures, questions, latest)
             folder.mkdir(exist_ok=True)
-            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin)
+            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model)
             (folder / "prompt.md").write_text(prompt)
             (folder / "mcp.json").write_text(json.dumps(mcp, indent=2))
             (folder / "settings.json").write_text(json.dumps(settings, indent=2))
@@ -427,7 +462,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                     marker.close()
             except Exception:
                 pass
-            outcome, guarded = _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens)
+            outcome, guarded = _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, model)
             launched = True
             record.update(outcome)
             if guarded:

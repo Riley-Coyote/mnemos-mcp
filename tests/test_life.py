@@ -577,3 +577,53 @@ def test_claude_that_exits_at_once_is_reported_with_its_stderr(db, home, tmp_pat
     assert record['reason'].startswith('claude exited with code 2:')
     assert 'unknown option' in record['reason']
     assert list(log(tmp_path)) == ['argv']
+
+
+def signed_work(db, model):
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **SCOPE)
+    try:
+        runtime.capture('The ferry timetable changed.', signed_as=model, impact='Read the new timetable.')
+        runtime.handoff('Check the ferry timetable next session.', signed_as=model)
+    finally:
+        runtime.close()
+
+
+def test_the_hour_is_its_memorys_own_model(db, home, tmp_path):
+    """Until 2026-10-16 every hour ran Opus 5.5: a memory that was Sonnet's
+    had another model waking in it, on its person's plan."""
+    signed_work(db, 'claude-sonnet-5-5')
+    out = io.StringIO()
+    run(db, dry_run=True, out=out)
+    assert '--model claude-sonnet-5-5' in out.getvalue()
+    assert 'Model: claude-sonnet-5-5' in out.getvalue()
+
+    record = run(db)
+
+    assert record['status'] != 'skipped', record['reason']
+    argv = log(tmp_path)['argv']
+    assert argv[argv.index('--model') + 1] == 'claude-sonnet-5-5'
+
+
+def test_a_memory_of_another_kind_of_model_has_no_hour(db, home, tmp_path):
+    signed_work(db, 'gpt-6-sol')
+
+    record = run(db)
+
+    assert record['status'] == 'skipped'
+    assert 'run Claude' in record['reason'] and 'gpt-6-sol' in record['reason']
+    assert not (tmp_path / 'fake.json').exists()
+
+
+def test_a_memory_with_nothing_signed_wakes_the_default(db):
+    from mnemos import life
+
+    assert life.hour_model(db, SCOPE) == (life.HOUR_MODEL, '')
+
+
+def test_the_person_chooses_the_hours_model(db, monkeypatch):
+    from mnemos import life
+    signed_work(db, 'claude-opus-5-5')
+    monkeypatch.setenv('MNEMOS_HOUR_MODEL', 'claude-sonnet-5-5')
+
+    assert life.hour_model(db, SCOPE) == ('claude-sonnet-5-5', '')
+
