@@ -433,9 +433,10 @@ memory:
   provider: mnemos
 ```
 
-Provider Mode gives Hermes direct Mnemos lifecycle integration: startup recall,
-scoped identity continuity, corrections, memory mirroring, pre-compression
-preservation, session-end distillation, and provider tools.
+Provider Mode gives Hermes its memory at the start of each session and what
+bears on each message before the turn, tools for the agent to keep, correct
+and recall its memory, and a copy in Mnemos of what the agent writes into
+Hermes's built-in memory. It writes nothing in the agent's place.
 
 ### Prompt For A Hermes Agent
 

@@ -6659,11 +6659,14 @@ def _format_memory(result: Any, query: str = "") -> str:
     # A dormant memory the cue matched comes back marked as one: recall wakes
     # it, and the reader should know it had gone quiet.
     quiet = " (it had gone quiet)" if engram.state == "dormant" else ""
-    # What the person wrote with `mnemos remember` is theirs, and says whose.
+    # What the person wrote with `mnemos remember` is theirs, and says whose;
+    # a tool's words say so too, as a lesson drawn from them does.
     whose = ""
     if getattr(engram, "author_kind", "") == "person":
         name = " ".join(os.environ.get("MNEMOS_PERSON_NAME", "").split())
         whose = f"; in {name}'s words" if name else "; in the person's words"
+    elif getattr(engram, "author_kind", "") == "tool":
+        whose = "; from a tool, not yours"
     return (
         f"- {how_found(result)} {_row_words(engram.content or engram.impact or '', query)}\n"
         f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{quiet}{whose}"

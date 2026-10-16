@@ -28,6 +28,40 @@ memory's own model, the one that signed most of it. A memory that's mostly
 another kind of model's has no hour, since the hours run Claude Code. One with
 nothing signed yet keeps Opus 5.5. MNEMOS_HOUR_MODEL chooses.
 
+### The Hermes provider writes nothing in the agent's place
+
+Provider Mode wrote memories by itself. A turn was copied word for word as a
+memory whenever its message held "remember", "don't" or "actually,", and so
+was any long reply that said "fixed" or "added"; the end of a session and the
+moment before compression each stored up to five more such copies; every
+delegation and session switch left a record; and `SOUL.md` was copied in as
+the agent's identity. Each went through the agent's own capture, so each was
+stored as the agent's own words. On one real Hermes memory, 233 of its 303
+memories had been written that way. Now the provider only reads (the wake,
+and recall before each turn), keeps the memory's upkeep, and keeps in Mnemos
+what the agent itself writes into Hermes's built-in memory; the agent writes
+the rest with its own tools. The `auto_capture`, `auto_bootstrap`,
+`auto_session_distill` and `capture_uncertain` settings are gone, and a
+`mnemos.json` that still has them is read without them.
+
+What the provider wrote before is labelled a tool's, on a store from before
+authorship was recorded and, once, on one after, so it never makes the agent
+who it is. Recall marks a tool's words "from a tool, not yours", as it marks
+the person's.
+
+### OpenClaw's printed jobs no longer write the agent's memory
+
+`mnemos bootstrap` printed OpenClaw jobs that ran another model, a hard-coded
+`claude-sonnet-4-5`, as an Observer every 30 minutes and a Memory Maintenance
+agent every six hours. Each read the agent's transcripts and rewrote its
+`memory/active-context.md` and `MEMORY.md` in that model's words: the
+transcript indexer's flaw again, in files. A third asked a model to run a
+command that does nothing. All three are retired. The morning brief and daily
+debrief remain: they run as the agent itself and write reports for the person,
+not memory. The OpenClaw guide is marked legacy; it was written for the
+advanced server, and `mnemos setup-openclaw`'s jobs ask for tools the default
+simple server doesn't have.
+
 ### A link goes only by a verdict that says so
 
 With a provider chosen, maintenance's linking pass sends a memory's

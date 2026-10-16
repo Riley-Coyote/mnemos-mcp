@@ -14,7 +14,7 @@ from .scope import default_hermes_home, save_hermes_mnemos_config, slugify
 
 
 PLUGIN_NAME = "mnemos"
-PLUGIN_VERSION = "0.2.1"
+PLUGIN_VERSION = "0.3.0"
 PROVIDER_MODE = "provider"
 SIDECAR_MODE = "sidecar"
 DEFAULT_MCP_SERVER_NAME = "mnemos"
@@ -64,9 +64,7 @@ def render_plugin_manifest() -> str:
         "  - mnemos_identity_report\n"
         "hooks:\n"
         "  - prefetch\n"
-        "  - sync_turn\n"
         "  - on_session_end\n"
-        "  - on_pre_compress\n"
         "  - on_memory_write\n"
     )
 

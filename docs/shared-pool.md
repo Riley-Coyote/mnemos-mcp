@@ -141,9 +141,11 @@ Files in `memory/` are plain markdown. Name them descriptively: `api-conventions
 2. When making a cross-cutting decision: append to `decisions.md`.
 3. When project status changes meaningfully: update `project-state.md`.
 
-### The `cross-agent-bridge` Cron
+### No Sync Job
 
-The `cross-agent-bridge` cron job (every 15 minutes) automates the sync process. It reads each agent's `active-context.md` and updates the shared pool, ensuring that even agents who don't explicitly write to the pool stay visible to others.
+Earlier versions printed a `cross-agent-bridge` cron job for this. Its command
+(`python -m mnemos.multiagent.shared_pool sync`) did nothing, and it was retired
+in 0.4.1. Each agent keeps its own entry current, as above.
 
 ## Adding More Agents
 

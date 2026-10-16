@@ -1,4 +1,13 @@
-"""Hermes MemoryProvider adapter backed by the Mnemos runtime."""
+"""Hermes MemoryProvider adapter backed by the Mnemos runtime.
+
+The provider reads for the agent (its memory at the start of a session, and
+what bears on each message before the turn), keeps the memory's upkeep, and
+keeps in Mnemos what the agent itself writes into Hermes's built-in memory.
+It writes nothing in the agent's place: the agent writes its memory with its
+own tools, in its own words. Until 0.4.1 it copied turns, distilled sessions,
+recorded delegations and copied SOUL.md in as identity, each in the agent's
+name (see ``hermes_auto_written`` in the store, which labels those a tool's).
+"""
 
 from __future__ import annotations
 
@@ -19,10 +28,6 @@ from .scope import (
 
 logger = logging.getLogger(__name__)
 
-_TRIVIAL_RE = re.compile(
-    r"^(ok|okay|thanks|thank you|got it|sure|yes|no|yep|nope|k|ty|thx|np)\.?$",
-    re.IGNORECASE,
-)
 _CONTEXT_TAG_RE = re.compile(r"<[^>]*memory-context[^>]*>[\s\S]*?</[^>]*memory-context>", re.IGNORECASE)
 _MNEMOS_CONTEXT_RE = re.compile(r"#?\s*Mnemos (Recall|Identity Continuity|continuity packet)[\s\S]*", re.IGNORECASE)
 
@@ -140,10 +145,6 @@ def _truncate(text: str, limit: int) -> str:
     return text[:head].rstrip() + marker + text[-tail:].lstrip()
 
 
-def _is_trivial(text: str) -> bool:
-    return not text.strip() or bool(_TRIVIAL_RE.match(text.strip()))
-
-
 def _importance_value(value: Any, fallback: str | float = "auto") -> str | float:
     if isinstance(value, (int, float)):
         return float(value)
@@ -231,8 +232,6 @@ class MnemosMemoryProviderCore:
         )
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         self._runtime.context(max_results=1)
-        if config.auto_bootstrap and self._writes_enabled:
-            self._bootstrap_identity(kwargs)
 
     def system_prompt_block(self) -> str:
         self._ensure_runtime()
@@ -247,9 +246,11 @@ class MnemosMemoryProviderCore:
             "MEMORY.md, or USER.md.\n\n"
             f"Scope: agent={self.scope.agent_id} person={self.scope.person_id} "
             f"project={self.scope.project_scope}\n\n"
-            "Use Mnemos tools only when identity continuity matters: durable preferences, "
-            "corrections, self-model updates, project decisions, session persistence, "
-            "delegation handoffs, or continuity reports.\n\n"
+            "Your memory is yours to write, and nothing writes it for you. When something "
+            "durable appears (a preference, a decision, a correction, project state, how the "
+            "person likes to work), keep it with mnemos_identity_capture as it happens, in "
+            "your own words: sessions end without warning. Put right what turns out wrong "
+            "with mnemos_identity_correct.\n\n"
             f"{packet}"
         )
         return _truncate(body, self._config.max_context_chars)
@@ -289,24 +290,8 @@ class MnemosMemoryProviderCore:
         session_id: str = "",
         messages: list[dict[str, Any]] | None = None,
     ) -> None:
-        if not self._writes_enabled:
-            return
-        self._ensure_runtime()
-        assert self._config is not None
-        if not self._config.auto_capture:
-            return
-        candidates = self._extract_turn_candidates(user_content, assistant_content, session_id=session_id)
-        if messages and not candidates:
-            candidates = self._distill_messages(messages[-6:], reason="turn-sync")
-        for candidate in candidates[:3]:
-            if candidate.get("review", False) and self._config.capture_uncertain:
-                self._queue_review_item(
-                    candidate["content"],
-                    reason=candidate.get("reason", "turn sync"),
-                    context=candidate.get("context", ""),
-                )
-            elif not candidate.get("review", False):
-                self._capture(candidate["content"], candidate.get("context", ""), candidate.get("importance", "auto"))
+        """A finished turn writes nothing: what it held worth keeping, the
+        agent keeps itself, in its own words."""
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
@@ -343,14 +328,11 @@ class MnemosMemoryProviderCore:
             self._runtime.maintain(auto=True)
 
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
+        """The memory's upkeep, and nothing written from the session."""
         if not self._writes_enabled:
             return
         self._ensure_runtime()
-        assert self._config is not None
         assert self._runtime is not None
-        if self._config.auto_session_distill:
-            for item in self._distill_messages(messages, reason="session-end")[:5]:
-                self._capture(item["content"], item["context"], item["importance"])
         self._runtime.maintain(auto=True)
 
     def on_session_switch(
@@ -364,40 +346,14 @@ class MnemosMemoryProviderCore:
         self._session_id = str(new_session_id or "")
         if reset:
             self._prefetch_cache.clear()
-        if parent_session_id and self._writes_enabled:
-            self._capture(
-                f"Hermes session continuity moved from {parent_session_id} to {new_session_id}.",
-                context=f"Session switch metadata: {json.dumps(kwargs, sort_keys=True, default=str)}",
-                importance=0.6,
-            )
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
-        if not self._writes_enabled:
-            return ""
-        distilled = self._distill_messages(messages, reason="pre-compression")
-        saved: list[str] = []
-        for item in distilled[:5]:
-            self._capture(item["content"], item["context"], item["importance"])
-            saved.append(item["content"])
-        if not saved:
-            return ""
-        return "Mnemos preserved these identity-critical facts before compression:\n" + "\n".join(
-            f"- {item}" for item in saved
-        )
+        """Compression writes nothing, and adds nothing to the summary."""
+        return ""
 
     def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
-        if not self._writes_enabled:
-            return
-        clean_task = _clean_text(task)
-        clean_result = _clean_text(result)
-        if not clean_task and not clean_result:
-            return
-        self._capture(
-            "Hermes delegation handoff recorded: "
-            f"task={clean_task[:500]} result={clean_result[:700]}",
-            context=f"child_session_id={child_session_id}; metadata={json.dumps(kwargs, sort_keys=True, default=str)}",
-            importance=0.78,
-        )
+        """A delegation writes nothing: its result is in the conversation,
+        for the agent to keep if it matters."""
 
     def on_memory_write(
         self,
@@ -406,6 +362,8 @@ class MnemosMemoryProviderCore:
         content: str,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        """What the agent itself writes into Hermes's built-in memory, kept in
+        Mnemos too: its own words, by its own act."""
         self._ensure_runtime()
         assert self._config is not None
         assert self._runtime is not None
@@ -431,8 +389,6 @@ class MnemosMemoryProviderCore:
             {"key": "person_id", "description": "Optional fixed person/user identity scope"},
             {"key": "project_scope", "description": "Optional fixed project continuity scope"},
             {"key": "auto_recall", "description": "Auto-inject scoped identity continuity", "default": "true", "choices": ["true", "false"]},
-            {"key": "auto_capture", "description": "Auto-capture durable identity-continuity facts", "default": "true", "choices": ["true", "false"]},
-            {"key": "auto_bootstrap", "description": "Seed identity from SOUL.md/context files without editing them", "default": "true", "choices": ["true", "false"]},
             {"key": "deep_maintenance", "description": "Enable optional model-assisted Mnemos maintenance when model keys exist", "default": "false", "choices": ["true", "false"]},
         ]
 
@@ -558,185 +514,6 @@ class MnemosMemoryProviderCore:
             or {"review", "inbox", "uncertain"} & set(entry.get("tags", []))
         ]
         return review[:limit]
-
-    def _bootstrap_identity(self, runtime_context: dict[str, Any]) -> None:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        self._runtime._ensure_init()
-        assert self._runtime._store is not None
-        existing = self._runtime._store.search_hypomnema(
-            "Hermes identity bootstrap",
-            agent_id=self.scope.agent_id,
-            person_id=self.scope.person_id,
-            project_scope=self.scope.project_scope,
-            limit=3,
-        )
-        if any("bootstrap" in entry.get("tags", []) for entry in existing):
-            return
-        seeds = self._identity_seed_texts(runtime_context)
-        for seed in seeds[:4]:
-            self._runtime._store.write_hypomnema_entry(
-                seed["content"],
-                agent_id=self.scope.agent_id,
-                person_id=self.scope.person_id,
-                project_scope=self.scope.project_scope,
-                source="co-formed",
-                domain=seed["domain"],
-                tags=_tags_for(seed["content"], "bootstrap"),
-                confidence=seed["confidence"],
-                salience=seed["salience"],
-                foundational=seed["domain"] in {"identity", "foundational"},
-                related_session_id=self._session_id,
-            )
-
-    def _identity_seed_texts(self, runtime_context: dict[str, Any]) -> list[dict[str, Any]]:
-        seeds: list[dict[str, Any]] = []
-        soul = self.scope.hermes_home / "SOUL.md"
-        if soul.exists():
-            text = _clean_text(soul.read_text(encoding="utf-8", errors="replace"))[:1200]
-            if text:
-                seeds.append({
-                    "content": f"Hermes identity bootstrap from SOUL.md: {text}",
-                    "domain": "identity",
-                    "confidence": 0.72,
-                    "salience": 0.74,
-                })
-
-        for name in (".hermes.md", "HERMES.md", "AGENTS.md"):
-            path = Path.cwd() / name
-            if path.exists():
-                text = _clean_text(path.read_text(encoding="utf-8", errors="replace"))[:900]
-                if text:
-                    seeds.append({
-                        "content": f"Hermes project-context bootstrap from {name}: {text}",
-                        "domain": "foundational",
-                        "confidence": 0.68,
-                        "salience": 0.65,
-                    })
-                break
-
-        profile = runtime_context.get("agent_identity")
-        platform = runtime_context.get("platform")
-        if profile or platform:
-            seeds.append({
-                "content": (
-                    "Hermes runtime identity bootstrap: "
-                    f"profile={profile or 'default'} platform={platform or 'cli'} "
-                    f"scope={self.scope.agent_id}/{self.scope.person_id}/{self.scope.project_scope}."
-                ),
-                "domain": "identity",
-                "confidence": 0.66,
-                "salience": 0.58,
-            })
-        return seeds
-
-    def _extract_turn_candidates(
-        self,
-        user_content: str,
-        assistant_content: str,
-        *,
-        session_id: str = "",
-    ) -> list[dict[str, Any]]:
-        user = _clean_text(user_content)
-        assistant = _clean_text(assistant_content)
-        if _is_trivial(user) and _is_trivial(assistant):
-            return []
-
-        candidates: list[dict[str, Any]] = []
-        context = f"Hermes completed turn. session_id={session_id or self._session_id}"
-        user_lower = user.lower()
-        assistant_lower = assistant.lower()
-
-        durable_user_markers = (
-            "remember",
-            "i prefer",
-            "i want you to",
-            "please always",
-            "don't ",
-            "do not ",
-            "call me",
-            "my name is",
-            "we decided",
-            "let's use",
-            "going with",
-            "correction",
-            "actually,",
-            "current project",
-        )
-        if any(marker in user_lower for marker in durable_user_markers):
-            candidates.append({
-                "content": f"User continuity from Hermes turn: {user[:1400]}",
-                "context": context,
-                "importance": "high",
-                "review": False,
-                "reason": "durable user marker",
-            })
-
-        assistant_markers = (
-            "implemented",
-            "added",
-            "fixed",
-            "verified",
-            "changed",
-            "created",
-            "configured",
-            "completed",
-        )
-        if any(marker in assistant_lower for marker in assistant_markers) and len(assistant) > 80:
-            candidates.append({
-                "content": f"Hermes project outcome: {assistant[:1400]}",
-                "context": context,
-                "importance": 0.72,
-                "review": False,
-                "reason": "assistant project outcome",
-            })
-
-        uncertain_markers = ("maybe remember", "might be useful", "not sure", "possibly", "could matter")
-        if any(marker in user_lower for marker in uncertain_markers):
-            candidates.append({
-                "content": f"Uncertain Hermes continuity candidate: {user[:900]}",
-                "context": context,
-                "importance": 0.42,
-                "review": True,
-                "reason": "uncertain user claim",
-            })
-        return candidates
-
-    def _distill_messages(self, messages: list[dict[str, Any]], *, reason: str) -> list[dict[str, Any]]:
-        candidates: list[dict[str, Any]] = []
-        for message in messages[-30:]:
-            role = str(message.get("role") or "")
-            content = _clean_text(message.get("content"))
-            if not content or _is_trivial(content):
-                continue
-            lowered = content.lower()
-            if role == "user" and any(
-                marker in lowered
-                for marker in (
-                    "remember",
-                    "prefer",
-                    "decided",
-                    "correction",
-                    "actually",
-                    "current project",
-                    "always",
-                    "do not",
-                )
-            ):
-                candidates.append({
-                    "content": f"Hermes {reason} user continuity: {content[:1200]}",
-                    "context": f"Distilled during {reason}; session_id={self._session_id}",
-                    "importance": "high",
-                })
-            elif role == "assistant" and any(
-                marker in lowered for marker in ("implemented", "verified", "fixed", "added", "completed")
-            ):
-                candidates.append({
-                    "content": f"Hermes {reason} outcome: {content[:1200]}",
-                    "context": f"Distilled during {reason}; session_id={self._session_id}",
-                    "importance": 0.7,
-                })
-        return candidates
 
     @staticmethod
     def _bounded_int(value: Any, *, default: int) -> int:

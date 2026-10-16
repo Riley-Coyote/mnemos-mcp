@@ -14,6 +14,7 @@ All tables are created on init. Migrations handle schema evolution.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import uuid
 from collections.abc import Iterable
@@ -68,6 +69,29 @@ CAPTURE_WINDOW_SECONDS = 10
 # Where each memory `mnemos repair quarantine-tool-written` moved came from, so
 # `--undo` returns exactly those and nothing else the quarantine holds.
 QUARANTINED_KEY = "quarantined_tool_written"
+# What the Hermes provider wrote by itself before 0.4.1, through the agent's
+# own capture and so in the agent's name: a turn copied word for word when it
+# held "remember" or "fixed", what it distilled at a session's end or before
+# compression, a record of each delegation and session switch, and SOUL.md
+# copied in as identity. It always gave them its own opening; no agent does.
+_HERMES_AUTO_WRITTEN = re.compile(
+    r"(?:User continuity from Hermes turn:"
+    r"|Hermes project outcome:"
+    r"|Hermes (?:session-end|pre-compression|turn-sync) (?:user continuity|outcome):"
+    r"|Hermes session continuity moved from "
+    r"|Hermes delegation handoff recorded:"
+    r"|Hermes (?:identity|project-context|runtime identity) bootstrap"
+    r"|Uncertain Hermes continuity candidate:)"
+)
+# Set, with its counts, once a store that recorded those as the agent's has
+# had them put right. Its presence is what stops it from running again.
+HERMES_AUTO_WRITES_LABELED_KEY = "hermes_auto_writes_labeled"
+
+
+def hermes_auto_written(content: str | None) -> bool:
+    """Whether ``content`` is what the Hermes provider wrote by itself before
+    0.4.1, by the opening it always gave it."""
+    return bool(_HERMES_AUTO_WRITTEN.match((content or "").lstrip()))
 
 # A standing memory (v14) is how the human wants the agent to work in every
 # session, not just now. Only the agent marks one, as a typed choice: nothing
@@ -923,7 +947,9 @@ def legacy_author_kinds(conn: sqlite3.Connection) -> dict[str, str]:
 
     - ``tool``: tagged ``session-indexed``, the transcript indexer's mark. A
       lesson distilled from indexer output inherits the tag, and it is that
-      model's words too: a lesson copies the impact it was drawn from.
+      model's words too: a lesson copies the impact it was drawn from. Or
+      what the Hermes provider wrote by itself (``hermes_auto_written``),
+      though it went through the agent's own capture.
     - ``agent``: a capture or correction the agent made through its own
       tools (a ``session`` memory tagged ``continuity``, which the simple
       runtime puts on everything it captures, while the indexer, the bridge
@@ -952,7 +978,7 @@ def legacy_author_kinds(conn: sqlite3.Connection) -> dict[str, str]:
 
     kinds: dict[str, str] = {}
     for engram_id, row in rows.items():
-        if "session-indexed" in row["tags"]:
+        if "session-indexed" in row["tags"] or hermes_auto_written(row["content"]):
             kinds[engram_id] = "tool"
         elif row["type"] == "session" and "continuity" in row["tags"]:
             kinds[engram_id] = "agent"
@@ -1063,6 +1089,7 @@ class EngramStore:
         self._classify_legacy_hypomnema(conn)
         self._backfill_engram_scopes(conn)
         self._label_engram_authors(conn)
+        self._label_hermes_auto_writes(conn)
         self._link_older_capture_pairs(conn)
         if not had_lived_days:
             self._backfill_lived_days(conn)
@@ -1305,6 +1332,65 @@ class EngramStore:
                 conn.execute(
                     "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
                     (AUTHORS_LABELED_KEY, _encode_json({"at": _utc_now(), "counts": counts})),
+                )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+
+    @staticmethod
+    def _label_hermes_auto_writes(conn: sqlite3.Connection) -> None:
+        """Put right what the Hermes provider wrote by itself and a store
+        recorded as the agent's (before 0.4.1).
+
+        It wrote through the agent's own capture, so a store that recorded
+        authorship called each one the agent's words, and signed its note
+        with whatever model the session resolved. They are a tool's: the
+        memory is labelled ``tool``, so it never makes the agent who it is,
+        and its note ``unknown`` and unsigned (a note has no tool kind). Only
+        what ``hermes_auto_written`` matches changes. The one exception to an
+        author being set once: these were set wrong, by Mnemos's own code. A
+        store from before authorship gets the same from
+        ``legacy_author_kinds``.
+
+        Runs once per store, in one transaction with the record of its
+        counts (``HERMES_AUTO_WRITES_LABELED_KEY``), which keeps it from
+        running again: the provider writes nothing in the agent's place now,
+        and what the agent writes later in the same words is its own.
+        """
+
+        done = "SELECT 1 FROM meta WHERE key = ?"
+        if conn.execute(done, (HERMES_AUTO_WRITES_LABELED_KEY,)).fetchone():
+            return
+        if conn.in_transaction:
+            conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            # Another process may have put them right while this one waited.
+            if not conn.execute(done, (HERMES_AUTO_WRITES_LABELED_KEY,)).fetchone():
+                memories = [
+                    (row[0],) for row in conn.execute(
+                        "SELECT id, content FROM engrams "
+                        "WHERE author_kind = 'agent' AND content LIKE '%Hermes%'"
+                    ) if hermes_auto_written(row[1])
+                ]
+                conn.executemany("UPDATE engrams SET author_kind = 'tool' WHERE id = ?", memories)
+                notes = [
+                    (row[0],) for row in conn.execute(
+                        "SELECT id, content FROM hypomnema_entries "
+                        "WHERE authored_by = 'agent' AND content LIKE '%Hermes%'"
+                    ) if hermes_auto_written(row[1])
+                ]
+                conn.executemany(
+                    "UPDATE hypomnema_entries SET authored_by = 'unknown', author_model = '' "
+                    "WHERE id = ?",
+                    notes,
+                )
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                    (HERMES_AUTO_WRITES_LABELED_KEY, _encode_json({
+                        "at": _utc_now(), "memories": len(memories), "notes": len(notes),
+                    })),
                 )
             conn.commit()
         except BaseException:

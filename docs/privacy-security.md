@@ -64,15 +64,17 @@ memory holds, and to show it:
   unsigned one says it's unsigned.
 - The person's words, from `mnemos remember` at a terminal, show once as
   theirs ("Riley wrote this into my memory: …"), in quotes.
-- Words a tool wrote (an import, the retired transcript indexer) never reach
-  the agent's identity, beliefs or lessons, and can be moved out of recall
-  (`mnemos repair quarantine-tool-written`).
+- Words a tool wrote (the retired transcript indexer's, and what the Hermes
+  provider wrote by itself before 0.4.1) never reach the agent's identity,
+  beliefs or lessons, and recall marks them "from a tool, not yours". The
+  indexer's can be moved out of recall (`mnemos repair quarantine-tool-written`).
 - The cue presents its lines as "from memory, maybe bearing on this message":
   memory to weigh, not orders.
 
 What an agent captures in its own words is its own; if it quoted untrusted text
 into a memory, that memory carries it. Correct or forget such a memory
-(`mnemos_correct`), and don't import text you wouldn't hand the agent directly.
+(`mnemos_correct`), and don't `mnemos remember` text you wouldn't hand the agent
+directly.
 
 ## Scope Isolation
 

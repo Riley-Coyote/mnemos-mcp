@@ -4,7 +4,7 @@ Mnemos for Hermes is a complementary identity-continuity layer. It gives Hermes 
 
 Hermes built-in memory is always active. Hermes also supports one active external memory provider in `memory.provider`, so Mnemos has two supported modes:
 
-- Provider Mode: `memory.provider=mnemos`; automatic identity continuity through Hermes memory-provider lifecycle hooks.
+- Provider Mode: `memory.provider=mnemos`; through Hermes's memory-provider hooks the agent wakes with its memory and gets what bears on each message before the turn, and it writes its memory itself, with its own tools.
 - Sidecar Mode: `memory.provider` is left unchanged; Mnemos identity continuity is exposed through MCP/tools for users already running Honcho, Supermemory, Mem0, Hindsight, or another external provider.
 
 The implementation follows the current Hermes memory-provider contract:
@@ -12,7 +12,7 @@ The implementation follows the current Hermes memory-provider contract:
 - one external provider selected through `memory.provider`
 - built-in memory remains active alongside the selected external provider
 - user-installed providers discovered from `$HERMES_HOME/plugins/<name>/` in the local Hermes loader, with a docs-compatible shim also written to `$HERMES_HOME/plugins/memory/<name>/`
-- provider lifecycle methods for startup recall, per-turn sync, built-in memory mirroring, session end, session switching, pre-compression preservation, and delegation handoffs
+- provider lifecycle methods for the startup packet, recall before each turn, mirroring the agent's own built-in memory writes, and upkeep at session end
 - profile-local storage and configuration through the active `HERMES_HOME`
 
 Reference Hermes docs:
@@ -43,7 +43,7 @@ mnemos hermes quickstart --provider
 
 ## Provider Mode
 
-Use Provider Mode when Mnemos should be the active external provider for automatic Hermes identity continuity:
+Use Provider Mode when Mnemos should be the active external provider for Hermes identity continuity:
 
 ```bash
 mnemos hermes install --mode provider --activate
@@ -72,10 +72,18 @@ Provider Mode enables:
 
 - compact startup identity-continuity packet
 - automatic scoped recall before turns
-- durable capture of preferences, corrections, decisions, self-model updates, and session handoffs
-- non-destructive mirroring of Hermes built-in memory writes into Mnemos
-- pre-compression preservation of identity-critical facts
-- session-end distillation and continuity reports
+- tools for the agent to keep, correct and recall its memory, in its own words
+- non-destructive mirroring of what the agent writes into Hermes built-in memory
+- the memory's upkeep at the end of each session
+
+Nothing in Provider Mode writes the agent's memory for it. Until 0.4.1 it did:
+it copied a turn word for word when it held "remember" or "fixed", distilled
+the end of each session and the moment before compression, recorded every
+delegation and session switch, and copied `SOUL.md` in as identity, each as the
+agent's own words. Mnemos labels what it wrote then as a tool's: it never makes
+the agent who it is (no lessons, beliefs or identity are drawn from it), the
+wake doesn't present it as the agent's, and recall marks it "from a tool, not
+yours".
 
 Provider Mode is exclusive with other external memory providers because Hermes has one `memory.provider` slot. It works with Hermes built-in `MEMORY.md` / `USER.md`; it cannot be active alongside Honcho, Supermemory, Mem0, Hindsight, or another external provider in that same slot.
 
@@ -109,6 +117,10 @@ The feasible sidecar path today is MCP/tools. Hermes general plugins and memory 
 - `mnemos_capture`
 - `mnemos_recall`
 - `mnemos_correct`
+- `mnemos_handoff`
+- `mnemos_reflect`
+- `mnemos_journal`
+- `mnemos_note`
 - `mnemos_maintain`
 - `mnemos_introduce`
 - `mnemos_health`
@@ -152,9 +164,6 @@ Example:
   "person_id": "riley",
   "project_scope": "mnemos",
   "auto_recall": true,
-  "auto_capture": true,
-  "auto_bootstrap": true,
-  "auto_session_distill": true,
   "mirror_builtin_memory": true,
   "deep_maintenance": false,
   "max_recall_results": 4,
@@ -187,33 +196,22 @@ The provider also uses Hermes lifecycle hooks:
 
 - `system_prompt_block`: injects a compact startup continuity packet
 - `prefetch`: recalls relevant continuity before a turn
-- `sync_turn`: captures durable identity-continuity outcomes without requiring network access
-- `on_memory_write`: mirrors built-in Hermes memory writes into Mnemos without editing built-in files
-- `on_pre_compress`: preserves identity-critical facts before context compression
-- `on_session_end`: distills durable session outcomes
-- `on_delegation`: records handoffs without impersonating the child agent
+- `on_memory_write`: keeps in Mnemos what the agent writes into Hermes built-in memory, without editing built-in files
+- `on_session_end`: runs the memory's upkeep
 
-## Identity Bootstrap
+`sync_turn`, `on_pre_compress`, `on_session_switch` and `on_delegation` write
+nothing: what a turn, a session or a delegation held worth keeping, the agent
+keeps itself.
 
-On first run, Mnemos can seed scoped continuity from:
+## SOUL.md and Context Files
 
-- `$HERMES_HOME/SOUL.md`
-- project context files such as `.hermes.md`, `HERMES.md`, or `AGENTS.md`
-- Hermes runtime metadata such as profile and platform
-
-Bootstrap is read-only. Mnemos never overwrites `SOUL.md`, `AGENTS.md`, `MEMORY.md`, or `USER.md`.
-
-Disable bootstrap with:
-
-```json
-{
-  "auto_bootstrap": false
-}
-```
+Hermes shows the agent `$HERMES_HOME/SOUL.md` and project context files such as
+`.hermes.md`, `HERMES.md` or `AGENTS.md` itself. Mnemos doesn't copy them into
+memory, and never overwrites `SOUL.md`, `AGENTS.md`, `MEMORY.md`, or `USER.md`.
 
 ## Review Inbox
 
-Uncertain identity claims are queued as low-confidence hypomnema entries instead of becoming high-confidence identity automatically. Inspect them with:
+When the agent isn't sure something should become part of its continuity, it can capture it with `review: true`: it is kept as a low-confidence hypomnema entry instead of becoming high-confidence identity. Inspect them with:
 
 ```json
 {

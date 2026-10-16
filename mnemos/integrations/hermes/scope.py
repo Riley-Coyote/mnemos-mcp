@@ -74,22 +74,23 @@ def _cwd_project_scope() -> str:
 
 @dataclass(frozen=True)
 class HermesMnemosConfig:
-    """Profile-local Mnemos settings stored in ``$HERMES_HOME/mnemos.json``."""
+    """Profile-local Mnemos settings stored in ``$HERMES_HOME/mnemos.json``.
+
+    ``auto_capture``, ``auto_bootstrap``, ``auto_session_distill`` and
+    ``capture_uncertain`` were settings for writing in the agent's place,
+    which the provider no longer does (0.4.1); a file that still has them is
+    read without them."""
 
     db_path: str | None = None
     agent_id: str | None = None
     person_id: str | None = None
     project_scope: str | None = None
     auto_recall: bool = True
-    auto_capture: bool = True
-    auto_bootstrap: bool = True
-    auto_session_distill: bool = True
     mirror_builtin_memory: bool = True
     deep_maintenance: bool = False
     max_recall_results: int = 4
     max_context_chars: int = 2200
     maintenance_interval: int = 24
-    capture_uncertain: bool = True
 
     @classmethod
     def load(cls, hermes_home: str | Path | None = None) -> "HermesMnemosConfig":
@@ -101,15 +102,11 @@ class HermesMnemosConfig:
             person_id=str(raw.get("person_id") or "").strip() or None,
             project_scope=str(raw.get("project_scope") or "").strip() or None,
             auto_recall=_as_bool(raw.get("auto_recall"), True),
-            auto_capture=_as_bool(raw.get("auto_capture"), True),
-            auto_bootstrap=_as_bool(raw.get("auto_bootstrap"), True),
-            auto_session_distill=_as_bool(raw.get("auto_session_distill"), True),
             mirror_builtin_memory=_as_bool(raw.get("mirror_builtin_memory"), True),
             deep_maintenance=_as_bool(raw.get("deep_maintenance"), False),
             max_recall_results=_as_int(raw.get("max_recall_results"), 4, minimum=1, maximum=16),
             max_context_chars=_as_int(raw.get("max_context_chars"), 2200, minimum=800, maximum=12000),
             maintenance_interval=_as_int(raw.get("maintenance_interval"), 24, minimum=0, maximum=500),
-            capture_uncertain=_as_bool(raw.get("capture_uncertain"), True),
         )
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -119,15 +116,11 @@ class HermesMnemosConfig:
             "person_id": self.person_id,
             "project_scope": self.project_scope,
             "auto_recall": self.auto_recall,
-            "auto_capture": self.auto_capture,
-            "auto_bootstrap": self.auto_bootstrap,
-            "auto_session_distill": self.auto_session_distill,
             "mirror_builtin_memory": self.mirror_builtin_memory,
             "deep_maintenance": self.deep_maintenance,
             "max_recall_results": self.max_recall_results,
             "max_context_chars": self.max_context_chars,
             "maintenance_interval": self.maintenance_interval,
-            "capture_uncertain": self.capture_uncertain,
         }
 
 

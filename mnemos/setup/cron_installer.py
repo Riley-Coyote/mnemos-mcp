@@ -14,61 +14,20 @@ from __future__ import annotations
 
 # Cron job definitions — these match the templates in openclaw/crons/
 _CRON_JOBS = [
-    {
-        "name": "observer-context-sync",
-        "schedule": "*/30 * * * *",
-        "model": "claude-sonnet-4-5",
-        "timeout": 300,
-        "session_target": "isolated",
-        "prompt_template": (
-            "You are the Observer — a continuity agent for {agent_name}.\n\n"
-            "Update memory/active-context.md with current thread state. Steps:\n"
-            "1. Read current memory/active-context.md\n"
-            "2. Use sessions_list (last 60 min, limit 5)\n"
-            "3. For sessions with >4 messages, read transcript via sessions_history\n"
-            "4. Update active-context.md — be specific about what's being worked on\n"
-            "5. If no recent activity, reply HEARTBEAT_OK\n\n"
-            "Keep under 2000 words. Skip cron sessions. Max 3 transcripts."
-        ),
-    },
+    # No observer-context-sync or memory-maintenance job. Each ran another
+    # model (a hard-coded claude-sonnet-4-5) over the agent's transcripts and
+    # rewrote its memory files, memory/active-context.md and MEMORY.md, in
+    # that model's words: the transcript indexer's flaw again, in files. The
+    # agent keeps its own memory; `mnemos setup-openclaw`'s export job only
+    # renders what it kept. Retired 2026-10-16.
+    # No cross-agent-bridge job: it asked a model to run
+    # `python -m mnemos.multiagent.shared_pool sync`, which does nothing.
     # No session-indexer job. On one live store the transcript indexer wrote
     # ~7,058 engrams against 13 deliberate captures and buried the continuity
     # layer; it was retired in 0.4.0, and `mnemos index` only says so.
     # No substrate-tick job either: its handlers wrote memories in a model's
     # words, not the agent's (setup/scheduler.py retires it the same way).
     # `mnemos substrate-tick` was retired in 0.4.0.
-    {
-        "name": "memory-maintenance",
-        "schedule": "0 */6 * * *",
-        "model": "claude-sonnet-4-5",
-        "timeout": 300,
-        "session_target": "isolated",
-        "prompt_template": (
-            "You are the Memory Maintenance agent for {agent_name}.\n\n"
-            "Your job: keep {workspace}/MEMORY.md accurate and current by reviewing recent session activity.\n\n"
-            "STEPS:\n"
-            "1. Read {workspace}/MEMORY.md completely\n"
-            "2. Use sessions_list to get sessions from the last 6 hours\n"
-            "3. For each session with >4 messages, use sessions_history to read the transcript\n"
-            "4. Look for: new facts, changed facts, project updates, completed tasks, new preferences\n"
-            "5. For new facts: append to the appropriate section\n"
-            "6. For changed facts: update the existing entry\n"
-            "7. If nothing to update, reply HEARTBEAT_OK\n\n"
-            "Keep it brief. Max 3 sessions. Skip cron sessions."
-        ),
-    },
-    {
-        "name": "cross-agent-bridge",
-        "schedule": "45 */2 * * *",
-        "model": "claude-sonnet-4-5",
-        "timeout": 120,
-        "session_target": "isolated",
-        "prompt_template": (
-            "Run the cross-agent bridge sync:\n"
-            "python3 -m mnemos.multiagent.shared_pool sync\n"
-            "Then report what changed. HEARTBEAT_OK if nothing changed."
-        ),
-    },
     {
         "name": "morning-brief",
         "schedule": "0 10 * * *",
@@ -82,7 +41,7 @@ _CRON_JOBS = [
             "- Open threads (active work, waiting items, blockers)\n"
             "- Suggested focus (top 3 priorities with rationale)\n"
             "- Stale threads (untouched 3+ days)\n"
-            "- Mnemos health (stats, last consolidation/tick)\n"
+            "- Mnemos health (stats, last consolidation)\n"
             "- Cross-agent activity (if multi-agent setup)\n\n"
             "Write to {workspace}/daily/morning-brief-$(date +%Y-%m-%d).md"
         ),

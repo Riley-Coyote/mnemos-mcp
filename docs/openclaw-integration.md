@@ -1,5 +1,13 @@
 # OpenClaw Integration Guide
 
+> **Legacy.** This guide was written for an earlier Mnemos: the advanced
+> server and its workspace files. It isn't maintained for 0.4.x, and
+> `mnemos setup-openclaw`'s jobs ask the agent for advanced-mode tools
+> (`mnemos_consolidate`) that the default simple server doesn't have. To give
+> an OpenClaw agent Mnemos today, add the simple MCP server like any other MCP
+> client (see the README's "Simple MCP Mode") and schedule upkeep with
+> `mnemos daemon install`.
+
 This guide covers how to set up Mnemos as a complete agent cognition system using [OpenClaw](https://openclaw.dev) for agent orchestration and cron scheduling.
 
 ## Prerequisites
@@ -81,17 +89,7 @@ Or for direct Anthropic:
 
 ### 3. Install Cron Jobs
 
-The bootstrap command prints all the cron installation commands. You can also generate them separately:
-
-```bash
-# Generate cron commands without full bootstrap
-python -m mnemos.setup.cron_installer \
-  --agent-name Nova \
-  --agent-id nova \
-  --workspace ~/nova
-```
-
-Or use the existing OpenClaw cron integration:
+The bootstrap command prints the cron installation commands. Or use the existing OpenClaw cron integration:
 
 ```bash
 mnemos setup-openclaw --agent nova
@@ -101,11 +99,19 @@ mnemos setup-openclaw --agent nova
 
 | Cron | Schedule | What It Does |
 |------|----------|-------------|
-| observer-context-sync | Every 30 min | Updates active-context.md from recent sessions |
-| memory-maintenance | Every 6 hours | Keeps MEMORY.md current |
-| cross-agent-bridge | Every 2 hours | Syncs context between agents |
 | morning-brief | Daily 10 AM | Generates morning summary and priorities |
 | daily-debrief | Daily 5 AM | End-of-day recap |
+
+Both run as the agent itself and write reports for the person, not memory.
+
+**No job writes the agent's memory for it.** Until 0.4.1 the bootstrap also
+printed an Observer (every 30 minutes) and a Memory Maintenance agent (every six
+hours): each ran another model, a hard-coded `claude-sonnet-4-5`, over the
+agent's transcripts and rewrote `memory/active-context.md` and `MEMORY.md` in
+that model's words. It also printed a cross-agent bridge whose command did
+nothing. All three are retired. An older install still has them: `openclaw cron
+list` shows them as `mnemos-observer-context-sync`, `mnemos-memory-maintenance`
+and `mnemos-cross-agent-bridge`, and they can be removed there.
 
 **Transcript indexing is not scheduled**, by this installer or the turnkey one,
 and the indexer itself is retired (0.4.0). It had a model pull "facts" out of old
@@ -119,7 +125,7 @@ The bootstrap creates template identity files. Customize them:
 
 1. **SOUL.md** — Edit to define your agent's personality, voice, and philosophy
 2. **IDENTITY.md** — Edit to define capabilities, boundaries, and operating principles
-3. **MEMORY.md** — The bootstrap fills in basics; the maintenance cron keeps it current
+3. **MEMORY.md** — The bootstrap fills in basics; the agent keeps its memory with Mnemos's tools
 4. **AGENTS.md** — Edit if you're running multiple agents
 
 ### 5. Wire Up Cross-Agent Communication (Optional)
@@ -139,7 +145,6 @@ python -m mnemos.multiagent.bridge add-agent scout ~/scout
 python -m mnemos.multiagent.bridge status
 ```
 
-The cross-agent bridge cron will automatically sync context between agents.
 
 ## Configuration Reference
 
@@ -171,8 +176,8 @@ After bootstrap, your workspace looks like:
 ├── HEARTBEAT.md         # Health monitoring
 ├── .env                 # Environment configuration
 ├── memory/
-│   ├── active-context.md         # Current threads (updated by Observer)
-│   └── cross-agent-context.md    # Other agents' status (updated by Bridge)
+│   ├── active-context.md         # Current threads
+│   └── cross-agent-context.md    # Other agents' status (updated by the bridge)
 └── daily/
     ├── morning-brief-2025-01-15.md
     └── debrief-2025-01-15.md
@@ -185,10 +190,6 @@ After bootstrap, your workspace looks like:
 1. Check OpenClaw cron status: `openclaw cron list`
 2. Verify the agent ID matches: `openclaw agents list`
 3. Check cron logs for errors
-
-### Observer says HEARTBEAT_OK every time
-
-This is normal when there are no recent sessions. The Observer only updates active-context.md when there's new activity to report.
 
 ### Database is getting large
 
@@ -212,9 +213,3 @@ Or manually create `~/.mnemos/agents.json`:
   {"name": "scout", "workspace": "~/scout"}
 ]
 ```
-
-### Memory maintenance isn't updating MEMORY.md
-
-1. Check that the cron is running: `openclaw cron list`
-2. Ensure there are recent sessions with >4 messages
-3. Run manually to test: the cron prompt can be sent to the agent directly

@@ -26,7 +26,6 @@ def _new_provider(tmp_path, *, agent_id="coder", person_id="riley", project_scop
             agent_id=agent_id,
             person_id=person_id,
             project_scope=project_scope,
-            auto_bootstrap=False,
             deep_maintenance=False,
         )
     )
@@ -86,7 +85,6 @@ def test_provider_context_stays_under_configured_budget(tmp_path):
             agent_id="coder",
             person_id="riley",
             project_scope="mnemos",
-            auto_bootstrap=False,
             max_context_chars=800,
             max_recall_results=4,
         )
@@ -146,7 +144,6 @@ def test_hermes_agent_scope_does_not_leak_between_agents(tmp_path):
             db_path=db_path,
             person_id="riley",
             project_scope="mnemos",
-            auto_bootstrap=False,
         )
     )
     vektor = MnemosMemoryProviderCore(
@@ -154,7 +151,6 @@ def test_hermes_agent_scope_does_not_leak_between_agents(tmp_path):
             db_path=db_path,
             person_id="riley",
             project_scope="mnemos",
-            auto_bootstrap=False,
         )
     )
     nova.initialize("session-a", hermes_home=tmp_path, agent_identity="nova")
@@ -189,7 +185,6 @@ def test_hermes_scope_does_not_leak_between_people_or_projects(tmp_path):
             agent_id="coder",
             person_id="riley",
             project_scope="mnemos",
-            auto_bootstrap=False,
         )
     )
     alex = MnemosMemoryProviderCore(
@@ -198,7 +193,6 @@ def test_hermes_scope_does_not_leak_between_people_or_projects(tmp_path):
             agent_id="coder",
             person_id="alex",
             project_scope="mnemos",
-            auto_bootstrap=False,
         )
     )
     other_project = MnemosMemoryProviderCore(
@@ -207,7 +201,6 @@ def test_hermes_scope_does_not_leak_between_people_or_projects(tmp_path):
             agent_id="coder",
             person_id="riley",
             project_scope="other-project",
-            auto_bootstrap=False,
         )
     )
     riley.initialize("session-riley", hermes_home=tmp_path)
@@ -241,31 +234,6 @@ def test_hermes_scope_does_not_leak_between_people_or_projects(tmp_path):
     assert "private identity note" in found["result"]
 
 
-def test_bootstrap_reads_soul_without_overwriting_it(tmp_path):
-    soul = tmp_path / "SOUL.md"
-    original = "You are Hermes-Coder, a precise local-first engineering agent."
-    soul.write_text(original, encoding="utf-8")
-    provider = MnemosMemoryProviderCore(
-        HermesMnemosConfig(
-            db_path=str(tmp_path / "mnemos.db"),
-            auto_bootstrap=True,
-            deep_maintenance=False,
-        )
-    )
-    provider.initialize("session-1", hermes_home=tmp_path, agent_identity="coder")
-
-    try:
-        recalled = json.loads(provider.handle_tool_call(
-            "mnemos_identity_recall",
-            {"query": "Hermes-Coder local-first engineering"},
-        ))
-    finally:
-        provider.shutdown()
-
-    assert soul.read_text(encoding="utf-8") == original
-    assert "Hermes-Coder" in recalled["result"]
-
-
 def test_builtin_memory_files_are_never_overwritten(tmp_path):
     files = {
         "SOUL.md": "You are Hermes-Coder, a precise local-first engineering agent.",
@@ -278,7 +246,6 @@ def test_builtin_memory_files_are_never_overwritten(tmp_path):
     provider = MnemosMemoryProviderCore(
         HermesMnemosConfig(
             db_path=str(tmp_path / "mnemos.db"),
-            auto_bootstrap=True,
             mirror_builtin_memory=True,
             deep_maintenance=False,
         )
@@ -346,32 +313,6 @@ def test_uncertain_capture_goes_to_review_inbox(tmp_path):
     assert inbox["inbox"]
     assert inbox["inbox"][0]["confidence"] < 0.62
     assert "Night Glass" in inbox["inbox"][0]["content"]
-
-
-def test_pre_compression_preserves_identity_critical_facts(tmp_path):
-    provider = _new_provider(tmp_path)
-    provider.initialize("session-1", hermes_home=tmp_path)
-
-    try:
-        contribution = provider.on_pre_compress([
-            {
-                "role": "user",
-                "content": "Remember that Riley prefers Hermes identity packets to stay concise.",
-            },
-            {
-                "role": "assistant",
-                "content": "Verified the concise identity packet behavior for the Hermes provider.",
-            },
-        ])
-        recalled = json.loads(provider.handle_tool_call(
-            "mnemos_identity_recall",
-            {"query": "concise identity packet"},
-        ))
-    finally:
-        provider.shutdown()
-
-    assert "Mnemos preserved" in contribution
-    assert "concise identity packet" in recalled["result"]
 
 
 def test_provider_mode_activation_sets_mnemos_provider(tmp_path):
@@ -456,37 +397,6 @@ def test_installed_shim_is_discoverable_by_local_hermes(tmp_path, monkeypatch):
     assert provider is not None
     assert provider.name == "mnemos"
     assert provider.is_available() is True
-
-
-def test_sync_turn_accepts_forward_compatible_messages_payload(tmp_path):
-    provider = _new_provider(tmp_path)
-    provider.initialize("session-1", hermes_home=tmp_path)
-
-    try:
-        provider.sync_turn(
-            "ok",
-            "ok",
-            session_id="session-1",
-            messages=[
-                {
-                    "role": "user",
-                    "content": "Remember that Riley wants Hermes sync_turn message payloads handled safely.",
-                },
-                {
-                    "role": "assistant",
-                    "content": "Verified the Hermes sync_turn message payload handling.",
-                },
-            ],
-        )
-        recalled = json.loads(provider.handle_tool_call(
-            "mnemos_identity_recall",
-            {"query": "sync_turn message payloads"},
-        ))
-    finally:
-        provider.shutdown()
-
-    assert recalled["ok"] is True
-    assert "sync_turn message payload" in recalled["result"]
 
 
 def test_cli_hermes_sidecar_smoke_preserves_provider(tmp_path, capsys, monkeypatch):
