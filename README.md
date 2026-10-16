@@ -30,9 +30,9 @@ Then start Claude Code: it wakes with its memory, and the memory tools are there
 What setup turns on, and how to turn each thing off:
 
 - **Waking with its memory.** Each session starts with what the agent kept.
-- **The cue.** Each message you send brings up to three memories that may bear
-  on it. Messages Claude Code writes itself, such as a background task's
-  notice, bring nothing. Off: `mnemos hooks install claude-code --no-prompt --write`.
+- **The cue.** Each message you send of four words or more brings up to three
+  memories that may bear on it. A shorter one ("yes, do it") and messages
+  Claude Code writes itself, such as a background task's notice, bring nothing. Off: `mnemos hooks install claude-code --no-prompt --write`.
 - **Upkeep between sessions.** Every 4 hours memories fade a little with time
   and related ones are linked, and a deeper pass runs each night at 03:00.
   With no model chosen for Mnemos, all of it runs on your machine. Off:
@@ -287,7 +287,9 @@ mnemos hooks install codex --write --agent-id nova --db-path ~/.mnemos/nova.db
 **The cue (Claude Code).** The Claude Code install also adds a
 `UserPromptSubmit` hook, `mnemos hook prompt`: each message you send brings at
 most three memories that may bear on it, one line each, or nothing, which is
-the usual answer. Messages Claude Code writes itself (a background task's
+the usual answer. A message needs four words that carry meaning ("the", "it"
+and the like don't count): on shorter ones a match is mostly chance, and most
+are "yes" or "go ahead". Messages Claude Code writes itself (a background task's
 notice, a slash command, the `!` shell's input and output) bring nothing; only
 its own tags mark them, so a message of yours that starts with `<` is still
 yours. It never blocks a prompt. To leave it out, or take it out again:

@@ -230,11 +230,17 @@ def continuity_moments(
 
 
 def _questions(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -> dict:
-    """Questions shown as often as they ever will be, still unanswered.
+    """Questions shown as often as they ever will be, still unanswered, while
+    answering has stopped.
 
-    A question no longer asked (``RETIRED_REFLECTION_KINDS``) that still waits
-    is left out: maintenance clears it, and nothing asks the agent to answer
-    it. Answered, it counts like any other."""
+    Leaving a question is the agent's to do: the waking note says that if
+    nothing true comes, it leaves it and the question fades. So questions it
+    left are flagged only when none was answered in the last ``WINDOW``: then
+    they may not be reaching it at all, the silent failure this watches for
+    (161 questions nobody answered, once). Otherwise they are counted on the
+    card's line. A question no longer asked (``RETIRED_REFLECTION_KINDS``)
+    that still waits is left out: maintenance clears it, and nothing asks the
+    agent to answer it. Answered, it counts like any other."""
     shown_max = EngramStore.MAX_SURFACINGS
     retired = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
     rows = _rows(store._get_conn(), f"""
@@ -253,7 +259,10 @@ def _questions(store: EngramStore, scope: dict[str, str], now: datetime, index: 
     # Flagged only while still in their lifetime: past it, a question is gone
     # whatever happened to it, and the flag clears once answering resumes.
     unanswered = [row for row in ever if not _expired(row["expires_at"], now)]
-    stalled = [row for row in unanswered if _older_than(row["created_at"], now, STALL)]
+    this_week = sum(
+        1 for row in rows if row["answered_at"] and not _older_than(row["answered_at"], now, WINDOW)
+    )
+    stalled = [] if this_week else [row for row in unanswered if _older_than(row["created_at"], now, STALL)]
     rate = _percent(answered, total)
     seen = (
         f"{_count(len(unanswered), 'question')} unanswered after {shown_max} showings; "
@@ -267,6 +276,7 @@ def _questions(store: EngramStore, scope: dict[str, str], now: datetime, index: 
         "answer_rate": rate,
         "unanswered_after_showings": len(unanswered),
         "unanswered_after_showings_ever": len(ever),
+        "answered_this_week": this_week,
         "stalled": bool(stalled),
     }
     if stalled:
@@ -699,8 +709,15 @@ _JUDGES_OWN = ("judge timeout", "judge error")
 # The cue is flagged when the messages it could not answer are at least this
 # share of the week's messages, or for any one of a kind that something
 # fixes: an error, no answerer to judge, or a socket path too long to open.
-# Timeouts and busy stores under the share pass, and stay counted in its line.
 CUE_FLAG_SHARE = 0.05
+# Timeouts, a busy store and failures an older hook didn't name pass on their
+# own, and nothing the person does fixes them: when they are all that failed,
+# the flag waits until they are this share of the week's messages, a cue that
+# mostly isn't answering. Under it they stay counted on the cue's line
+# (2026-10-16: ATTENTION, then "nothing to fix", for 158 of 1,105 messages on
+# a machine running many sessions).
+CUE_PASSING_SHARE = 0.25
+_PASSES_ON_ITS_OWN = (TIMEOUT, BUSY, NOT_NAMED)
 
 
 def _always_flagged(kind: str) -> bool:
@@ -728,7 +745,8 @@ def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -
     Reads those files only.
 
     Flagged when the messages it could not answer are at least
-    ``CUE_FLAG_SHARE`` of the week's, or for any error, any message with no
+    ``CUE_FLAG_SHARE`` of the week's (``CUE_PASSING_SHARE`` when all of them
+    pass on their own: timeouts, a busy store), or for any error, any message with no
     answerer to judge it, or any it answered by words because no server can
     open its socket under this HOME: the flag says which of those kinds
     dominates and the one thing that fixes it (WP-E2). Jev's own failures are
@@ -758,7 +776,8 @@ def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -
     result: dict[str, Any] = {"seen": seen, **summary}
     failed = {kind: n for kind, n in summary["failures_by_kind"].items() if kind not in _JUDGES_OWN}
     failures = sum(failed.values())
-    share_met = bool(messages) and failures >= CUE_FLAG_SHARE * messages
+    passing = all(kind in _PASSES_ON_ITS_OWN for kind in failed)
+    share_met = bool(messages) and failures >= (CUE_PASSING_SHARE if passing else CUE_FLAG_SHARE) * messages
     flagged = dict(failed) if share_met else {k: n for k, n in failed.items() if _always_flagged(k)}
     by_socket = summary["words_because"].get(SOCKET_TOO_LONG, 0)
     if by_socket:

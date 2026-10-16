@@ -95,9 +95,10 @@ def _memory_id(db: Path) -> str:
 
 
 def _ask(db: Path, kind: str, target: str, *, created: str, shown: int,
-         answered: bool = False, expires: str | None = None) -> None:
+         answered: bool = False, expires: str | None = None,
+         answered_at: str | None = None) -> None:
     """One question in the queue, as maintenance proposed it and the briefings
-    showed it."""
+    showed it; answered an hour ago, or at ``answered_at``."""
     _write(
         db,
         "INSERT INTO reflection_queue (id, agent_id, person_id, project_scope, kind, "
@@ -106,7 +107,8 @@ def _ask(db: Path, kind: str, target: str, *, created: str, shown: int,
         (
             f"ask-{kind}-{created}", kind, target, shown, created,
             expires or (datetime.fromisoformat(created) + timedelta(days=30)).isoformat(),
-            _ago(hours=1) if answered else None, "It changed the plan." if answered else None,
+            (answered_at or _ago(hours=1)) if answered else None,
+            "It changed the plan." if answered else None,
         ),
     )
 
@@ -164,12 +166,15 @@ def test_a_healthy_store_raises_no_flag_and_prints_nothing(tmp_path, capsys):
 
 
 def test_questions_shown_three_times_and_never_answered_are_flagged(tmp_path, capsys):
+    """Answering has stopped: none answered in the last week, and questions
+    shown as often as they ever will be wait. That is how questions that never
+    reach the agent look (161 of them, once)."""
     db = _healthy(tmp_path)
     memory = _memory_id(db)
     _write(db, "DELETE FROM reflection_queue")
     _ask(db, "impact", memory, created=_ago(days=3), shown=3)
     _ask(db, "belief", memory, created=_ago(days=2), shown=3)
-    _ask(db, "lesson", memory, created=_ago(days=4), shown=1, answered=True)
+    _ask(db, "lesson", memory, created=_ago(days=12), shown=1, answered=True, answered_at=_ago(days=10))
 
     card, data = _card(db)
     out = _doctor(db, capsys)
@@ -220,6 +225,28 @@ def test_following_the_printed_call_answers_a_belief_question(tmp_path):
     )
 
 
+def test_questions_left_while_answering_goes_on_are_not_flagged(tmp_path, capsys):
+    """Leaving a question is the agent's to do: the waking note says that if
+    nothing true comes, it leaves it and the question fades. While it still
+    answers others, questions it left are no silent failure, and the card says
+    so only in its counts (2026-10-16: the doctor flagged a memory answering
+    one question in three, the hour after an answer)."""
+    db = _healthy(tmp_path)
+    memory = _memory_id(db)
+    _write(db, "DELETE FROM reflection_queue")
+    _ask(db, "impact", memory, created=_ago(days=3), shown=3)
+    _ask(db, "belief", memory, created=_ago(days=2), shown=3)
+    _ask(db, "lesson", memory, created=_ago(days=4), shown=1, answered=True)
+
+    card, data = _card(db)
+    out = _doctor(db, capsys)
+
+    check = data["watchdog"]["checks"]["questions"]
+    assert check["stalled"] is False, check
+    assert "never answered" not in card and "never answered" not in out
+    assert check["seen"] == "2 questions unanswered after 3 showings; 1 of 3 ever answered (33%)"
+
+
 def test_a_question_is_not_stalled_before_a_day_or_once_answered(tmp_path):
     db = _healthy(tmp_path)
     memory = _memory_id(db)
@@ -233,6 +260,63 @@ def test_a_question_is_not_stalled_before_a_day_or_once_answered(tmp_path):
 
     assert data["watchdog"]["checks"]["questions"]["stalled"] is False
     assert "never answered" not in card, card
+
+
+# ── A busy machine's cue ──
+
+
+def _cue_week(monkeypatch, messages: int, failures_by_kind: dict[str, int]) -> None:
+    """The cue's week as its files would tell it: ``messages`` sent, the
+    failures by kind, the rest answered by meaning."""
+    import mnemos.watchdog as watchdog
+
+    failures = sum(failures_by_kind.values())
+    summary = {
+        "sessions": 3, "messages": messages, "offers": messages - failures, "offered": messages - failures,
+        "silences": 0, "failures": failures, "last_failure": next(iter(failures_by_kind), None),
+        "answered_by": {"meaning": messages - failures}, "by_via": {}, "failures_by_kind": failures_by_kind,
+        "words_because": {},
+    }
+    monkeypatch.setattr(watchdog, "offered_summary", lambda **kwargs: summary)
+
+
+def test_a_busy_machine_is_counted_not_flagged(tmp_path, monkeypatch):
+    """Timeouts and a busy store pass on their own, and nothing the person does
+    fixes them, so under a quarter of the week's messages they are counted on
+    the cue's line and raise no flag (2026-10-16: the doctor said ATTENTION and
+    then "nothing to fix" for 158 of 1,105 messages on a machine running many
+    sessions)."""
+    db = _healthy(tmp_path)
+    _cue_week(monkeypatch, 100, {"timeout": 12, "busy": 2})
+
+    card, data = _card(db)
+
+    check = data["watchdog"]["checks"]["cue"]
+    assert check["stalled"] is False, check
+    assert "14 failures (12 timeout, 2 busy)" in check["seen"], check["seen"]
+    assert not [line for line in card.splitlines() if line.startswith("ATTENTION") and "cue" in line], card
+
+
+def test_a_cue_that_mostly_fails_is_flagged_even_with_nothing_to_fix(tmp_path, monkeypatch):
+    db = _healthy(tmp_path)
+    _cue_week(monkeypatch, 100, {"timeout": 30})
+
+    _card_text, data = _card(db)
+
+    check = data["watchdog"]["checks"]["cue"]
+    assert check["stalled"] is True and "30 of 100 messages" in check["flag"], check
+    assert "nothing to fix" in check["flag"], check
+
+
+def test_a_failure_something_fixes_is_flagged_at_a_twentieth(tmp_path, monkeypatch):
+    db = _healthy(tmp_path)
+    _cue_week(monkeypatch, 100, {"timeout": 3, "error (RuntimeError)": 3})
+
+    _card_text, data = _card(db)
+
+    check = data["watchdog"]["checks"]["cue"]
+    assert check["stalled"] is True, check
+    assert "a restart of the session" in check["flag"], check
 
 
 # ── The report the briefing can find ──

@@ -62,6 +62,18 @@ not memory. The OpenClaw guide is marked legacy; it was written for the
 advanced server, and `mnemos setup-openclaw`'s jobs ask for tools the default
 simple server doesn't have.
 
+### The doctor says ATTENTION only for what to act on
+
+It flagged questions the agent had left unanswered whenever any went
+unanswered, though the waking note tells the agent to leave one when nothing
+true comes, and it went on flagging an hour after an answer. Now it flags them
+when answering has stopped (none answered in the last week), which is how
+questions that never reach the agent look; otherwise they're counted on the
+card's line. And a cue that timed out on a busy machine was flagged at a
+twentieth of the week's messages, followed by "nothing to fix". Timeouts and a
+busy store, which pass on their own, are now flagged only at a quarter, a cue
+that mostly isn't answering; a failure something fixes still is at a twentieth.
+
 ### A link goes only by a verdict that says so
 
 With a provider chosen, maintenance's linking pass sends a memory's

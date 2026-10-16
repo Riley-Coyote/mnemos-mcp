@@ -391,8 +391,8 @@ def _cue_attention(card: str) -> list[str]:
 
 
 def test_a_few_timeouts_are_counted_but_not_flagged(tmp_path, meaning, home):
-    """Under 5% of the week's messages, timeouts (the machine was busy) are
-    counted in the cue's own line and raise no ATTENTION."""
+    """Timeouts (the machine was busy) pass on their own and nothing fixes
+    them: they are counted in the cue's own line and raise no ATTENTION."""
     db = _store(tmp_path / "memory.db", *_gate_memories().values())
     _messages(db, 20, "timeout")  # 1 of 21
 
@@ -416,13 +416,20 @@ def test_any_error_is_flagged_however_few(tmp_path, meaning, home):
     assert "a restart of the session" in attention[0], attention
 
 
-def test_failures_at_five_percent_of_the_week_are_flagged(tmp_path, meaning, home):
-    db = _store(tmp_path / "memory.db", *_gate_memories().values())
-    _messages(db, 19, "timeout")  # 1 of 20
+def test_timeouts_alone_are_flagged_at_a_quarter_of_the_week(tmp_path, meaning, home):
+    """Alone, timeouts wait for ``CUE_PASSING_SHARE`` of the week's messages,
+    a cue that mostly isn't answering; a failure something fixes is flagged
+    from ``CUE_FLAG_SHARE`` (``test_any_error_is_flagged_however_few``)."""
+    under = _store(tmp_path / "under.db", *_gate_memories().values())
+    _messages(under, 16, *["timeout"] * 4)  # 4 of 20
+    _data, card = _health(under)
+    assert not _cue_attention(card), card
 
-    data, card = _health(db)
+    at = _store(tmp_path / "at.db", *_gate_memories().values())
+    _messages(at, 15, *["timeout"] * 5)  # 5 of 20
+    _data, card = _health(at)
     attention = _cue_attention(card)
-    assert len(attention) == 1 and "most often timeout (1 of 1)" in attention[0], card
+    assert len(attention) == 1 and "most often timeout (5 of 5)" in attention[0], card
 
 
 def test_each_kind_keeps_the_times_of_its_last_twenty_failures(tmp_path, home):
