@@ -31,7 +31,8 @@ wake shows only what is in the agent's own words).
 
 ```bash
 pytest -q                     # the whole suite
-uv run --extra dev --extra mcp pytest -q   # exactly what CI runs
+uv run --extra dev --extra mcp pytest -q   # the suite as the gate runs it
+scripts/local_ci.sh           # every check, Python 3.10–3.13: the merge gate
 ```
 
 A bug fix lands with a test that **fails on the previous code**. Confirm that
@@ -47,26 +48,45 @@ an agent actually calls.
 
 ## Release process
 
-`main` is public and is what users install. It stays green.
+`main` is what users install. It stays green.
 
 All work happens on a branch and lands through a pull request. Agents run the
 entire pipeline — nothing here requires anyone to open GitHub.
 
+**The checks run on this machine, not on GitHub.** Since 2026-10-17 GitHub
+Actions no longer starts jobs for this repository. `scripts/local_ci.sh` is
+the gate. It runs every step of
+`.github/workflows/release-hardening.yml` against a clean copy of one commit,
+in a clean environment, and writes a summary for the pull request.
+
 ```bash
-git checkout -b <type>/<slug> origin/main
+git fetch origin
+git switch -c <type>/<slug> origin/main
 # work, atomic commits
 git push -u origin <type>/<slug>
 gh pr create --title "..." --body "..."
-gh pr checks --watch                    # CI gate
+scripts/local_ci.sh                     # the gate: ~15 min, run it in the background
+gh pr comment --body-file <the summary.md path it prints>
 gh pr merge --squash --delete-branch
-git checkout main && git pull
-gh run list --branch main --limit 1     # confirm main is green after the merge
+git -C ~/Documents/Repositories/mnemos pull --ff-only
 ```
+
+The last line matters. On Riley's Mac, `~/Documents/Repositories/mnemos` is
+the checkout every session imports Mnemos from (an editable install), so a
+merge is not live until that checkout is fast-forwarded. It stays on `main`
+with no local changes; if `--ff-only` refuses, stop and say why rather than
+forcing it. Sessions already running keep the code they started with.
 
 Rules:
 
 - Never commit or push directly to `main`.
-- Never merge with failing or pending checks.
+- Never merge unless `scripts/local_ci.sh` passed on the branch's final commit
+  and its summary is on the pull request. Fix a failing step; never waive it.
+  If a step cannot run (no network for pip-audit, say), say so on the pull
+  request and ask Riley before merging.
+- That commit must contain the current `origin/main`, which the gate's first
+  step checks. If `main` moves before the merge, merge it into the branch and
+  run the gate again.
 - One PR is one unit of work, so squash by default. Use `--merge` only when a
   branch carries several genuinely independent fixes worth keeping separately
   revertable.
@@ -74,17 +94,25 @@ Rules:
 - Never amend, never force-push, never `--no-verify`.
 - Push when the work is complete and verified, not as a checkpoint.
 - Breaking changes go in the CHANGELOG with the migration in the same entry.
+- A check changed in the workflow changes in `scripts/local_ci.sh` too, and
+  the other way round.
 
-`main` is protected. Merging requires a pull request and passing `Python 3.10`
-through `Python 3.13` checks, the branch must be up to date with `main` first,
-and force-pushes and branch deletion are refused.
+What the gate cannot cover here: the black box on Linux and on Windows, and
+CodeQL. The summary says so every time. When a change touches code that
+differs by platform (paths, process flags, file locking), say on the pull
+request which platforms it was not run on.
 
-Enforcement includes administrators. That is deliberate: the realistic risk is
-an agent with admin credentials pushing straight to `main`, and an exemption
-would leave the rule unenforced against exactly the party it exists to
-restrain. It is not a lock-out risk either — protection can be lifted through
-the API in a genuine emergency, so recovery never depends on anyone opening
-GitHub.
+GitHub no longer enforces any of this. Branch protection is not applied: #159
+merged with every check failing. The rules above are the protection now, and
+they bind an agent with admin credentials exactly as the old enforcement did,
+because that agent is the realistic risk. The workflows stay in
+`.github/workflows` as the record of the same checks. GitHub still triggers
+them on every push and each fails at once without running, at no cost; those
+red marks mean nothing, and the summary on the pull request is the record.
+
+Publishing to PyPI goes through `release.yml`, which runs on a version tag in
+GitHub Actions, so it cannot run either. Do not push a release tag expecting
+it to publish; ask Riley how to publish.
 
 ---
 
