@@ -276,7 +276,10 @@ def run_softening_pass(
             engram.content = softened_content
             engram.resolution = round(target, 2)
 
-        store.save_engram(engram)
+            # Saved only when its words changed. Saving the others, unchanged,
+            # rewrote about 570 memories whole every cycle on a real store,
+            # each with its word index entry and every link.
+            store.save_engram(engram)
 
         total_res_after += engram.resolution
         # Only a memory whose wording actually changed was softened. Counting

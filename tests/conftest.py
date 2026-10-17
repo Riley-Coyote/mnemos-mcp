@@ -66,6 +66,12 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("MNEMOS_DISABLE_DOTENV", "1")
+    # Automatic maintenance runs in the call that asks for it, as it did before
+    # it moved to a background process: the suite checks what a cycle did right
+    # after the call, and a process of its own would still be writing a store
+    # the test has finished with. tests/test_saving_does_not_wait.py covers
+    # the background, the default.
+    monkeypatch.setenv("MNEMOS_MAINTENANCE", "inline")
     # And no test reaches a real Jev key (~/.config/jev/api_key): an empty
     # file is no key. A test that needs one names its own.
     monkeypatch.setenv("MNEMOS_JEV_KEY_FILE", os.devnull)

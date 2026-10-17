@@ -16,6 +16,8 @@ import os
 import math
 import re
 import sqlite3
+import subprocess
+import sys
 from collections.abc import Collection, Mapping
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -317,6 +319,129 @@ def maintenance_index(db_path: str) -> EmbeddingIndex:
     session linked by meaning too. The model loads only from this machine;
     without it the cycle links by words and says why."""
     return EmbeddingIndex(db_path=db_path)
+
+
+# Automatic maintenance (what a capture or a correction asks for) runs in a
+# process of its own, after the call has answered: on a real store the cycle
+# took 12 to 60 seconds and up to ten minutes, and the capture waited for all
+# of it (see MnemosRuntime.maintain). MNEMOS_MAINTENANCE=inline runs it in the
+# call again, as before; the test suite runs that way, for cycles it can see.
+_UPKEEP_ENV = "MNEMOS_MAINTENANCE"
+# The scope's claim on its automatic maintenance, so one process at a time
+# runs it: written when a process starts one, cleared when it finishes. A claim
+# this old is from a process that died, and no longer holds.
+_UPKEEP_CLAIM = "upkeep_running"
+_UPKEEP_STALE = timedelta(minutes=15)
+# What went wrong with the last maintenance run in the background, until one
+# goes right: the next capture says so, since nothing else would.
+_UPKEEP_FAILED = "upkeep_failed"
+# The background process, at a low priority: the same code as the process
+# that started it, so the directory that process imported mnemos from comes
+# first when it isn't on the path already (a checkout run from its own
+# directory, say).
+_UPKEEP_CHILD = (
+    "import os, sys\n"
+    "if hasattr(os, 'nice'):\n"
+    "    try:\n"
+    "        os.nice(10)\n"
+    "    except OSError:\n"
+    "        pass\n"
+    "root = sys.argv[1]\n"
+    "if root not in sys.path:\n"
+    "    sys.path.insert(0, root)\n"
+    "from mnemos.simple_runtime import run_background_upkeep\n"
+    "sys.exit(run_background_upkeep(sys.argv[2:]))\n"
+)
+_UPKEEP_CHILDREN: list[subprocess.Popen] = []
+
+
+def _upkeep_inline() -> bool:
+    """Whether automatic maintenance runs in the call that asks for it."""
+    return os.environ.get(_UPKEEP_ENV, "").strip().lower() == "inline"
+
+
+def _claim_holds(value: str | None, now: datetime) -> bool:
+    """Whether a stored claim on automatic maintenance still holds."""
+    if not value:
+        return False
+    try:
+        at = datetime.fromisoformat(json.loads(value)["at"])
+    except (ValueError, TypeError, KeyError):
+        return False
+    if at.tzinfo is None:
+        at = at.replace(tzinfo=timezone.utc)
+    return now - at < _UPKEEP_STALE
+
+
+def _spawn_upkeep(scope: MnemosScope) -> bool:
+    """Start ``scope``'s maintenance in a process of its own, detached, so it
+    outlives the session that asked for it. Returns whether it started."""
+    if not sys.executable:
+        return False
+    db_path = Path(scope.db_path).expanduser()
+    root = str(Path(__file__).resolve().parent.parent)
+    command = [
+        sys.executable, "-c", _UPKEEP_CHILD, root,
+        str(db_path), scope.agent_id, scope.person_id, scope.project_scope,
+    ]
+    options: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+        "cwd": str(db_path.parent),
+    }
+    if os.name == "nt":
+        options["creationflags"] = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        )
+    else:
+        options["start_new_session"] = True
+    try:
+        child = subprocess.Popen(command, **options)
+    except (OSError, ValueError) as exc:
+        logging.getLogger(__name__).warning(
+            "Maintenance could not start in the background: %s: %s",
+            type(exc).__name__, exc,
+        )
+        return False
+    # The ones that finished are reaped here, so none lingers as a zombie.
+    _UPKEEP_CHILDREN[:] = [one for one in _UPKEEP_CHILDREN if one.poll() is None]
+    _UPKEEP_CHILDREN.append(child)
+    return True
+
+
+def run_background_upkeep(argv: list[str]) -> int:
+    """The background process's work: the scope's automatic maintenance, as a
+    capture used to run it before answering. Clears the scope's claim when
+    done, and records what went wrong, if anything did, for the next capture
+    to say. Returns the process's exit status."""
+    db_path, agent_id, person_id, project_scope = argv
+    runtime = MnemosRuntime(
+        db_path=db_path, agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+    )
+    runtime._upkeep_inline = True
+    failed = ""
+    try:
+        report = runtime.maintain(auto=True)
+        errors = [line.strip() for line in report.splitlines() if "_error: " in line]
+        failed = "; ".join(errors)[:300]
+    except Exception as exc:
+        failed = f"{type(exc).__name__}: {exc}"[:300]
+    finally:
+        try:
+            runtime._set_meta(_UPKEEP_FAILED, json.dumps({
+                "at": datetime.now(timezone.utc).isoformat(), "error": failed,
+            }) if failed else "")
+        except Exception:
+            pass
+        try:
+            runtime._set_meta(_UPKEEP_CLAIM, "")
+        except Exception:
+            pass
+        runtime.close()
+    return 1 if failed else 0
 
 
 def _index_unavailable(index: Any) -> str:
@@ -937,6 +1062,9 @@ class MnemosRuntime:
         # What the tool call under way has read and written, for its
         # memory_trace row (see _traced); None between calls.
         self._trace: dict[str, Any] | None = None
+        # Whether this runtime runs automatic maintenance in the call that asks
+        # for it: the background process's own runtime does (see maintain).
+        self._upkeep_inline = False
 
     @property
     def db_path(self) -> Path:
@@ -5865,7 +5993,15 @@ class MnemosRuntime:
 
     @_traced("maintain")
     def maintain(self, deep: bool = False, auto: bool = False) -> str:
-        """Run the best available maintenance without requiring setup."""
+        """Run the best available maintenance without requiring setup.
+
+        Automatic maintenance (``auto``: what a capture or a correction asks
+        for) runs in a process of its own, after the call has answered
+        (``_maintain_later``). On a real store the cycle took 12 to 60
+        seconds, and a capture waited for all of it before it could answer;
+        meanwhile its writes held the store's lock, and other sessions'
+        captures waited behind them. What the call itself needs, the
+        catch-up of recall's meaning index, still happens here."""
 
         self._ensure_init()
         assert self._store is not None
@@ -5891,6 +6027,9 @@ class MnemosRuntime:
                 f"Code: version {MAINTENANCE_CODE_VERSION}; the store needs {store_minimum} or newer",
                 "Passes: none",
             ])
+
+        if auto and not requested_deep and self._maintains_later():
+            return self._maintain_later()
 
         can_run_deep = requested_deep and self._llm_client is not None
         # config={} meant the whole consolidation block in ~/.mnemos/config.json
@@ -6022,6 +6161,102 @@ class MnemosRuntime:
         for key in errors:
             lines.append(f"{key}: {stats[key]}")
         return "\n".join(lines)
+
+    def _maintains_later(self) -> bool:
+        """Whether this call's automatic maintenance goes to the background.
+        Not in the background process itself, nor inside a host mutation or a
+        caller's transaction, whose maintenance belongs to their one durable
+        operation; nor when MNEMOS_MAINTENANCE=inline says so."""
+        if self._upkeep_inline or self._host_mutation_active or self._read_only:
+            return False
+        if self._store is not None and getattr(self._store, "_transaction_depth", 0):
+            return False
+        return not _upkeep_inline()
+
+    def _maintain_later(self) -> str:
+        """Start this scope's automatic maintenance in the background when it
+        is due and no other process is running it, and say so; catch recall's
+        meaning index up here first, so what this call wrote is findable by
+        meaning when it answers. Runs it here only if the process can't be
+        started."""
+        assert self._store is not None
+        index_lines = _index_lines(self._index_for_recall(AUTO_INDEX_BUDGET))
+        failed = self._last_upkeep_failure()
+        claim = self._claim_upkeep()
+        if claim == "claimed":
+            if _spawn_upkeep(self.scope):
+                return "\n".join([
+                    "Requested: standard",
+                    "Cycle: started in the background",
+                    "Completed: the cycle runs in its own process, after this call",
+                    "Passes: in the background",
+                    *failed,
+                    *index_lines,
+                ])
+            self._release_upkeep()
+            self._upkeep_inline = True
+            try:
+                return self.maintain(auto=True)
+            finally:
+                self._upkeep_inline = False
+        completed = {
+            "not due": "no maintenance needed yet (ran recently)",
+            "running": "another process is running this memory's maintenance now",
+            "busy": "the store was busy; the next call starts it",
+        }[claim]
+        return "\n".join([
+            "Requested: standard",
+            "Cycle: skipped",
+            f"Completed: {completed}",
+            "Passes: none",
+            *failed,
+            *index_lines,
+        ])
+
+    def _claim_upkeep(self) -> str:
+        """Claim this scope's automatic maintenance, in one transaction, when
+        it is due (the activity gate) and no other process holds the claim:
+        "claimed", "not due", "running", or "busy" when the store's lock
+        couldn't be had. Two captures in different sessions within a cycle's
+        run used to start a cycle each, and the two fought over the lock."""
+        assert self._store is not None
+        try:
+            config = load_config()
+        except Exception:
+            config = {}
+        gate = ConsolidationDaemon(store=self._store, config=config)
+        key = self._meta_key(_UPKEEP_CLAIM)
+        now = datetime.now(timezone.utc)
+        try:
+            with self._store.transaction():
+                if not gate._should_run(
+                    self.scope.agent_id, self.scope.person_id, self.scope.project_scope,
+                ):
+                    return "not due"
+                if _claim_holds(self._store.get_meta(key), now):
+                    return "running"
+                self._store.set_meta(key, json.dumps({"at": now.isoformat(), "by": os.getpid()}))
+        except sqlite3.Error:
+            return "busy"
+        return "claimed"
+
+    def _release_upkeep(self) -> None:
+        """Give up this scope's claim on its automatic maintenance."""
+        try:
+            self._set_meta(_UPKEEP_CLAIM, "")
+        except sqlite3.Error:
+            pass  # the claim lapses on its own
+
+    def _last_upkeep_failure(self) -> list[str]:
+        """The line saying what went wrong with the last maintenance run in
+        the background, until one goes right; none otherwise."""
+        try:
+            failure = json.loads(self._get_meta(_UPKEEP_FAILED) or "{}")
+        except (ValueError, TypeError, sqlite3.Error):
+            return []
+        if not isinstance(failure, dict) or not failure.get("error"):
+            return []
+        return [f"Last background maintenance ({failure.get('at', '')[:16]}): {failure['error']}"]
 
     def polish_dream(self, note_id: str, polished: str) -> bool:
         """Apply a host-model polish to a dream note. Returns False on any failure."""

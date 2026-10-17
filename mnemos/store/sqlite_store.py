@@ -1806,6 +1806,37 @@ class EngramStore:
             self._rollback()
             raise
 
+    def save_fading(self, engrams: Iterable[Engram]) -> int:
+        """Write what a decay pass changes in each of ``engrams``: its
+        accessibility, strength, stability and state, and nothing else, all
+        in one transaction. Returns how many were written.
+
+        ``save_engram`` rewrites a memory whole: the row, its word index entry
+        (a delete that reads the whole index, since the id is not indexed
+        there), every link and its versions. That is right for a change to a
+        memory's words or links, and far too much for a change in how
+        accessible it is: a decay pass saved about 1,100 memories that way a
+        cycle, each in a write of its own."""
+        rows = [
+            (engram.accessibility, engram.strength, engram.stability, engram.state, engram.id)
+            for engram in engrams
+        ]
+        if not rows:
+            return 0
+        conn = self._get_conn()
+        try:
+            self._begin_immediate()
+            conn.executemany(
+                "UPDATE engrams SET accessibility = ?, strength = ?, stability = ?, state = ? "
+                "WHERE id = ?",
+                rows,
+            )
+            self._commit()
+        except Exception:
+            self._rollback()
+            raise
+        return len(rows)
+
     def engram_visible_in_scope(
         self,
         engram_id: str,

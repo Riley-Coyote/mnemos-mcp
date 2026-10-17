@@ -16,6 +16,7 @@ import sqlite3
 import stat
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 from mcp.client.session import ClientSession
@@ -103,6 +104,25 @@ async def with_session(
             await callback(session)
 
 
+async def reflect_once_asked(
+    session: ClientSession, target_id: str, text: str, *, wait: float = 90.0,
+) -> object:
+    """Answer the question a capture's maintenance asks about it. That
+    maintenance runs in a process of its own after the capture has answered,
+    so the question arrives a little later: this asks again until it has, or
+    ``wait`` seconds have gone by. A background process that never runs leaves
+    nothing pending, and the caller's assertion fails."""
+    deadline = time.monotonic() + wait
+    while True:
+        reflected = await session.call_tool(
+            "mnemos_reflect", {"target_id": target_id, "text": text},
+        )
+        pending = "nothing was pending" in text_of(reflected).lower()
+        if reflected.isError or not pending or time.monotonic() > deadline:
+            return reflected
+        await asyncio.sleep(1)
+
+
 async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
     captured_ids: dict[str, str] = {}
 
@@ -128,10 +148,7 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
         handoff = await session.call_tool("mnemos_handoff", {"text": HANDOFF})
         assert not handoff.isError, text_of(handoff)
 
-        reflected = await session.call_tool(
-            "mnemos_reflect",
-            {"target_id": captured_ids["private"], "text": REFLECTION},
-        )
+        reflected = await reflect_once_asked(session, captured_ids["private"], REFLECTION)
         assert not reflected.isError, text_of(reflected)
         assert "recorded" in text_of(reflected).lower(), text_of(reflected)
 

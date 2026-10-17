@@ -2,6 +2,39 @@
 
 ## 0.4.1 (unreleased)
 
+### A capture answers before its maintenance runs
+
+A capture that came due for maintenance (five minutes after the last cycle,
+in a store every session shares) ran the whole cycle before it answered. In a
+session on Oct 17 2026 two captures took 36.5 s and 37.1 s; by their own log
+the cycles took 35.5 s and 35.1 s and changed nothing. While a cycle wrote,
+other sessions' captures waited behind it, up to 7 s on a copy of the same
+store, and one lost its vector to "database is locked".
+
+Now automatic maintenance, the kind a capture or a correction asks for, runs
+in a process of its own, started by the call and detached from it, at a low
+priority, one at a time per scope. Before it answers, the call still catches
+recall's meaning index up, so what it saved is findable by meaning. If the
+process can't start, the cycle runs in the call as before; if it fails, the
+next capture says what went wrong. `MNEMOS_MAINTENANCE=inline` runs it in the
+call, as before. An explicit `mnemos_maintain`, `mnemos consolidate` and the
+scheduled jobs run as they did. What a cycle asks the agent (what a memory
+changed, what a lesson taught) is queued when the cycle finishes, a few
+seconds after the call rather than in it.
+
+The cycle writes only what it changed. Decay saved every memory it read,
+whole (its row, its word index entry, every link), each in a write of its own,
+and softening saved every memory it looked at, softened or not: about 1,700
+writes a cycle, for changes in the fourth decimal. Decay now writes the four
+numbers it moves, for the memories whose numbers moved, in one transaction,
+and softening saves only what it softened. On a copy of the store, decay went
+from 3.5 s to 0.11 s, softening from 3.1 s to 0.07 s, and the cycle from
+10.8 s to 4.2 s, with the same results. A session's captures during two cycles
+took 0.06 to 0.11 s.
+
+Sessions keep the code they started with, so a session already running keeps
+the old behavior until it restarts.
+
 ### Recall shows what it finds, and says when
 
 The lab's side-by-side put plain memory files against Mnemos on 118 facts from

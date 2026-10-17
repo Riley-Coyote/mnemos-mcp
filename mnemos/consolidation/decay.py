@@ -24,6 +24,13 @@ fades nor moves. A standing rule is obeyed, not recalled, and fading it for
 disuse would take it away exactly because it is followed. Unmarked, it is
 read again and fades from where it stands, by the pass's usual elapsed time.
 
+A pass writes only what it changed: the four numbers of each memory whose
+numbers moved, all of them in one short write at the end (``save_fading``).
+It used to save every memory it read, whole: the row, its word index entry
+and every one of its links, each in a write of its own. On a real store that
+was about 1,100 writes and 12,000 link rows a cycle for changes in the fourth
+decimal, and it held the write lock long enough to stall other sessions.
+
 Ported from Anima's salience.py and adapted for the dual-trace model.
 """
 
@@ -92,6 +99,8 @@ def run_decay_pass(
     }
     # A memory ages on its owner's lived clock: one clock per agent per pass.
     clocks: dict[str, LivedClock] = {}
+    # The memories whose numbers this pass moved, written together at the end.
+    moved: list[Any] = []
 
     # Dormant memories keep fading, by rules this code version holds: code
     # older than the store leaves them as they are, whoever calls the pass
@@ -103,7 +112,7 @@ def run_decay_pass(
     if not _older_than(store):
         for engram in _dormant_engrams(store, agent_id, person_id, project_scope):
             stats["dormant_processed"] += 1
-            _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks)
+            _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks, moved)
 
     # load_connections=True because decay uses connection count for decay resistance
     engrams = store.get_engrams_in_states(
@@ -113,6 +122,7 @@ def run_decay_pass(
     )
 
     if not engrams:
+        _save_moved(store, moved)
         return stats
 
     total_before = 0.0
@@ -121,9 +131,10 @@ def run_decay_pass(
     for engram in engrams:
         stats["engrams_processed"] += 1
         total_before += engram.accessibility
-        after = _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks)
+        after = _decay_engram(store, engram, config, max_elapsed_hours, stats, clocks, moved)
         if after is not None:
             total_after += after
+    _save_moved(store, moved)
 
     n = max(1, stats["engrams_processed"])
     stats["avg_accessibility_before"] = round(total_before / n, 4)
@@ -162,9 +173,13 @@ def _decay_engram(
     max_elapsed_hours: float | None,
     stats: dict[str, Any],
     clocks: dict[str, LivedClock],
+    moved: list[Any],
 ) -> float | None:
-    """Decay one memory, move it on if it faded far enough, and save it.
-    Returns its accessibility after the pass, or None when it was archived."""
+    """Decay one memory and move it on if it faded far enough. A memory whose
+    numbers moved joins ``moved``, to be saved with the others at the end of
+    the pass; one archived is archived here. Returns its accessibility after
+    the pass, or None when it was archived."""
+    before = _fading(engram)
     decay_rate = config.get("decay_rate", 0.01)
     dormant_threshold = config.get("dormant_threshold", 0.05)
     archive_threshold = config.get("archive_threshold", 0.01)
@@ -250,9 +265,29 @@ def _decay_engram(
         engram.state = "dormant"
         stats["engrams_dormant"] += 1
 
-    # 5. PERSIST
-    store.save_engram(engram)
+    # 5. PERSIST, with the others, only when something moved.
+    if _fading(engram) != before:
+        moved.append(engram)
     return engram.accessibility
+
+
+def _fading(engram: Any) -> tuple[Any, ...]:
+    """The numbers and state a decay pass may change in a memory: everything
+    it writes."""
+    return (engram.accessibility, engram.strength, engram.stability, engram.state)
+
+
+def _save_moved(store: Any, moved: list[Any]) -> None:
+    """Write the memories a pass moved, in one transaction. A store without
+    ``save_fading`` saves each one whole, as passes did before."""
+    if not moved:
+        return
+    save_fading = getattr(store, "save_fading", None)
+    if save_fading is not None:
+        save_fading(moved)
+    else:
+        for engram in moved:
+            store.save_engram(engram)
 
 
 def _older_than(store: Any) -> bool:
