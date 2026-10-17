@@ -31,6 +31,7 @@ from typing import Any, Callable
 
 from .cue import (
     BUSY,
+    CUE_MIN_WORDS,
     JUDGE_CALLS_KEPT,
     JUDGE_CALLS_KEY,
     NOT_NAMED,
@@ -753,8 +754,14 @@ def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -
     left to the judge's check."""
     summary = offered_summary(days=WINDOW.days, key=scope_key(str(store.db_path), **scope))
     messages = summary["messages"]
+    short = summary.get("short", 0)
+    too_short = (
+        f"{short} too short to look at (under {CUE_MIN_WORDS} meaningful words)" if short else ""
+    )
     if not messages:
         seen = f"the prompt hook's cue answered no message here in the last {WINDOW.days} days"
+        if too_short:
+            seen += f"; {too_short}"
     else:
         ways = ", ".join(
             f"{count} by {via}" for via, count in sorted(summary["answered_by"].items(), key=lambda i: -i[1])
@@ -773,6 +780,8 @@ def _cue(store: EngramStore, scope: dict[str, str], now: datetime, index: Any) -
             )
         if summary["last_failure"]:
             seen += f"; the last failure: {summary['last_failure']}"
+        if too_short:
+            seen += f"; {too_short}"
     result: dict[str, Any] = {"seen": seen, **summary}
     failed = {kind: n for kind, n in summary["failures_by_kind"].items() if kind not in _JUDGES_OWN}
     failures = sum(failed.values())

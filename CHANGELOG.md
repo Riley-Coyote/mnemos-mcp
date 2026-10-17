@@ -19,6 +19,14 @@ Replayed on the same calls, rows showed the fact for 41 of the 42 facts recall
 reached, and at 15 rows the right memory came back for 59 and showed for 57.
 Handoffs, the journal and notes keep their 300-character rows.
 
+### The cue counts the messages too short to look at
+
+A message with fewer than four meaningful words gets nothing from the cue: on
+so few words a match is mostly chance, and most are "yes" or "go ahead". The
+skip left no trace, so nothing could say why such a message got nothing. Now
+each one is counted in the session's file, apart from the messages the cue
+looked at, and the health card's cue line says how many there were.
+
 ### A clean way out
 
 Setup writes hooks into Claude Code's settings and Codex's hooks, registers

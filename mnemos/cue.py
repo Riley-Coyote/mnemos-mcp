@@ -415,7 +415,7 @@ class SeenFile:
     def read(self) -> dict[str, Any]:
         empty = {"shown": [], "texts": [], "offered": 0, "offers": [], "answers": {},
                  "silences": 0, "failures": 0, "last_failure": None,
-                 "failure_kinds": {}, "failure_times": {}, "words_because": {}}
+                 "failure_kinds": {}, "failure_times": {}, "words_because": {}, "short": 0}
         if not self.session:
             return empty
         try:
@@ -438,6 +438,7 @@ class SeenFile:
             "failure_kinds": _counts_of(data.get("failure_kinds")),
             "failure_times": _times_of(data.get("failure_times")),
             "words_because": _counts_of(data.get("words_because")),
+            "short": _count_of(data.get("short")),
         }
 
     def record(
@@ -449,6 +450,7 @@ class SeenFile:
         answered: str | None = None,
         failure: str | None = None,
         because: str | None = None,
+        short: bool = False,
     ) -> None:
         """Add what was just shown. An offer (the cue's) is also counted.
 
@@ -457,7 +459,8 @@ class SeenFile:
         says why a message answered by words wasn't answered by meaning.
         ``failure`` is the kind of failure that kept the cue from answering one
         (``timeout``, ``busy``, ``error (<Name>)``, or its judge's); a failure
-        is not a silence."""
+        is not a silence. ``short`` counts a message under ``CUE_MIN_WORDS``,
+        which the cue doesn't look at: neither a silence nor a failure."""
         if not self.session:
             return
         folder = ensure_run_dir()
@@ -470,6 +473,7 @@ class SeenFile:
         silences, failures, last_failure = data["silences"], data["failures"], data["last_failure"]
         kinds, words_because = dict(data["failure_kinds"]), dict(data["words_because"])
         times = dict(data["failure_times"])
+        too_short = data["short"] + (1 if short else 0)
         if offer is not None:
             offers = [*offers, dict(offer)][-OFFERS_KEPT:]
             offered += len(offer.get("ids") or [])
@@ -502,6 +506,7 @@ class SeenFile:
             "failure_kinds": kinds,
             "failure_times": times,
             "words_because": words_because,
+            "short": too_short,
             "updated": datetime.now(timezone.utc).isoformat(),
         })
         sweep(folder)
@@ -585,13 +590,15 @@ def offered_summary(*, days: float = RUN_DAYS, key: str | None = None) -> dict[s
     ``by_via``, the lines offered the same way; ``words_because``, why those
     answered by words weren't by meaning; and ``failures``, the messages it
     could not answer, by kind in ``failures_by_kind``, with ``last_failure``,
-    the newest one's. A file written before messages were counted gives its
-    offers only; one written before failures were counted by kind gives its
-    newest under its reason and the rest as ``not named``."""
+    the newest one's; and ``short``, the messages under ``CUE_MIN_WORDS`` it
+    didn't look at, which are none of those. A file written before messages
+    were counted gives its offers only; one written before failures were
+    counted by kind gives its newest under its reason and the rest as ``not
+    named``."""
     summary: dict[str, Any] = {
         "sessions": 0, "messages": 0, "offers": 0, "offered": 0, "silences": 0,
         "failures": 0, "last_failure": None, "answered_by": {}, "by_via": {},
-        "failures_by_kind": {}, "words_because": {},
+        "failures_by_kind": {}, "words_because": {}, "short": 0,
     }
     cutoff = time.time() - days * 86400
     suffix = f"-{key}.json" if key else ".json"
@@ -619,9 +626,11 @@ def offered_summary(*, days: float = RUN_DAYS, key: str | None = None) -> dict[s
                 answers[via] = answers.get(via, 0) + 1
         answers = {str(via): _count_of(n) for via, n in answers.items()}
         silences, failures = _count_of(data.get("silences")), _count_of(data.get("failures"))
-        if not offers and not failures and not sum(answers.values()):
+        short = _count_of(data.get("short"))
+        if not offers and not failures and not sum(answers.values()) and not short:
             continue  # only what a briefing showed: the cue never answered here
         summary["sessions"] += 1
+        summary["short"] += short
         summary["offered"] += _count_of(data.get("offered"))
         summary["offers"] += len(offers)
         summary["silences"] += silences
@@ -1479,14 +1488,20 @@ def prompt_hook(
     text = payload.get("prompt")
     if not isinstance(text, str) or generated_notice(text):
         return ""  # nothing to answer, or a notice: not the person's words
-    if len(meaningful_words(text)) < CUE_MIN_WORDS:
-        return ""
     db = Path(db_path).expanduser()
     if not db.is_file():
         return ""
     key = scope_key(str(db), agent_id, person_id, project_scope)
     session = clean_session_id(payload.get("session_id")) or clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
     seen_file = SeenFile(session, key)
+    if len(meaningful_words(text)) < CUE_MIN_WORDS:
+        # Too short to look at ("yes", "go ahead"): counted, so the card can
+        # say why it got nothing (L18). Counting never stops the prompt.
+        try:
+            seen_file.record((), short=True)
+        except Exception:
+            pass
+        return ""
     seen = seen_file.read()
     # Jev decides (WP-R16b), when the switch is on and there is a key.
     judged = jev.in_use(env)
