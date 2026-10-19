@@ -2,6 +2,36 @@
 
 ## 0.4.1 (unreleased)
 
+### A failed save leaves nothing behind
+
+Most of the store's writes committed when they finished and never rolled
+back. When one of their statements failed (a full disk, a lock, a
+constraint), the transaction Python had opened for it stayed open on the
+store's connection, holding the write lock. No other process could write;
+the next write that began its own transaction failed with "cannot start a
+transaction within a transaction", so a running server could refuse saves
+until it restarted; and the next write that did not committed the failed
+write's first statements with its own. On a scratch store, with one
+statement made to fail, a memory being archived kept its archive row while it
+stayed active, a note being replaced left two notes in use, and a failed
+vector write left the store locked against every other writer.
+
+Now every write the store makes runs in one transaction that commits, or
+rolls back before the error reaches its caller, and a write made of others (a
+note's replacement and the retiring of the old one) lands whole or not at
+all. So do the writes maintenance and reflection make on the store's
+connection themselves (a plain question set aside for a lesson's, a
+reaffirmation asked again, words kept on a question that stays open): one
+that met a lock used to leave the connection inside a transaction until some
+later write happened to commit it. Opening a store, and the meaning index's
+own writes, roll back the same way. Callers get the same results and the
+same errors as before; what changes is that a failed write leaves the
+connection clean and nothing of itself in the store. A write that finds the
+connection already inside a transaction it did not open now fails, rather
+than committing or discarding that transaction.
+
+No maintenance rule changed; the schema stays 18 and the code version 22.
+
 ### A saved capture never reports failure, and one maintenance cycle runs at a time
 
 A capture saves its memory and its note in one transaction, then does its

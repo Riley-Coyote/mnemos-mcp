@@ -1326,12 +1326,18 @@ class EmbeddingIndex:
         if conn is None:
             return False
 
-        conn.execute(
-            "INSERT OR REPLACE INTO embeddings "
-            "(engram_id, embedding, model_name, dims) VALUES (?, ?, ?, ?)",
-            (engram_id, self._to_bytes(values), self._embedder.model_name, len(values)),
-        )
-        conn.commit()
+        # Committed, or rolled back before it raises: a failed write left
+        # open would hold the store's write lock for every other writer.
+        try:
+            conn.execute(
+                "INSERT OR REPLACE INTO embeddings "
+                "(engram_id, embedding, model_name, dims) VALUES (?, ?, ?, ?)",
+                (engram_id, self._to_bytes(values), self._embedder.model_name, len(values)),
+            )
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         return True
 
     def search(
@@ -1850,6 +1856,9 @@ class EmbeddingIndex:
             )
             done["waiting"] += len(embedded)
             return done
+        except BaseException:
+            conn.rollback()
+            raise
         done.update(written)
         return done
 
@@ -1883,17 +1892,21 @@ class EmbeddingIndex:
             return 0
 
         count = 0
-        for (engram_id, _), values in zip(items, all_values):
-            if values is None or not _storable(values):
-                continue
-            conn.execute(
-                "INSERT OR REPLACE INTO embeddings "
-                "(engram_id, embedding, model_name, dims) VALUES (?, ?, ?, ?)",
-                (engram_id, self._to_bytes(values), self._embedder.model_name, len(values)),
-            )
-            count += 1
+        try:
+            for (engram_id, _), values in zip(items, all_values):
+                if values is None or not _storable(values):
+                    continue
+                conn.execute(
+                    "INSERT OR REPLACE INTO embeddings "
+                    "(engram_id, embedding, model_name, dims) VALUES (?, ?, ?, ?)",
+                    (engram_id, self._to_bytes(values), self._embedder.model_name, len(values)),
+                )
+                count += 1
 
-        conn.commit()
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
         return count
 
     def remove(self, engram_id: str) -> None:
@@ -1901,8 +1914,12 @@ class EmbeddingIndex:
             return
         conn = self._get_conn()
         if conn:
-            conn.execute("DELETE FROM embeddings WHERE engram_id = ?", (engram_id,))
-            conn.commit()
+            try:
+                conn.execute("DELETE FROM embeddings WHERE engram_id = ?", (engram_id,))
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
 
     def count(self) -> int:
         conn = self._get_conn()

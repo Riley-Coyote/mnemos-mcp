@@ -684,6 +684,7 @@ def _pile(db: Path, count: int) -> list[str]:
                 "UPDATE hypomnema_entries SET created_at = ?, last_revised_at = ? WHERE id = ?",
                 (at, at, entry),
             )
+        store._get_conn().commit()
         # An identity report is a maintenance report of another kind: kept.
         identity = store.write_hypomnema_entry(
             "Identity divergence: the declared and the computed identity differ.", **SCOPE,

@@ -445,7 +445,7 @@ def _write(rt, model, created_at, n=1):
         )
         rt._store._get_conn().execute(
             "UPDATE hypomnema_entries SET created_at = ? WHERE id = ?", (created_at, entry))
-    rt._store._commit()
+        rt._store._commit()
 
 
 @pytest.mark.parametrize("model, line", [

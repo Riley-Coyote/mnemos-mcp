@@ -2985,16 +2985,16 @@ class MnemosRuntime:
             # A plain "what did this change?" may already be pending from
             # when the memory was captured. Now that it is actually fading,
             # the lesson question subsumes it — asking both is asking twice.
-            self._store._get_conn().execute(
-                """
-                DELETE FROM reflection_queue
-                WHERE target_id = ? AND kind = 'impact' AND answered_at IS NULL
-                  AND agent_id = ? AND person_id = ? AND project_scope = ?
-                """,
-                (engram_id, self.scope.agent_id, self.scope.person_id,
-                 self.scope.project_scope),
-            )
-            self._store._commit()
+            with self._store.transaction() as conn:
+                conn.execute(
+                    """
+                    DELETE FROM reflection_queue
+                    WHERE target_id = ? AND kind = 'impact' AND answered_at IS NULL
+                      AND agent_id = ? AND person_id = ? AND project_scope = ?
+                    """,
+                    (engram_id, self.scope.agent_id, self.scope.person_id,
+                     self.scope.project_scope),
+                )
             if self._store.enqueue_reflection(
                 "lesson",
                 engram_id,
@@ -3254,15 +3254,15 @@ class MnemosRuntime:
                 ).fetchone()[0]
                 if others:
                     continue
-                conn.execute(
-                    "UPDATE reflection_queue SET prompt = ?, created_at = ?, "
-                    "expires_at = ?, surfaced_count = 0, for_model = ? "
-                    "WHERE id = ? AND answered_at IS NULL",
-                    (prompt, now.isoformat(),
-                     (now + timedelta(days=_REAFFIRM_AFTER_DAYS)).isoformat(),
-                     model_line(belief.author_model), waiting["id"]),
-                )
-                self._store._commit()
+                with self._store.transaction() as conn:
+                    conn.execute(
+                        "UPDATE reflection_queue SET prompt = ?, created_at = ?, "
+                        "expires_at = ?, surfaced_count = 0, for_model = ? "
+                        "WHERE id = ? AND answered_at IS NULL",
+                        (prompt, now.isoformat(),
+                         (now + timedelta(days=_REAFFIRM_AFTER_DAYS)).isoformat(),
+                         model_line(belief.author_model), waiting["id"]),
+                    )
                 return 1
             if target in already:
                 continue  # another question waits on this memory
@@ -3534,11 +3534,11 @@ class MnemosRuntime:
         showings unchanged, and an answer with a verdict later replaces them.
         """
         assert self._store is not None
-        self._store._get_conn().execute(
-            "UPDATE reflection_queue SET answer = ? WHERE id = ? AND answered_at IS NULL",
-            (answer, ask["id"]),
-        )
-        self._store._commit()
+        with self._store.transaction() as conn:
+            conn.execute(
+                "UPDATE reflection_queue SET answer = ? WHERE id = ? AND answered_at IS NULL",
+                (answer, ask["id"]),
+            )
 
     def _keep_answer_open(
         self, ask: dict[str, Any], answer: str, verdict: str = "", *, author: str = "",

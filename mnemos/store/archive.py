@@ -25,7 +25,9 @@ def bulk_archive(
     engram_ids: list[str],
     reason: str = "batch_archive",
 ) -> dict[str, Any]:
-    """Archive multiple engrams in a single transaction.
+    """Archive multiple engrams, each in a transaction of its own
+    (``archive_engram``): a failure stops the loop, and the engrams archived
+    before it stay archived.
 
     Args:
         store: The engram store.

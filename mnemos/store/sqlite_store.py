@@ -1083,37 +1083,48 @@ class EngramStore:
         columns, `CREATE INDEX` raises at open time — so a bare `ALTER` after
         `executescript` never even runs. Adding the missing columns first lets
         the rest of the script (which is all `IF NOT EXISTS`) apply cleanly.
+
+        Schema setup is the one writer here that commits for itself rather
+        than through ``transaction()``: ``executescript`` commits any open
+        transaction before it runs, and each one-time migration takes its own
+        ``BEGIN IMMEDIATE``, so a second process opening the store waits and
+        looks again. What it has not committed when a step fails is rolled
+        back, so the connection is never left inside a transaction.
         """
         conn = self._get_conn()
-        self._backup_before_migration(conn)
-        self._reconcile_columns(conn)
-        self._rebuild_handoff_index(conn)
-        self._allow_reaffirm_asks(conn)
-        had_lived_days = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lived_days'"
-        ).fetchone() is not None
-        conn.executescript(SQL_CREATE_TABLES)
-        self._classify_legacy_hypomnema(conn)
-        self._backfill_engram_scopes(conn)
-        self._label_engram_authors(conn)
-        self._label_hermes_auto_writes(conn)
-        self._link_older_capture_pairs(conn)
-        if not had_lived_days:
-            self._backfill_lived_days(conn)
-        # Only ever raised. A store newer code has stamped keeps its version
-        # when older code opens it, as min_code_version does: stamping this
-        # code's version over it would tell the newer code its own migration
-        # never ran.
-        conn.execute(
-            "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-            (str(SCHEMA_VERSION),),
-        )
-        conn.execute(
-            "UPDATE meta SET value = ? "
-            "WHERE key = 'schema_version' AND CAST(value AS INTEGER) < ?",
-            (str(SCHEMA_VERSION), SCHEMA_VERSION),
-        )
-        self._commit()
+        try:
+            self._backup_before_migration(conn)
+            self._reconcile_columns(conn)
+            self._rebuild_handoff_index(conn)
+            self._allow_reaffirm_asks(conn)
+            had_lived_days = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lived_days'"
+            ).fetchone() is not None
+            conn.executescript(SQL_CREATE_TABLES)
+            self._classify_legacy_hypomnema(conn)
+            self._backfill_engram_scopes(conn)
+            self._label_engram_authors(conn)
+            self._label_hermes_auto_writes(conn)
+            self._link_older_capture_pairs(conn)
+            if not had_lived_days:
+                self._backfill_lived_days(conn)
+            # Only ever raised. A store newer code has stamped keeps its version
+            # when older code opens it, as min_code_version does: stamping this
+            # code's version over it would tell the newer code its own migration
+            # never ran.
+            conn.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
+                (str(SCHEMA_VERSION),),
+            )
+            conn.execute(
+                "UPDATE meta SET value = ? "
+                "WHERE key = 'schema_version' AND CAST(value AS INTEGER) < ?",
+                (str(SCHEMA_VERSION), SCHEMA_VERSION),
+            )
+            self._commit()
+        except BaseException:
+            self._rollback()
+            raise
         integrity = [
             row[0] for row in conn.execute("PRAGMA integrity_check").fetchall()
         ]
@@ -1622,10 +1633,14 @@ class EngramStore:
     def transaction(self):
         """Run all nested store writes in one immediate SQLite transaction.
 
-        Store methods historically committed their own small transactions.
-        While this context is active those commits are deferred to the outer
-        boundary. This is what lets a host mutation and its replay-ledger row
-        become durable together.
+        Every store write runs in one (schema setup aside: ``_init_db``). The
+        outermost block commits when it ends, and rolls back when anything
+        raised leaves it, an interrupt included (KeyboardInterrupt, SystemExit,
+        GeneratorExit), so a failed write never leaves the connection inside a
+        transaction, or the next write's commit holding half of it, and the
+        nesting count is always restored. Nested blocks join the outermost.
+        This is what lets a host mutation and its replay-ledger row become
+        durable together.
         """
 
         conn = self._get_conn()
@@ -1635,7 +1650,7 @@ class EngramStore:
         self._transaction_depth += 1
         try:
             yield conn
-        except Exception:
+        except BaseException:
             self._transaction_depth -= 1
             if outermost:
                 self._rollback()
@@ -1645,7 +1660,7 @@ class EngramStore:
             if outermost:
                 try:
                     self._commit()
-                except Exception:
+                except BaseException:
                     self._rollback()
                     raise
 
@@ -1761,7 +1776,6 @@ class EngramStore:
         by a later one: authorship is a fact of the writing, not something a
         pass that loads and saves a memory can restate.
         """
-        conn = self._get_conn()
         data = engram.to_dict()
 
         # Validate column names to prevent SQL injection
@@ -1773,9 +1787,7 @@ class EngramStore:
             if k != "id" and k not in _AUTHOR_COLUMNS
         )
 
-        try:
-            self._begin_immediate()
-
+        with self.transaction() as conn:
             before = conn.execute(
                 "SELECT content, impact, resolution FROM engrams WHERE id = ?",
                 (engram.id,),
@@ -1808,11 +1820,6 @@ class EngramStore:
             # a copy of a real store rewrote 29,379 version rows.
             self._append_versions_no_commit(conn, engram, changed=changed)
 
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
-
     def save_fading(self, engrams: Iterable[Engram]) -> int:
         """Write what a decay pass changes in each of ``engrams``: its
         accessibility, strength, stability and state, and nothing else, all
@@ -1830,18 +1837,12 @@ class EngramStore:
         ]
         if not rows:
             return 0
-        conn = self._get_conn()
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             conn.executemany(
                 "UPDATE engrams SET accessibility = ?, strength = ?, stability = ?, state = ? "
                 "WHERE id = ?",
                 rows,
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return len(rows)
 
     def engram_visible_in_scope(
@@ -2349,15 +2350,14 @@ class EngramStore:
 
     def delete_engram(self, engram_id: str) -> None:
         """Remove an engram (use archive_engram for soft delete)."""
-        conn = self._get_conn()
-        conn.execute("DELETE FROM engrams WHERE id = ?", (engram_id,))
-        conn.execute("DELETE FROM engrams_fts WHERE id = ?", (engram_id,))
-        conn.execute(
-            "DELETE FROM connections WHERE source_id = ? OR target_id = ?",
-            (engram_id, engram_id),
-        )
-        conn.execute("DELETE FROM versions WHERE engram_id = ?", (engram_id,))
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM engrams WHERE id = ?", (engram_id,))
+            conn.execute("DELETE FROM engrams_fts WHERE id = ?", (engram_id,))
+            conn.execute(
+                "DELETE FROM connections WHERE source_id = ? OR target_id = ?",
+                (engram_id, engram_id),
+            )
+            conn.execute("DELETE FROM versions WHERE engram_id = ?", (engram_id,))
 
     def count_engrams(self, agent_id: str | None = "default", state: str = "active") -> int:
         """Count engrams for an agent in a given state.
@@ -2427,9 +2427,8 @@ class EngramStore:
 
     def save_connection(self, source_id: str, conn_obj: Connection) -> None:
         """Save a typed connection (with auto-commit)."""
-        conn = self._get_conn()
-        self._save_connection_no_commit(conn, source_id, conn_obj)
-        self._commit()
+        with self.transaction() as conn:
+            self._save_connection_no_commit(conn, source_id, conn_obj)
 
     def _save_connection_no_commit(
         self, conn: sqlite3.Connection, source_id: str, conn_obj: Connection
@@ -2488,46 +2487,40 @@ class EngramStore:
 
     def update_connection(self, source_id: str, connection) -> None:
         """Update an existing connection's relation, strength, or formed_by."""
-        self._conn.execute(
-            """UPDATE connections
-               SET relation = ?, strength = ?, formed_by = ?
-               WHERE source_id = ? AND target_id = ?""",
-            (
-                connection.relation.value if hasattr(connection.relation, 'value') else str(connection.relation),
-                connection.strength,
-                connection.formed_by,
-                source_id,
-                connection.target_id,
-            ),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """UPDATE connections
+                   SET relation = ?, strength = ?, formed_by = ?
+                   WHERE source_id = ? AND target_id = ?""",
+                (
+                    connection.relation.value if hasattr(connection.relation, 'value') else str(connection.relation),
+                    connection.strength,
+                    connection.formed_by,
+                    source_id,
+                    connection.target_id,
+                ),
+            )
 
     def remove_connections(self, keys: list[tuple[str, str, str]]) -> int:
         """Remove exactly these connections, each named by (source, target, relation),
         in one transaction. Other relations between the same two engrams stay.
         Returns how many rows went."""
-        conn = self._get_conn()
         removed = 0
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             for source_id, target_id, relation in keys:
                 removed += conn.execute(
                     "DELETE FROM connections WHERE source_id = ? AND target_id = ? AND relation = ?",
                     (source_id, target_id, relation),
                 ).rowcount
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return removed
 
     def remove_connection(self, source_id: str, target_id: str) -> None:
         """Remove a connection between two engrams."""
-        self._conn.execute(
-            "DELETE FROM connections WHERE source_id = ? AND target_id = ?",
-            (source_id, target_id),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "DELETE FROM connections WHERE source_id = ? AND target_id = ?",
+                (source_id, target_id),
+            )
 
     def get_recent_engrams(
         self,
@@ -2618,15 +2611,9 @@ class EngramStore:
 
     def _save_version(self, engram_id: str, version: VersionRef) -> None:
         """Append a version snapshot (with auto-commit)."""
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             version.version_num = self._next_version_num(conn, engram_id)
             self._save_version_no_commit(conn, engram_id, version)
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
 
     def _next_version_num(self, conn: sqlite3.Connection, engram_id: str) -> int:
         row = conn.execute(
@@ -2748,18 +2735,12 @@ class EngramStore:
     def remove_versions(self, keys: list[tuple[str, int]]) -> int:
         """Delete these version rows (engram id, version number), and only
         these. Returns how many went. Used only by ``mnemos repair-versions``."""
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             cursor = conn.executemany(
                 "DELETE FROM versions WHERE engram_id = ? AND version_num = ?",
                 keys,
             )
             removed = cursor.rowcount
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return max(0, removed)
 
     # ── Returns ──
@@ -2768,18 +2749,12 @@ class EngramStore:
         """Record that ``session_id`` reinforces this memory now; False if it
         already has. Run it in the transaction that writes the reinforcement,
         so two processes of one session cannot both reinforce."""
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 "INSERT OR IGNORE INTO session_reinforcements "
                 "(session_id, engram_id, reinforced_at) VALUES (?, ?, ?)",
                 (session_id, engram_id, _utc_now()),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return cursor.rowcount == 1
 
     def record_return(self, engram: Engram, links: list[Connection]) -> None:
@@ -2799,9 +2774,7 @@ class EngramStore:
         """
         if engram.state == "dormant":
             engram.state = "active"
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             conn.execute(
                 "UPDATE engrams SET access_count = ?, last_accessed = ?, "
                 "reconsolidation_count = ?, strength = ?, stability = ?, "
@@ -2820,45 +2793,40 @@ class EngramStore:
             )
             for link in links:
                 self._save_connection_no_commit(conn, engram.id, link)
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
 
     # ── Archive ──
 
     def archive_engram(self, engram: Engram, reason: str = "low_accessibility") -> None:
         """Move engram to cold storage."""
-        conn = self._get_conn()
         from datetime import datetime, timezone
 
-        conn.execute(
-            "INSERT OR REPLACE INTO archive "
-            "(id, content, content_at_encoding, kind, tags, "
-            "archived_at, archive_reason, final_accessibility) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                engram.id,
-                engram.content,
-                engram.content_at_encoding,
-                engram.kind,
-                json.dumps(engram.tags),
-                datetime.now(timezone.utc).isoformat(),
-                reason,
-                engram.accessibility,
-            ),
-        )
-        # Remove from active tables
-        conn.execute("UPDATE engrams SET state = 'archived' WHERE id = ?", (engram.id,))
-        conn.execute("DELETE FROM engrams_fts WHERE id = ?", (engram.id,))
-        # An unanswered reflection request about an archived memory is a dead
-        # end, and pre-fix rows carry a frozen copy of its text. Every path
-        # that forgets something ends here, so this is where the request goes.
-        conn.execute(
-            "DELETE FROM reflection_queue WHERE target_id = ? AND answered_at IS NULL",
-            (engram.id,),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO archive "
+                "(id, content, content_at_encoding, kind, tags, "
+                "archived_at, archive_reason, final_accessibility) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    engram.id,
+                    engram.content,
+                    engram.content_at_encoding,
+                    engram.kind,
+                    json.dumps(engram.tags),
+                    datetime.now(timezone.utc).isoformat(),
+                    reason,
+                    engram.accessibility,
+                ),
+            )
+            # Remove from active tables
+            conn.execute("UPDATE engrams SET state = 'archived' WHERE id = ?", (engram.id,))
+            conn.execute("DELETE FROM engrams_fts WHERE id = ?", (engram.id,))
+            # An unanswered reflection request about an archived memory is a dead
+            # end, and pre-fix rows carry a frozen copy of its text. Every path
+            # that forgets something ends here, so this is where the request goes.
+            conn.execute(
+                "DELETE FROM reflection_queue WHERE target_id = ? AND answered_at IS NULL",
+                (engram.id,),
+            )
 
     def search_archive(self, query: str, limit: int = 20) -> list[dict]:
         """Search archived engrams by content (for resharpen)."""
@@ -2940,7 +2908,6 @@ class EngramStore:
 
     def save_belief(self, belief: Belief) -> None:
         """Insert or update a belief."""
-        conn = self._get_conn()
         data = belief.to_dict()
 
         # Validate column names
@@ -2949,12 +2916,12 @@ class EngramStore:
         placeholders = ", ".join("?" for _ in safe_data)
         updates = ", ".join(f"{k}=excluded.{k}" for k in safe_data if k != "id")
 
-        conn.execute(
-            f"INSERT INTO beliefs ({columns}) VALUES ({placeholders}) "
-            f"ON CONFLICT(id) DO UPDATE SET {updates}",
-            list(safe_data.values()),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                f"INSERT INTO beliefs ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(id) DO UPDATE SET {updates}",
+                list(safe_data.values()),
+            )
 
     def get_beliefs(
         self,
@@ -3035,38 +3002,37 @@ class EngramStore:
         """Start or reopen a functional memory session."""
         now = _utc_now()
         sid = (session_id or "").strip() or _new_id()
-        conn = self._get_conn()
-        conn.execute(
-            """
-            INSERT INTO memory_sessions(
-                id, agent_id, person_id, project_scope, title, source,
-                status, created_at, updated_at, closed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
-            ON CONFLICT(id) DO UPDATE SET
-                agent_id = excluded.agent_id,
-                person_id = excluded.person_id,
-                project_scope = excluded.project_scope,
-                title = CASE
-                    WHEN excluded.title != '' THEN excluded.title
-                    ELSE memory_sessions.title
-                END,
-                source = excluded.source,
-                status = 'active',
-                updated_at = excluded.updated_at,
-                closed_at = NULL
-            """,
-            (
-                sid,
-                agent_id,
-                person_id,
-                project_scope,
-                title.strip(),
-                source.strip() or "mcp",
-                now,
-                now,
-            ),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO memory_sessions(
+                    id, agent_id, person_id, project_scope, title, source,
+                    status, created_at, updated_at, closed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, NULL)
+                ON CONFLICT(id) DO UPDATE SET
+                    agent_id = excluded.agent_id,
+                    person_id = excluded.person_id,
+                    project_scope = excluded.project_scope,
+                    title = CASE
+                        WHEN excluded.title != '' THEN excluded.title
+                        ELSE memory_sessions.title
+                    END,
+                    source = excluded.source,
+                    status = 'active',
+                    updated_at = excluded.updated_at,
+                    closed_at = NULL
+                """,
+                (
+                    sid,
+                    agent_id,
+                    person_id,
+                    project_scope,
+                    title.strip(),
+                    source.strip() or "mcp",
+                    now,
+                    now,
+                ),
+            )
         session = self.get_memory_session(sid)
         if session is None:
             raise RuntimeError(f"Failed to start memory session: {sid}")
@@ -3091,16 +3057,15 @@ class EngramStore:
             raise ValueError(f"Unsupported session status: {status}")
         now = _utc_now()
         closed_at = now if status == "closed" else None
-        conn = self._get_conn()
-        conn.execute(
-            """
-            UPDATE memory_sessions
-            SET status = ?, updated_at = ?, closed_at = ?
-            WHERE id = ?
-            """,
-            (status, now, closed_at, session_id),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE memory_sessions
+                SET status = ?, updated_at = ?, closed_at = ?
+                WHERE id = ?
+                """,
+                (status, now, closed_at, session_id),
+            )
         return self.get_memory_session(session_id)
 
     def write_functional_memory(
@@ -3135,67 +3100,66 @@ class EngramStore:
         now = _utc_now()
         fid = (memory_id or "").strip() or _new_id()
         session = (session_id or "").strip() or None
-        conn = self._get_conn()
-        if session and self.get_memory_session(session) is None:
-            self.start_memory_session(
-                session_id=session,
-                agent_id=agent_id,
-                person_id=person_id,
-                project_scope=project_scope,
-                title="Recovered session",
-                source=source,
-            )
+        with self.transaction() as conn:
+            if session and self.get_memory_session(session) is None:
+                self.start_memory_session(
+                    session_id=session,
+                    agent_id=agent_id,
+                    person_id=person_id,
+                    project_scope=project_scope,
+                    title="Recovered session",
+                    source=source,
+                )
 
-        conn.execute(
-            """
-            INSERT INTO functional_memories(
-                id, session_id, agent_id, person_id, project_scope, content,
-                memory_type, confidence, salience, needs_confirmation, pinned,
-                source, metadata_json, created_at, updated_at, expires_at,
-                is_deleted
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
-            ON CONFLICT(id) DO UPDATE SET
-                session_id = excluded.session_id,
-                agent_id = excluded.agent_id,
-                person_id = excluded.person_id,
-                project_scope = excluded.project_scope,
-                content = excluded.content,
-                memory_type = excluded.memory_type,
-                confidence = excluded.confidence,
-                salience = excluded.salience,
-                needs_confirmation = excluded.needs_confirmation,
-                pinned = excluded.pinned,
-                source = excluded.source,
-                metadata_json = excluded.metadata_json,
-                updated_at = excluded.updated_at,
-                expires_at = excluded.expires_at,
-                is_deleted = 0
-            """,
-            (
-                fid,
-                session,
-                agent_id,
-                person_id,
-                project_scope,
-                content.strip(),
-                memory_type,
-                _clamp(confidence),
-                _clamp(salience),
-                int(needs_confirmation),
-                int(pinned),
-                source.strip() or "agent_observed",
-                _encode_json(metadata or {}),
-                now,
-                now,
-                expires_at,
-            ),
-        )
-        if session:
             conn.execute(
-                "UPDATE memory_sessions SET updated_at = ? WHERE id = ?",
-                (now, session),
+                """
+                INSERT INTO functional_memories(
+                    id, session_id, agent_id, person_id, project_scope, content,
+                    memory_type, confidence, salience, needs_confirmation, pinned,
+                    source, metadata_json, created_at, updated_at, expires_at,
+                    is_deleted
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                ON CONFLICT(id) DO UPDATE SET
+                    session_id = excluded.session_id,
+                    agent_id = excluded.agent_id,
+                    person_id = excluded.person_id,
+                    project_scope = excluded.project_scope,
+                    content = excluded.content,
+                    memory_type = excluded.memory_type,
+                    confidence = excluded.confidence,
+                    salience = excluded.salience,
+                    needs_confirmation = excluded.needs_confirmation,
+                    pinned = excluded.pinned,
+                    source = excluded.source,
+                    metadata_json = excluded.metadata_json,
+                    updated_at = excluded.updated_at,
+                    expires_at = excluded.expires_at,
+                    is_deleted = 0
+                """,
+                (
+                    fid,
+                    session,
+                    agent_id,
+                    person_id,
+                    project_scope,
+                    content.strip(),
+                    memory_type,
+                    _clamp(confidence),
+                    _clamp(salience),
+                    int(needs_confirmation),
+                    int(pinned),
+                    source.strip() or "agent_observed",
+                    _encode_json(metadata or {}),
+                    now,
+                    now,
+                    expires_at,
+                ),
             )
-        self._commit()
+            if session:
+                conn.execute(
+                    "UPDATE memory_sessions SET updated_at = ? WHERE id = ?",
+                    (now, session),
+                )
         row = conn.execute(
             "SELECT * FROM functional_memories WHERE id = ?",
             (fid,),
@@ -3323,45 +3287,44 @@ class EngramStore:
         )
         salience = max((float(m["salience"]) for m in memories), default=0.45)
         hypomnema_id = None
-        if memories or synthesis.strip():
-            hypomnema_id = self.write_hypomnema_entry(
-                content,
-                agent_id=agent_id,
-                person_id=person_id,
-                project_scope=project_scope,
-                source="synthesized",
-                authored_by="agent" if synthesis.strip() else "system",
-                author_id=agent_id if synthesis.strip() else "mnemos",
-                density=0.72,
-                domain="situational",
-                tags=["session-close", "functional-memory", project_scope],
-                confidence=confidence,
-                salience=salience,
-                related_session_id=session_id,
-            )
+        with self.transaction() as conn:
+            if memories or synthesis.strip():
+                hypomnema_id = self.write_hypomnema_entry(
+                    content,
+                    agent_id=agent_id,
+                    person_id=person_id,
+                    project_scope=project_scope,
+                    source="synthesized",
+                    authored_by="agent" if synthesis.strip() else "system",
+                    author_id=agent_id if synthesis.strip() else "mnemos",
+                    density=0.72,
+                    domain="situational",
+                    tags=["session-close", "functional-memory", project_scope],
+                    confidence=confidence,
+                    salience=salience,
+                    related_session_id=session_id,
+                )
 
-        now = _utc_now()
-        conn = self._get_conn()
-        if hypomnema_id:
+            now = _utc_now()
+            if hypomnema_id:
+                conn.execute(
+                    """
+                    UPDATE functional_memories
+                    SET is_deleted = 1,
+                        promoted_to_hypomnema_id = ?,
+                        updated_at = ?
+                    WHERE session_id = ? AND is_deleted = 0
+                    """,
+                    (hypomnema_id, now, session_id),
+                )
             conn.execute(
                 """
-                UPDATE functional_memories
-                SET is_deleted = 1,
-                    promoted_to_hypomnema_id = ?,
-                    updated_at = ?
-                WHERE session_id = ? AND is_deleted = 0
+                UPDATE memory_sessions
+                SET status = 'closed', updated_at = ?, closed_at = ?
+                WHERE id = ?
                 """,
-                (hypomnema_id, now, session_id),
+                (now, now, session_id),
             )
-        conn.execute(
-            """
-            UPDATE memory_sessions
-            SET status = 'closed', updated_at = ?, closed_at = ?
-            WHERE id = ?
-            """,
-            (now, now, session_id),
-        )
-        self._commit()
         return {
             "session": self.get_memory_session(session_id),
             "hypomnema_id": hypomnema_id,
@@ -3478,42 +3441,41 @@ class EngramStore:
 
         now = _utc_now()
         entry_id = _new_id()
-        conn = self._get_conn()
-        conn.execute(
-            """
-            INSERT INTO hypomnema_entries(
-                id, agent_id, person_id, project_scope, content,
-                entry_kind, authored_by, author_id, author_model, author_session,
-                source, density, domain, tags_json, confidence, salience,
-                active, foundational, revision_count, revisions_json,
-                related_session_id, related_engram_id, created_at, last_revised_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '[]', ?, ?, ?, ?)
-            """,
-            (
-                entry_id,
-                agent_id,
-                person_id,
-                project_scope,
-                content.strip(),
-                entry_kind,
-                authored_by,
-                author_id.strip(),
-                (author_model or "").strip(),
-                (author_session or "").strip(),
-                source,
-                _clamp(density),
-                domain,
-                _encode_json(_split_tags(tags)),
-                _clamp(confidence),
-                _clamp(salience),
-                int(foundational),
-                related_session_id,
-                related_engram_id,
-                now,
-                now,
-            ),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO hypomnema_entries(
+                    id, agent_id, person_id, project_scope, content,
+                    entry_kind, authored_by, author_id, author_model, author_session,
+                    source, density, domain, tags_json, confidence, salience,
+                    active, foundational, revision_count, revisions_json,
+                    related_session_id, related_engram_id, created_at, last_revised_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '[]', ?, ?, ?, ?)
+                """,
+                (
+                    entry_id,
+                    agent_id,
+                    person_id,
+                    project_scope,
+                    content.strip(),
+                    entry_kind,
+                    authored_by,
+                    author_id.strip(),
+                    (author_model or "").strip(),
+                    (author_session or "").strip(),
+                    source,
+                    _clamp(density),
+                    domain,
+                    _encode_json(_split_tags(tags)),
+                    _clamp(confidence),
+                    _clamp(salience),
+                    int(foundational),
+                    related_session_id,
+                    related_engram_id,
+                    now,
+                    now,
+                ),
+            )
         return entry_id
 
     def write_handoff(
@@ -3554,11 +3516,9 @@ class EngramStore:
             raise ValueError("Handoff text cannot be empty")
 
         session = (author_session or "").strip()
-        conn = self._get_conn()
         new_id = _new_id()
         now = _utc_now()
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             prior = conn.execute(
                 """
                 SELECT * FROM hypomnema_entries
@@ -3652,10 +3612,6 @@ class EngramStore:
                     """,
                     (_encode_json(revisions), now, row["id"]),
                 )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return new_id
 
     def get_latest_handoff(
@@ -3830,16 +3786,16 @@ class EngramStore:
     ) -> bool:
         """Record a real delivery of the currently active scoped handoff."""
 
-        cursor = self._get_conn().execute(
-            """
-            UPDATE hypomnema_entries
-            SET last_surfaced_at = ?, surface_count = surface_count + 1
-            WHERE id = ? AND agent_id = ? AND person_id = ? AND project_scope = ?
-              AND entry_kind = 'handoff' AND active = 1
-            """,
-            (_utc_now(), handoff_id, agent_id, person_id, project_scope),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE hypomnema_entries
+                SET last_surfaced_at = ?, surface_count = surface_count + 1
+                WHERE id = ? AND agent_id = ? AND person_id = ? AND project_scope = ?
+                  AND entry_kind = 'handoff' AND active = 1
+                """,
+                (_utc_now(), handoff_id, agent_id, person_id, project_scope),
+            )
         return cursor.rowcount == 1
 
     def get_hypomnema_entry(
@@ -4056,36 +4012,36 @@ class EngramStore:
         if signer.strip() != (row["author_model"] or ""):
             revision["prior_author_model"] = row["author_model"] or ""
         revisions.append(revision)
-        conn.execute(
-            """
-            UPDATE hypomnema_entries
-            SET content = ?,
-                confidence = ?,
-                salience = ?,
-                author_model = ?,
-                author_session = ?,
-                revision_count = revision_count + 1,
-                revisions_json = ?,
-                last_revised_at = ?
-            WHERE id = ?
-            """,
-            (
-                new_content.strip(),
-                _clamp(confidence if confidence is not None else row["confidence"]),
-                _clamp(salience if salience is not None else row["salience"]),
-                signer.strip(),
-                session.strip(),
-                _encode_json(revisions),
-                now,
-                entry_id,
-            ),
-        )
-        # Its passages were cut from the words it no longer holds: gone with
-        # them, in this transaction, so recall never finds it by its old
-        # meaning. It waits to be indexed again, and a correction re-indexes
-        # it at once when it can (MnemosRuntime._correct_other_note).
-        conn.execute("DELETE FROM passage_vectors WHERE item_id = ?", (entry_id,))
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE hypomnema_entries
+                SET content = ?,
+                    confidence = ?,
+                    salience = ?,
+                    author_model = ?,
+                    author_session = ?,
+                    revision_count = revision_count + 1,
+                    revisions_json = ?,
+                    last_revised_at = ?
+                WHERE id = ?
+                """,
+                (
+                    new_content.strip(),
+                    _clamp(confidence if confidence is not None else row["confidence"]),
+                    _clamp(salience if salience is not None else row["salience"]),
+                    signer.strip(),
+                    session.strip(),
+                    _encode_json(revisions),
+                    now,
+                    entry_id,
+                ),
+            )
+            # Its passages were cut from the words it no longer holds: gone with
+            # them, in this transaction, so recall never finds it by its old
+            # meaning. It waits to be indexed again, and a correction re-indexes
+            # it at once when it can (MnemosRuntime._correct_other_note).
+            conn.execute("DELETE FROM passage_vectors WHERE item_id = ?", (entry_id,))
         return entry_id
 
     def supersede_hypomnema_entry(
@@ -4115,52 +4071,51 @@ class EngramStore:
         if row is None:
             raise KeyError(f"Active hypomnema entry not found for scope: {entry_id}")
 
-        new_id = self.write_hypomnema_entry(
-            new_content,
-            agent_id=agent_id,
-            person_id=person_id,
-            project_scope=project_scope,
-            source=row["source"],
-            entry_kind=row["entry_kind"],
-            authored_by=row["authored_by"],
-            author_id=row["author_id"],
-            author_model=row.get("author_model", "") if author_model is None else author_model,
-            author_session=(
-                row.get("author_session", "") if author_session is None else author_session
-            ),
-            density=row["density"],
-            domain=row["domain"],
-            tags=row["tags"],
-            confidence=row["confidence"],
-            salience=row["salience"],
-            foundational=row["foundational"],
-            related_session_id=row["related_session_id"],
-            related_engram_id=row["related_engram_id"],
-        )
+        with self.transaction() as conn:
+            new_id = self.write_hypomnema_entry(
+                new_content,
+                agent_id=agent_id,
+                person_id=person_id,
+                project_scope=project_scope,
+                source=row["source"],
+                entry_kind=row["entry_kind"],
+                authored_by=row["authored_by"],
+                author_id=row["author_id"],
+                author_model=row.get("author_model", "") if author_model is None else author_model,
+                author_session=(
+                    row.get("author_session", "") if author_session is None else author_session
+                ),
+                density=row["density"],
+                domain=row["domain"],
+                tags=row["tags"],
+                confidence=row["confidence"],
+                salience=row["salience"],
+                foundational=row["foundational"],
+                related_session_id=row["related_session_id"],
+                related_engram_id=row["related_engram_id"],
+            )
 
-        now = _utc_now()
-        revisions = list(row["revisions"])
-        revisions.append(
-            {
-                "at": now,
-                "prior_content": row["content"],
-                "reason": f"superseded: {reason.strip()}",
-            }
-        )
-        conn = self._get_conn()
-        conn.execute(
-            """
-            UPDATE hypomnema_entries
-            SET active = 0,
-                superseded_by = ?,
-                revision_count = revision_count + 1,
-                revisions_json = ?,
-                last_revised_at = ?
-            WHERE id = ?
-            """,
-            (new_id, _encode_json(revisions), now, entry_id),
-        )
-        self._commit()
+            now = _utc_now()
+            revisions = list(row["revisions"])
+            revisions.append(
+                {
+                    "at": now,
+                    "prior_content": row["content"],
+                    "reason": f"superseded: {reason.strip()}",
+                }
+            )
+            conn.execute(
+                """
+                UPDATE hypomnema_entries
+                SET active = 0,
+                    superseded_by = ?,
+                    revision_count = revision_count + 1,
+                    revisions_json = ?,
+                    last_revised_at = ?
+                WHERE id = ?
+                """,
+                (new_id, _encode_json(revisions), now, entry_id),
+            )
         return new_id
 
     def archive_hypomnema_entry(
@@ -4204,29 +4159,27 @@ class EngramStore:
         if (author_session or "").strip():
             revision["revised_by_session"] = author_session.strip()
         revisions.append(revision)
-        conn = self._get_conn()
-        conn.execute(
-            """
-            UPDATE hypomnema_entries
-            SET active = 0,
-                revision_count = revision_count + 1,
-                revisions_json = ?,
-                last_revised_at = ?
-            WHERE id = ?
-            """,
-            (_encode_json(revisions), now, entry_id),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE hypomnema_entries
+                SET active = 0,
+                    revision_count = revision_count + 1,
+                    revisions_json = ?,
+                    last_revised_at = ?
+                WHERE id = ?
+                """,
+                (_encode_json(revisions), now, entry_id),
+            )
         return entry_id
 
     def mark_hypomnema_promoted(self, entry_id: str, engram_id: str) -> None:
         """Record that a hypomnema entry graduated into a Mnemos engram."""
-        conn = self._get_conn()
-        conn.execute(
-            "UPDATE hypomnema_entries SET graduated_to_engram_id = ? WHERE id = ?",
-            (engram_id, entry_id),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE hypomnema_entries SET graduated_to_engram_id = ? WHERE id = ?",
+                (engram_id, entry_id),
+            )
 
     # ── Capture pairs ──
     #
@@ -4518,9 +4471,7 @@ class EngramStore:
         signature keeps saying who made the mark in force and when.
         """
         value = 1 if standing else 0
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE engrams SET standing = ?, standing_by = ?, standing_session = ?, "
                 "standing_at = ? WHERE id = ? AND standing != ?",
@@ -4533,10 +4484,6 @@ class EngramStore:
                     value,
                 ),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return cursor.rowcount == 1
 
     def standing_engrams(
@@ -4700,24 +4647,23 @@ class EngramStore:
         self, state: EmotionalState, agent_id: str = "default"
     ) -> None:
         """Save an emotional state snapshot to history."""
-        conn = self._get_conn()
-        conn.execute(
-            "INSERT INTO emotional_state_history "
-            "(agent_id, curiosity, restlessness, warmth, clarity, "
-            "creative_flow, isolation, timestamp) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (
-                agent_id,
-                state.curiosity,
-                state.restlessness,
-                state.warmth,
-                state.clarity,
-                state.creative_flow,
-                state.isolation,
-                state.timestamp,
-            ),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO emotional_state_history "
+                "(agent_id, curiosity, restlessness, warmth, clarity, "
+                "creative_flow, isolation, timestamp) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    agent_id,
+                    state.curiosity,
+                    state.restlessness,
+                    state.warmth,
+                    state.clarity,
+                    state.creative_flow,
+                    state.isolation,
+                    state.timestamp,
+                ),
+            )
 
     def get_latest_emotional_state(
         self, agent_id: str = "default"
@@ -4776,25 +4722,22 @@ class EngramStore:
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(days=expires_in_days)).isoformat()
         entry_id = _new_id()
-        conn = self._get_conn()
         try:
-            conn.execute(
-                """
-                INSERT INTO reflection_queue(
-                    id, agent_id, person_id, project_scope, kind, target_id,
-                    prompt, excerpt, created_at, expires_at, for_model
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
-                """,
-                (entry_id, agent_id, person_id, project_scope, kind, target_id,
-                 prompt, now.isoformat(), expires, for_model),
-            )
-            self._commit()
+            with self.transaction() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO reflection_queue(
+                        id, agent_id, person_id, project_scope, kind, target_id,
+                        prompt, excerpt, created_at, expires_at, for_model
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, '', ?, ?, ?)
+                    """,
+                    (entry_id, agent_id, person_id, project_scope, kind, target_id,
+                     prompt, now.isoformat(), expires, for_model),
+                )
         except sqlite3.IntegrityError:
-            # Already asked. The failed INSERT leaves an open transaction, so
-            # it must be rolled back — otherwise the next write on this
-            # connection dies with "cannot start a transaction within a
-            # transaction", far from the cause.
-            self._rollback()
+            # Already asked. The refused INSERT wrote nothing, and the
+            # transaction opened for it was rolled back, so the next write on
+            # this connection finds it clean.
             return None
         return entry_id
 
@@ -4869,15 +4812,14 @@ class EngramStore:
 
         Returns the number of rows removed.
         """
-        conn = self._get_conn()
-        cur = conn.execute(
-            """
-            DELETE FROM reflection_queue
-            WHERE answered_at IS NULL
-              AND target_id NOT IN (SELECT id FROM engrams WHERE state != 'archived')
-            """
-        )
-        self._commit()
+        with self.transaction() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM reflection_queue
+                WHERE answered_at IS NULL
+                  AND target_id NOT IN (SELECT id FROM engrams WHERE state != 'archived')
+                """
+            )
         return cur.rowcount or 0
 
     def purge_retired_reflections(self) -> int:
@@ -4892,32 +4834,30 @@ class EngramStore:
         Returns the number of questions that stopped waiting.
         """
         kinds = ", ".join("?" for _ in RETIRED_REFLECTION_KINDS)
-        conn = self._get_conn()
-        closed = conn.execute(
-            f"""
-            UPDATE reflection_queue SET answered_at = ?
-            WHERE answered_at IS NULL AND kind IN ({kinds})
-              AND trim(COALESCE(answer, '')) != ''
-            """,
-            (datetime.now(timezone.utc).isoformat(), *RETIRED_REFLECTION_KINDS),
-        ).rowcount or 0
-        removed = conn.execute(
-            f"DELETE FROM reflection_queue WHERE answered_at IS NULL AND kind IN ({kinds})",
-            RETIRED_REFLECTION_KINDS,
-        ).rowcount or 0
-        self._commit()
+        with self.transaction() as conn:
+            closed = conn.execute(
+                f"""
+                UPDATE reflection_queue SET answered_at = ?
+                WHERE answered_at IS NULL AND kind IN ({kinds})
+                  AND trim(COALESCE(answer, '')) != ''
+                """,
+                (datetime.now(timezone.utc).isoformat(), *RETIRED_REFLECTION_KINDS),
+            ).rowcount or 0
+            removed = conn.execute(
+                f"DELETE FROM reflection_queue WHERE answered_at IS NULL AND kind IN ({kinds})",
+                RETIRED_REFLECTION_KINDS,
+            ).rowcount or 0
         return closed + removed
 
     def mark_reflections_surfaced(self, ids: list[str]) -> None:
         """Record that these were shown, so an ignored item eventually stops."""
         if not ids:
             return
-        conn = self._get_conn()
-        conn.executemany(
-            "UPDATE reflection_queue SET surfaced_count = surfaced_count + 1 WHERE id = ?",
-            [(i,) for i in ids],
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.executemany(
+                "UPDATE reflection_queue SET surfaced_count = surfaced_count + 1 WHERE id = ?",
+                [(i,) for i in ids],
+            )
 
     def answer_reflection(
         self,
@@ -4951,11 +4891,11 @@ class EngramStore:
             )
         if row is None:
             return None
-        conn.execute(
-            "UPDATE reflection_queue SET answered_at = ?, answer = ? WHERE id = ?",
-            (datetime.now(timezone.utc).isoformat(), answer, row["id"]),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "UPDATE reflection_queue SET answered_at = ?, answer = ? WHERE id = ?",
+                (datetime.now(timezone.utc).isoformat(), answer, row["id"]),
+            )
         return dict(row)
 
     def pending_reflection_for(
@@ -5008,7 +4948,6 @@ class EngramStore:
 
     def save_identity(self, identity: AgentIdentity) -> None:
         """Save identity while preserving its append-only kernel and history."""
-        conn = self._get_conn()
         agent_id = identity.memory_profile.agent_id
         existing = self.get_identity(agent_id)
         if existing is not None:
@@ -5027,12 +4966,12 @@ class EngramStore:
         placeholders = ", ".join("?" for _ in data)
         updates = ", ".join(f"{k}=excluded.{k}" for k in data if k != "agent_id")
 
-        conn.execute(
-            f"INSERT INTO agent_identity ({columns}) VALUES ({placeholders}) "
-            f"ON CONFLICT(agent_id) DO UPDATE SET {updates}",
-            list(data.values()),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                f"INSERT INTO agent_identity ({columns}) VALUES ({placeholders}) "
+                f"ON CONFLICT(agent_id) DO UPDATE SET {updates}",
+                list(data.values()),
+            )
 
     @classmethod
     def _validate_identity_invariants(cls, old: Any, new: Any, path: str = "invariants") -> None:
@@ -5109,8 +5048,8 @@ class EngramStore:
         if written not in JOURNAL_WRITTEN:
             raise ValueError(f"A journal entry is written one of: {', '.join(JOURNAL_WRITTEN)}")
         entry_id = _new_id()
-        try:
-            self._get_conn().execute(
+        with self.transaction() as conn:
+            conn.execute(
                 """
                 INSERT INTO journal_entries (
                     id, agent_id, person_id, project_scope, text, mood, written,
@@ -5123,10 +5062,6 @@ class EngramStore:
                     (hour_id or "").strip(), _utc_now(),
                 ),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return entry_id
 
     def journal_entries(
@@ -5204,10 +5139,8 @@ class EngramStore:
                 raise ValueError("A reply has no kind.")
             if not in_reply_to:
                 raise ValueError("A reply answers one of the agent's notes.")
-        conn = self._get_conn()
         entry_id = _new_id()
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             if in_reply_to:
                 target = conn.execute(
                     "SELECT author FROM notes "
@@ -5231,10 +5164,6 @@ class EngramStore:
                     (hour_id or "").strip(), _utc_now(),
                 ),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return entry_id
 
     def get_note(
@@ -5359,9 +5288,7 @@ class EngramStore:
             return []
         now = _utc_now()
         done: list[str] = []
-        conn = self._get_conn()
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             for note_id in wanted:
                 cursor = conn.execute(
                     f"UPDATE notes SET {column} = ? "
@@ -5371,10 +5298,6 @@ class EngramStore:
                 )
                 if cursor.rowcount == 1:
                     done.append(note_id)
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         return done
 
     def journal_and_note_counts(
@@ -5455,17 +5378,12 @@ class EngramStore:
         params = (hour_id, agent_id, person_id, project_scope)
         where = "hour_id=? AND agent_id=? AND person_id=? AND project_scope=?"
         deleted = []
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             for table in ("journal_entries", "notes"):
-                deleted.extend(row[0] for row in self._get_conn().execute(
+                deleted.extend(row[0] for row in conn.execute(
                     f"SELECT id FROM {table} WHERE {where} ORDER BY created_at, rowid", params,
                 ).fetchall())
-                self._get_conn().execute(f"DELETE FROM {table} WHERE {where}", params)
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
+                conn.execute(f"DELETE FROM {table} WHERE {where}", params)
         return deleted
 
     # ── Meta ──
@@ -5480,12 +5398,11 @@ class EngramStore:
 
     def set_meta(self, key: str, value: str) -> None:
         """Upsert a meta value."""
-        conn = self._get_conn()
-        conn.execute(
-            "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
-            (key, value),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
 
     def min_code_version(self) -> int | None:
         """The lowest maintenance code version allowed to maintain this store.
@@ -5511,9 +5428,7 @@ class EngramStore:
         (``code_version_first_opened_key``), once: what that version's rules
         made can be told from what older rules made.
         """
-        conn = self._get_conn()
-        self._begin_immediate()
-        try:
+        with self.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                 (MIN_CODE_VERSION_KEY, str(int(version))),
@@ -5526,10 +5441,6 @@ class EngramStore:
                 "UPDATE meta SET value = ? WHERE key = ? AND CAST(value AS INTEGER) < ?",
                 (str(int(version)), MIN_CODE_VERSION_KEY, int(version)),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
         stored = self.min_code_version()
         return stored if stored is not None else int(version)
 
@@ -5551,9 +5462,7 @@ class EngramStore:
         wrote. Ids only, never text. Rows older than ``TRACE_KEEP_DAYS`` go in
         the same transaction, so the table stays small."""
         now = datetime.now(timezone.utc)
-        conn = self._get_conn()
-        try:
-            self._begin_immediate()
+        with self.transaction() as conn:
             conn.execute(
                 "INSERT INTO memory_trace (at, tool, agent_id, person_id, project_scope, "
                 "session, author_model, read_ids, written_ids) "
@@ -5569,10 +5478,6 @@ class EngramStore:
                 "DELETE FROM memory_trace WHERE at < ?",
                 ((now - timedelta(days=TRACE_KEEP_DAYS)).isoformat(),),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
 
     # ── Lived days: the agent's own time ──
 
@@ -5587,16 +5492,11 @@ class EngramStore:
         if moment.tzinfo is None:
             moment = moment.replace(tzinfo=timezone.utc)
         day = moment.astimezone(timezone.utc).date().isoformat()
-        conn = self._get_conn()
-        try:
+        with self.transaction() as conn:
             conn.execute(
                 "INSERT OR IGNORE INTO lived_days (agent_id, day) VALUES (?, ?)",
                 (agent_id, day),
             )
-            self._commit()
-        except Exception:
-            self._rollback()
-            raise
 
     def lived_days(self, agent_id: str) -> list[str]:
         """The UTC dates ``agent_id`` lived, sorted."""
@@ -5628,15 +5528,14 @@ class EngramStore:
         project_scope: str | None = None,
     ) -> None:
         """Log a consolidation pass."""
-        conn = self._get_conn()
-        conn.execute(
-            "INSERT OR REPLACE INTO consolidation_log "
-            "(id, agent_id, person_id, project_scope, pass_name, started_at, completed_at, stats) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (log_id, agent_id, person_id, project_scope, pass_name, started_at,
-             completed_at, json.dumps(stats or {})),
-        )
-        self._commit()
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO consolidation_log "
+                "(id, agent_id, person_id, project_scope, pass_name, started_at, completed_at, stats) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (log_id, agent_id, person_id, project_scope, pass_name, started_at,
+                 completed_at, json.dumps(stats or {})),
+            )
 
     def get_consolidation_runs(
         self, pass_name: str, limit: int = 5, *, agent_id: str | None = None,
