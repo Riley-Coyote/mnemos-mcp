@@ -204,15 +204,49 @@ class _Reading:
             model = row[0] if row else ""
         return model or ""
 
+    def memory_rows(self, state: str | None = None, limit: int | None = None,
+                    offset: int = 0) -> list[sqlite3.Row]:
+        """The memories of this scope, active and dormant (or only those in
+        ``state``), oldest first and in a stable order, from ``offset`` on, at
+        most ``limit`` of them (None: all). The one reading of them, for the
+        log and for ``mnemos memories``."""
+        clause, scope = self.scoped("engrams", owner="owner_agent_id")
+        states = (state,) if state else ("active", "dormant")
+        marks = ", ".join("?" for _ in states)
+        return list(self.c.execute(
+            f"""SELECT id, content, {self.col('engrams', 'impact')}, kind, accessibility, state, created_at,
+            last_accessed, {self.col('engrams', 'author_kind', "'unknown'")}, {self.col('engrams', 'author_model')},
+            {self.col('engrams', 'author_session')}, {self.col('engrams', 'lineage', "'{}'")},
+            {self.col('engrams', 'standing', '0')}
+            FROM engrams WHERE {clause} AND state IN ({marks}) ORDER BY created_at, id
+            LIMIT ? OFFSET ?""", (*scope, *states, -1 if limit is None else limit, offset)))
+
+    def state_counts(self) -> dict[str, int]:
+        """How many memories this scope holds in each state."""
+        clause, scope = self.scoped("engrams", owner="owner_agent_id")
+        return {r[0]: r[1] for r in self.c.execute(
+            f"SELECT state, count(*) FROM engrams WHERE {clause} GROUP BY state", scope)}
+
+    def kept_rows(self, ids: Any) -> list[sqlite3.Row]:
+        """``id``, ``created_at`` and ``lineage`` of the memories of this
+        scope that ``ids`` names, in any state: what a line of corrections
+        reads to find when its first version was kept."""
+        clause, scope = self.scoped("engrams", owner="owner_agent_id")
+        lineage = self.col("engrams", "lineage", "'{}'")
+        wanted = sorted(set(ids))
+        rows: list[sqlite3.Row] = []
+        for start in range(0, len(wanted), 400):
+            chunk = wanted[start:start + 400]
+            marks = ", ".join("?" for _ in chunk)
+            rows += self.c.execute(
+                f"SELECT id, created_at, {lineage} FROM engrams WHERE {clause} AND id IN ({marks})",
+                (*scope, *chunk)).fetchall()
+        return rows
+
     def memories(self) -> tuple[list[dict], str]:
         """Every memory in this scope, whole, with how it's tied to the others
         and how often it came back; and a version that changes when they do."""
-        clause, scope = self.scoped("engrams", owner="owner_agent_id")
-        rows = list(self.c.execute(
-            f"""SELECT id, content, {self.col('engrams', 'impact')}, kind, accessibility, state, created_at,
-            last_accessed, {self.col('engrams', 'author_kind', "'unknown'")}, {self.col('engrams', 'author_model')},
-            {self.col('engrams', 'standing', '0')}
-            FROM engrams WHERE {clause} AND state IN ('active','dormant') ORDER BY created_at""", scope))
+        rows = self.memory_rows()
         ids = {r["id"] for r in rows}
         asked: set[str] = set()
         if self.has("reflection_queue"):
@@ -676,8 +710,7 @@ class Exporter:
             notes = reading.note_rows()
             asks = reading.questions()
             clause, scope = reading.scoped("engrams", owner="owner_agent_id")
-            counts = {r[0]: r[1] for r in conn.execute(
-                f"SELECT state, count(*) FROM engrams WHERE {clause} GROUP BY state", scope)}
+            counts = reading.state_counts()
             newest = conn.execute(f"SELECT max(created_at) FROM engrams WHERE {clause}", scope).fetchone()[0]
             beliefs = reading.beliefs()
             handoffs = reading.handoffs()

@@ -214,6 +214,13 @@ FADED_ARCHIVE_REASONS = ("decay_below_threshold", "low_accessibility")
 EARLY_LESSON_ARCHIVE_REASON = "drawn before its memory faded"
 RECALLABLE_ARCHIVE_REASONS = FADED_ARCHIVE_REASONS + (EARLY_LESSON_ARCHIVE_REASON,)
 
+# Why a memory is in the archive when its person let it go: `mnemos forget`,
+# run by the person rather than in an agent's shell. Like the agent's forget it
+# was chosen, so it is not recallable and never comes back. The agent's next
+# full wake is told that its person let something go, and when, never the words
+# (``_person_letgo`` in interface/context_packet.py).
+FORGOTTEN_BY_PERSON = "forgotten_by_person"
+
 # The agent's journal and the notes between the agent and the person (v16).
 # Both are kept the way a handoff is kept: exactly as written, in the scope
 # that wrote them, and never summarized, rewritten, decayed, softened,
@@ -2867,6 +2874,16 @@ class EngramStore:
         """Why an archived engram is in the archive, or None when it is not."""
         row = self._get_conn().execute(
             "SELECT a.archive_reason FROM archive a JOIN engrams e ON e.id = a.id "
+            "WHERE a.id = ? AND e.state = 'archived'",
+            (engram_id,),
+        ).fetchone()
+        return None if row is None else row[0]
+
+    def archived_at(self, engram_id: str) -> str | None:
+        """When an archived engram went into the archive, or None when it is
+        not there."""
+        row = self._get_conn().execute(
+            "SELECT a.archived_at FROM archive a JOIN engrams e ON e.id = a.id "
             "WHERE a.id = ? AND e.state = 'archived'",
             (engram_id,),
         ).fetchone()

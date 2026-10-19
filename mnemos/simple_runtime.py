@@ -73,6 +73,7 @@ from .store.archive import resharpen
 from .store.fts import distinctive_terms, fts_words, meaningful_words, search_words
 from .store.sqlite_store import (
     EARLY_LESSON_ARCHIVE_REASON,
+    FORGOTTEN_BY_PERSON,
     PROMOTION_REVISIONS,
     PROMOTION_SESSIONS,
     RECALLABLE_ARCHIVE_REASONS,
@@ -617,6 +618,12 @@ _ENGRAM_ID = re.compile(r"engram_[0-9A-Za-z]{10,40}")
 
 class HostMutationConflictError(ValueError):
     """An idempotency key was reused for a different mutation request."""
+
+
+class NothingChanged(ValueError):
+    """A correction or a forget by a memory's id that changed nothing, with
+    the one plain sentence that says why (``correct_memory``,
+    ``forget_memory``)."""
 
 
 _ONBOARDING_RITUAL = """\
@@ -4384,10 +4391,7 @@ class MnemosRuntime:
             return []
         self._ensure_init()
         assert self._store is not None
-        return [
-            journal_entry_view(row)
-            for row in self._store.journal_entries(**self._scope_args(), limit=last)
-        ]
+        return journal_view(self._store, last=last, **self._scope_args())
 
     def notes(self, unread: bool = False) -> list[dict[str, Any]]:
         """The notes of this scope, both authors', newest first, in the shape
@@ -4398,10 +4402,7 @@ class MnemosRuntime:
             return []
         self._ensure_init()
         assert self._store is not None
-        return [
-            note_view(row)
-            for row in self._store.list_notes(**self._scope_args(), unread=unread)
-        ]
+        return notes_view(self._store, unread=unread, **self._scope_args())
 
     def mark_notes_read(self, note_ids: Collection[str]) -> list[str]:
         """Record that the person read these notes of the agent's. Bookkeeping,
@@ -5305,19 +5306,25 @@ class MnemosRuntime:
         corrector: str,
         session: str,
         query: str = "",
+        reason: str = "",
     ) -> tuple[list[str], list[str]]:
         """Take a pair out of use, in the transaction under way: its active
         notes and the memories it still holds. Both are kept, archived, never
-        deleted; each note's revision records who retired it. Returns the
-        ids of the notes and the memories retired."""
+        deleted; each note's revision records who retired it. ``reason`` is
+        why, for the notes and the memories alike, when the caller names one
+        (the person's forget, ``FORGOTTEN_BY_PERSON``); otherwise the
+        correction's action says it. Returns the ids of the notes and the
+        memories retired."""
         assert self._store is not None
-        reason = f"simple correction action={action}" + (f"; query={query}" if query else "")
+        note_reason = reason or (
+            f"simple correction action={action}" + (f"; query={query}" if query else "")
+        )
         retired_notes = []
         for held in notes:
             if held.get("active"):
                 self._store.archive_hypomnema_entry(
                     held["id"],
-                    reason=reason,
+                    reason=note_reason,
                     revised_by=corrector,
                     author_session=session,
                     **self._scope_args(),
@@ -5325,7 +5332,7 @@ class MnemosRuntime:
                 retired_notes.append(held["id"])
         retired_memories = [
             engram.id for engram in memories
-            if self._store.retire_engram(engram, reason=f"simple_correction_{action}")
+            if self._store.retire_engram(engram, reason=reason or f"simple_correction_{action}")
         ]
         self._traced_write(*retired_notes, *retired_memories)
         return retired_notes, retired_memories
@@ -5339,6 +5346,7 @@ class MnemosRuntime:
         corrector: str,
         session: str,
         query: str = "",
+        reason: str = "",
     ) -> tuple[list[str], list[str]]:
         """Forget acts on the pair: the note and its memory are archived
         together, in one transaction, and nothing is written in their place."""
@@ -5346,7 +5354,8 @@ class MnemosRuntime:
         notes, memories = self._pair_members(note, engram)
         with self._store.transaction():
             return self._retire(
-                notes, memories, action=action, corrector=corrector, session=session, query=query,
+                notes, memories, action=action, corrector=corrector, session=session,
+                query=query, reason=reason,
             )
 
     def _note_head(self, note: dict[str, Any] | None) -> str:
@@ -5358,11 +5367,14 @@ class MnemosRuntime:
 
     def _replacement_note(
         self, note: dict[str, Any] | None, correction: str, corrector: str, session: str,
+        *, person: bool = False,
     ) -> dict[str, Any]:
         """How a correction's note is written: the agent's words, signed, in
         the place the note it replaces held (its domain, tags, and standing
         as foundational, and a memory it only referenced, which it still
-        references), or classified afresh when it replaces no note."""
+        references), or classified afresh when it replaces no note. The
+        person's correction (``person``) is written as their capture's note
+        is: unsigned, and not the agent's."""
         assert self._store is not None
         domain = (note or {}).get("domain") or _classify_domain(correction)
         referenced = (
@@ -5373,7 +5385,9 @@ class MnemosRuntime:
             **self._scope_args(),
             "source": "observed",
             "entry_kind": "continuity",
-            "authored_by": "agent",
+            # The notes table's CHECK predates 'person' (see capture): the
+            # memory's author_kind is the record.
+            "authored_by": "unknown" if person else "agent",
             "author_id": self.scope.agent_id,
             "author_model": corrector,
             "author_session": session,
@@ -5401,9 +5415,12 @@ class MnemosRuntime:
         session: str,
         older: bool,
         query: str = "",
+        person: bool = False,
     ) -> dict[str, Any]:
         """Retire a pair and write the pair that replaces it, in the agent's
-        words, in one transaction.
+        words, in one transaction. With ``person``, they are the person's
+        words, written as ``mnemos remember`` writes them (``author_kind``
+        'person', unsigned) and superseding exactly as the agent's do.
 
         Current code also records what was replaced (``record_correction``):
         a ``supersedes`` link and lineage both ways, the old note's successor,
@@ -5448,7 +5465,7 @@ class MnemosRuntime:
             override_confidence=0.92,
             skip_surprise_detection=True,
             discover_connections=not older,
-            author_kind="agent",
+            author_kind="person" if person else "agent",
             author_model=corrector,
             author_session=session,
         )
@@ -5481,7 +5498,7 @@ class MnemosRuntime:
             )
             note_id = self._store.save_capture_pair(
                 replacement, text, standing_mark=carried,
-                **self._replacement_note(note, correction, corrector, session),
+                **self._replacement_note(note, correction, corrector, session, person=person),
             )
             if not older:
                 self._store.record_correction(
@@ -5494,7 +5511,7 @@ class MnemosRuntime:
                     author_model=corrector,
                     author_session=session,
                 )
-                if (impact or "").strip():
+                if (impact or "").strip() and not person:
                     # A lesson about the mistake, in the agent's own words
                     # (only those make a lesson), drawn from the correction,
                     # which its supersedes link joins to the memory it fixed.
@@ -5990,6 +6007,154 @@ class MnemosRuntime:
                 f"changed; the correction was captured as new continuity.\n{captured}"
             )
         return captured
+
+    # ── A memory, by its id: the person's commands ──
+    #
+    # `mnemos search`, `mnemos correct ID TEXT` and `mnemos forget ID`, and
+    # `mnemos interface`, which answers them for an app the person uses. A
+    # search changes nothing. A correction or a forget acts on exactly the
+    # memory its id names, as the person saw it: an id unknown here, archived,
+    # or replaced by a correction since changes nothing and says which, and is
+    # never followed to a version the person hasn't seen. Run by the person
+    # (``person``: outside an agent's shell) they are the person's words and
+    # the person's forget; in an agent's shell, the agent's, signed as its
+    # correction is.
+
+    def search_memories(
+        self, query: str, max_results: int = RECALL_RESULTS,
+    ) -> list[RetrievalResult]:
+        """The memories recall finds for ``query``, best first, at most
+        ``max_results``: recall's own ranking (``_retrieve``), by meaning and
+        by words, over the memories alone (no handoffs, notes or journal).
+
+        It writes nothing. Recall reinforces what it returns because the agent
+        was shown it: a memory it finds wakes, strengthens and is linked with
+        what came back beside it. A person looking through the memory is not
+        the agent remembering, so nothing found here is woken, strengthened or
+        linked. An archived memory is never among the results, and asking
+        never creates a store."""
+        if not query.strip():
+            return []
+        if self._store is None and not self.db_path.exists():
+            return []
+        self._ensure_init()
+        return self._retrieve(query, max_results=max_results)
+
+    def _memory_named(self, memory_id: str) -> tuple[dict[str, Any] | None, Engram]:
+        """The pair a correction or a forget by id acts on: the memory
+        ``memory_id`` names (or whose note it names: the two are one capture)
+        and its note, when the memory is in use here. Raises
+        ``NothingChanged`` with the reason otherwise: no such memory here, one
+        replaced by a correction (naming the version now in use), or one
+        already archived."""
+        assert self._store is not None
+        target = (memory_id or "").strip()
+        if not target:
+            raise NothingChanged("Give the id of the memory.")
+        scope = self._scope_args()
+        note, engram = self._store.capture_pair(target, **scope)
+        if engram is None or (note is not None and note.get("entry_kind") != "continuity"):
+            raise NothingChanged(f"No memory {target} is held here.")
+        if engram.state == "archived":
+            current = self._latest(engram.id)
+            if current != engram.id and self._store.engram_state_in_scope(current, **scope) in (
+                "active", "dormant",
+            ):
+                raise NothingChanged(
+                    f"Memory {engram.id} was replaced by a correction; "
+                    f"its current version is {current}."
+                )
+            raise NothingChanged(f"Memory {engram.id} is already archived.")
+        return note, engram
+
+    @_traced("correct")
+    def correct_memory(
+        self, memory_id: str, words: str, *, person: bool, signed_as: str = "",
+    ) -> dict[str, Any]:
+        """Replace the memory ``memory_id`` names with ``words``, as a
+        correction by id does (``_replace_pair``): the old pair archived,
+        never deleted, and superseded by the new one (the link, the lineage
+        both ways, the version keeping the old words), the new one keeping
+        what the old one meant and its standing mark.
+
+        ``person``: the person's correction (``mnemos correct`` outside an
+        agent's shell), written as ``mnemos remember`` writes their words:
+        ``author_kind`` 'person', unsigned. The agent wakes with it once
+        ("<name> corrected a memory of mine; it now says: ..."). Otherwise the
+        agent's, signed with ``signed_as`` or as ``author_model`` resolves it.
+
+        Returns ``{"id": <the new memory>, "replaces": <the one it replaced>,
+        "corrected": <when, ISO 8601 UTC>}``. Raises ``NothingChanged`` when
+        there are no words or the id names no memory in use here; nothing is
+        written then, and a store that isn't there is never made."""
+        text = (words or "").strip()
+        if not text:
+            raise NothingChanged("A correction needs the memory's new words.")
+        if self._store is None and not self.db_path.exists():
+            raise NothingChanged(f"No memory {(memory_id or '').strip()} is held here.")
+        self._ensure_init()
+        assert self._store is not None
+        # Signed before anything can refuse: the call's trace row is the
+        # person's too, never resolved to whatever model is about.
+        corrector = "" if person else self.author_model(signed_as)
+        session = harness_session()
+        self._traced_author(corrector)
+        note, engram = self._memory_named(memory_id)
+        result = self._replace_pair(
+            note, engram, text, "",
+            action="update",
+            corrector=corrector,
+            session=session,
+            older=self._older_than_store() is not None,
+            person=person,
+        )
+        replacement = self._store.get_engram(result["engram_id"])
+        return {
+            "id": result["engram_id"],
+            "replaces": engram.id,
+            "corrected": utc_iso(replacement.created_at if replacement else None),
+        }
+
+    @_traced("correct")
+    def forget_memory(
+        self, memory_id: str, *, person: bool, signed_as: str = "",
+    ) -> dict[str, Any]:
+        """Forget the memory ``memory_id`` names, as a forget by id does
+        (``_forget_pair``): the memory and its note archived together, never
+        deleted, and nothing written in their place. It never comes back:
+        not by recall's words or meaning, nor its id, nor the archive.
+
+        ``person``: the person's forget (``mnemos forget`` outside an agent's
+        shell), archived as ``FORGOTTEN_BY_PERSON``. The agent's next full
+        wake says once that its person let a memory go, and when, never the
+        words. Otherwise the agent's forget, signed as its correction is.
+
+        Returns ``{"id": <the memory>, "state": "archived", "forgotten": <when,
+        ISO 8601 UTC>}``. Raises ``NothingChanged`` when the id names no
+        memory in use here; nothing is written then, and a store that isn't
+        there is never made."""
+        if self._store is None and not self.db_path.exists():
+            raise NothingChanged(f"No memory {(memory_id or '').strip()} is held here.")
+        self._ensure_init()
+        assert self._store is not None
+        corrector = "" if person else self.author_model(signed_as)
+        session = harness_session()
+        self._traced_author(corrector)
+        note, engram = self._memory_named(memory_id)
+        _notes, memories = self._forget_pair(
+            note, engram,
+            action="forget",
+            corrector=corrector,
+            session=session,
+            reason=FORGOTTEN_BY_PERSON if person else "",
+        )
+        if engram.id not in memories:
+            raise NothingChanged(f"Memory {engram.id} is already archived.")
+        return {
+            "id": engram.id,
+            "state": "archived",
+            "forgotten": utc_iso(self._store.archived_at(engram.id)),
+        }
 
     @_traced("maintain")
     def maintain(self, deep: bool = False, auto: bool = False) -> str:
@@ -6885,6 +7050,16 @@ def _format_continuity(entry: dict[str, Any], query: str) -> str:
     )
 
 
+def _found_by_meaning(result: Any) -> bool:
+    """Whether recall's meaning search matched ``result`` (``how_found``)."""
+    return "similarity" in (result.score_breakdown or {})
+
+
+def _found_by_words(result: Any) -> bool:
+    """Whether ``result`` matched by its words (``how_found``)."""
+    return "words_rank" in (result.score_breakdown or {})
+
+
 def how_found(result: Any) -> str:
     """The bracket in front of a recalled row: how recall found it, by meaning
     and how close, by which of the query's words, or through a link.
@@ -6894,14 +7069,41 @@ def how_found(result: Any) -> str:
     is my dog called" found "The human wants to be called Sam." at 1.00)."""
     detail = result.score_breakdown or {}
     found = []
-    if "similarity" in detail:
+    if _found_by_meaning(result):
         found.append(f"meaning {detail['similarity']:.2f}")
-    if "words_rank" in detail:
+    if _found_by_words(result):
         # A word the lesson held in a form fts_words splits differently
         # matched by rank and names none.
         words = detail.get("matched_words") or []
         found.append(f"words: {', '.join(words)}" if words else "words")
     return f"[{'; '.join(found) or 'linked'}]"
+
+
+def found_by(result: Any) -> str:
+    """How recall found ``result``, in one word, as ``how_found`` marks it:
+    "meaning" whenever meaning matched it (its words may have too), "words"
+    when only its words did, "link" when neither did and a link reached it.
+    What ``mnemos search --json`` calls ``found``."""
+    if _found_by_meaning(result):
+        return "meaning"
+    if _found_by_words(result):
+        return "words"
+    return "link"
+
+
+def closeness(results: Collection[Any]) -> list[float]:
+    """How close each of one search's results is to what was asked, from 0
+    to 1, in their order: recall's own score for each over the best one's,
+    so the first is 1.0 and the rest fall with the order recall ranks them,
+    closest first. Relative within one search: 0.6 in one search and 0.6 in
+    another say nothing about each other. Nothing found is no results, by
+    recall's own thresholds, never a closeness under some number. What
+    ``mnemos search --json`` calls ``closeness``."""
+    scores = [float(getattr(result, "score", 0.0) or 0.0) for result in results]
+    best = max(scores, default=0.0)
+    if best <= 0:
+        return [0.0 for _ in scores]
+    return [round(min(1.0, max(0.0, score / best)), 4) for score in scores]
 
 
 def _format_memory(result: Any, query: str = "") -> str:
@@ -6997,6 +7199,23 @@ def current_hour() -> str:
     return " ".join(os.environ.get("MNEMOS_HOUR_ID", "").split())[:128]
 
 
+def utc_iso(value: Any) -> str | None:
+    """A stored time as ISO 8601 in UTC (``2026-10-18T21:04:05.123456+00:00``),
+    the way the person's commands give every time. A time stored without a
+    zone is UTC, as Mnemos writes them. None for none; something that isn't a
+    time comes back as it is, never made up."""
+    if not value:
+        return None
+    text = str(value)
+    try:
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return text
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).isoformat()
+
+
 def journal_entry_view(row: Mapping[str, Any]) -> dict[str, Any]:
     """A journal entry as the command and the interface read it:
     ``{id, text, mood, written, model, created_at}``, the shape of the
@@ -7011,6 +7230,19 @@ def journal_entry_view(row: Mapping[str, Any]) -> dict[str, Any]:
         "model": row["model_id"] or None,
         "created_at": row["created_at"],
     }
+
+
+def journal_view(store: EngramStore, *, last: int, **scope: str) -> list[dict[str, Any]]:
+    """The newest ``last`` journal entries of a scope, newest first, as
+    ``mnemos journal --json`` and the interface give them."""
+    return [journal_entry_view(row) for row in store.journal_entries(**scope, limit=last)]
+
+
+def notes_view(store: EngramStore, *, unread: bool, **scope: str) -> list[dict[str, Any]]:
+    """The notes of a scope, both authors', newest first (with ``unread``,
+    the agent's the person hasn't read), as ``mnemos notes --json`` and the
+    interface give them. Reads only: nothing is marked read."""
+    return [note_view(row) for row in store.list_notes(**scope, unread=unread)]
 
 
 def note_view(row: Mapping[str, Any]) -> dict[str, Any]:

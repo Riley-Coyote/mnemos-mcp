@@ -880,7 +880,10 @@ def test_the_only_code_that_writes_these_words_is_the_tools_and_the_persons_own_
     assert calls("write_note") == [
         "simple_runtime.py:MnemosRuntime.note", "simple_runtime.py:MnemosRuntime.reply_to_note",
     ]
-    assert calls("reply_to_note") == ["cli.py:_cmd_notes_reply"]
+    # The person's own command, and the same command answered for the
+    # person's own app by `mnemos interface` (M07a): neither is a tool the
+    # agent calls.
+    assert calls("reply_to_note") == ["cli.py:_cmd_notes_reply", "interface/person.py:Interface.reply"]
     assert calls("journal") == ["simple_mcp.py:register_simple_tools.mnemos_journal"]
     assert calls("note") == ["simple_mcp.py:register_simple_tools.mnemos_note"]
 

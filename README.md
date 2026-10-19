@@ -329,6 +329,47 @@ the internet, since its fonts ship with Mnemos. If your agent has no quiet
 hours yet, or nothing is scheduled to run them, the page says so;
 [Quiet Hours](#quiet-hours) says how to schedule them.
 
+### Your Agent's Memory, From Your Own App
+
+An app can show you your agent's memory, and let you search it, correct it
+and let things go, through these commands. Each takes the usual scope flags
+and, with `--json`, prints one JSON object; an error is one plain sentence on
+stderr with a non-zero exit. Times are ISO 8601 UTC.
+
+```bash
+mnemos memories --json                    # the active and dormant memories, oldest first, and counts
+mnemos memories --json --state dormant --limit 100 --offset 0
+mnemos search --json -n 10 "the ferry"    # by meaning and by words, closest first
+mnemos correct --json <id> "new words"    # yours: unsigned, and the agent is told once
+mnemos forget --json <id>                 # archived, never deleted, never recalled again
+mnemos interface                          # all of these for an app, one JSON line each
+```
+
+- **Searching changes nothing.** `mnemos search` is your agent's own recall
+  (by meaning and by words, over its memories), but only looking: nothing it
+  finds is woken, strengthened or linked, as it would be if the agent had
+  recalled it. Each result says how it was `found` (meaning, words or a link)
+  and its `closeness`, which is relative within that one search: the first
+  result is 1.0.
+- **A correction or a forget you make is yours.** Your words are kept
+  unsigned, as yours, and the agent wakes once to "<you> corrected a memory of
+  mine". A forget archives the memory and its note, never deletes them, and
+  nothing brings them back; the agent wakes once to "<you> let a memory of mine
+  go on <day>; its words went with it", never the words. Run in an agent's own
+  shell (`CLAUDECODE` or `AI_AGENT` set), or with `--signed-as`, they are the
+  agent's instead, as with `mnemos remember`. They act only on a memory still
+  in use: one archived, or replaced by a correction since, changes nothing and
+  says so. Put `--` before the id when the words could begin with a dash.
+- **`mnemos interface`** is one process an app keeps open. Each line it reads
+  is a request, `{"id": 1, "command": "search", "query": "the ferry"}`, for
+  `memories` (`state`, `limit`, `offset`), `search` (`query`, `max_results`),
+  `correct` (`memory_id`, `text`), `forget` (`memory_id`), `journal` (`last`),
+  `notes` (`unread`) or `reply` (`note_id`, `text`); each line it writes is
+  the answer, `{"id": 1, "result": ...}` with exactly what the one-shot
+  `--json` prints, or `{"id": 1, "error": "..."}`. It loads the meaning model
+  once, in the background as it starts, so a search answers in tens of
+  milliseconds once it has, and it ends when its input closes.
+
 ### Simple Mode With Explicit Scope
 
 Use scope when one machine hosts multiple agents, users, or projects.
@@ -644,7 +685,11 @@ mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI
 mnemos log                            # A page of the agent's days (read-only, this machine only)
 mnemos stats                          # Memory statistics
-mnemos search "debugging strategies"  # Search memories
+mnemos search "debugging strategies"  # Search memories, by meaning and words (writes nothing)
+mnemos memories --json                # Every active and dormant memory, for an app
+mnemos correct <id> "new words"       # Correct a memory, in your own words
+mnemos forget <id>                    # Let a memory go: archived, never deleted
+mnemos interface                      # The person's commands for an app, one JSON line each
 mnemos inspect <engram-id>            # Inspect memory details
 mnemos consolidate                    # Local deterministic maintenance
 mnemos consolidate --deep             # Deep maintenance when a provider exists

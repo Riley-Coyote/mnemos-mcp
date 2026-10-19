@@ -9,7 +9,9 @@ a store they wrote could stay marked for the previous version, and a server
 still running that version never learned to stand down.
 
 Now every writable open of a store records the version, after its migrations,
-and only ever raises it. A read-only open records nothing.
+and only ever raises it. A read-only open records nothing. (`mnemos search`
+has read only since M07a: a person looking writes nothing, so it records
+nothing either.)
 """
 
 from __future__ import annotations
@@ -113,7 +115,10 @@ def test_a_bare_open_records_the_code_version(tmp_path):
     assert _store_minimum(db) == "999"
 
 
-def test_mnemos_search_records_the_code_version(tmp_path, capsys):
+def test_mnemos_search_writes_nothing_so_it_records_nothing(tmp_path, capsys):
+    """`mnemos search` opened the store for writing and reinforced what it
+    found, so it had to record the version it wrote by. Since M07a it reads
+    only: it reinforces nothing, and the store stays marked as it was."""
     db = _memory_store(tmp_path)
     assert _accesses(db) == [(0,)]
 
@@ -121,10 +126,8 @@ def test_mnemos_search_records_the_code_version(tmp_path, capsys):
     out = capsys.readouterr().out
 
     assert "ferry timetable" in out, "premise: search found the memory"
-    assert _accesses(db) == [(1,)], "premise: search reinforced it by current rules"
-    assert _store_minimum(db) == CURRENT, (
-        "search wrote by current rules into a store still marked for older code"
-    )
+    assert _accesses(db) == [(0,)], "search reinforced what it found"
+    assert _store_minimum(db) == str(PREVIOUS), "a search that reads only recorded a version"
 
 
 def test_the_session_start_hook_records_the_code_version(tmp_path, capsys):

@@ -164,6 +164,22 @@ def clean_session_id(value: object) -> str:
     return session if _SESSION_ID.fullmatch(session) else ""
 
 
+def run_by_agent(signed_as: str = "", environ: Mapping[str, str] | None = None) -> bool:
+    """Whether a command that writes into memory from the command line writes
+    as the agent rather than the person (``mnemos remember``, ``correct``,
+    ``forget``): signed with ``--signed-as``, or run in an agent's own shell
+    (Claude Code sets ``CLAUDECODE`` in every shell its agent runs; another
+    agent may set ``AI_AGENT``). Otherwise the person typed it, at their own
+    terminal or in their own app, which runs Mnemos with neither set."""
+
+    env = os.environ if environ is None else environ
+    return bool(
+        (signed_as or "").strip()
+        or env.get("CLAUDECODE", "").strip()
+        or env.get("AI_AGENT", "").strip()
+    )
+
+
 def harness_session(environ: Mapping[str, str] | None = None) -> str:
     """The Claude Code session this process serves, or ``""``.
 

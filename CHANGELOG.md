@@ -2,6 +2,96 @@
 
 ## 0.4.1 (unreleased)
 
+### Your memory, from your own app
+
+An app that shows a person their agent's memory (Ghost's home is the first)
+could read the journal and the notes with `--json`, and nothing else. Now it
+can read and search the memories, and correct or forget one, with every
+command taking the usual scope flags and printing one JSON object with
+`--json`. Errors are one plain sentence on stderr, with a non-zero exit. Times
+are ISO 8601 UTC.
+
+- **`mnemos memories --json`** lists the active and dormant memories, oldest
+  first: `{"memories": [...], "counts": {"active", "dormant", "archived"}}`.
+  A memory has its `id`, its `words`, when it was `kept` (its first version,
+  followed back through its corrections) and `corrected` (this version, when
+  a correction made it, else null), its `state`, how `alive` it is (its
+  accessibility, the value decay lowers and a return raises, and the one its
+  states follow: in practice up to .8), the `conversation` it was kept in
+  (`{"id": <session id>, "title": null}`: Mnemos keeps no titles), its
+  `impact`, and its `author`: agent, person, tool (Mnemos's own templates and
+  imports count as a tool's) or unknown. `--state active|dormant`,
+  `--limit N` and `--offset M` page it, and `counts` is always the whole
+  scope's. It reads the rows the log reads, through the log's own reading,
+  never writes, and never makes a store.
+- **`mnemos search --json [-n N] QUERY`** gives `{"query", "results": [{"id",
+  "words", "kept", "closeness", "found"}]}`, closest first. `found` is
+  `meaning` (whenever meaning matched), `words` or `link`, as recall's rows
+  mark it, and `closeness` is recall's own score over the best result's: the
+  first is 1.0, the rest fall with the order, and it means nothing across two
+  searches. Nothing close is no results, by recall's own thresholds.
+- **`mnemos correct [--json] ID TEXT`** and **`mnemos forget [--json] ID`**
+  (below) give `{"id": <new>, "replaces": <old>, "corrected": <time>}` and
+  `{"id", "state": "archived", "forgotten": <time>}`.
+- **`mnemos interface`** answers all of these, and `journal`, `notes` and
+  `reply`, from one long-lived process: one JSON request a line on stdin
+  (`{"id": 1, "command": "search", "query": "...", "max_results": 10}`), one
+  JSON line an answer on stdout, `{"id": 1, "result": <exactly what the
+  one-shot --json prints>}` or `{"id": 1, "error": "<one sentence>"}`. It
+  loads the meaning model once, in the background as it starts, and ends when
+  stdin closes. On a copy of the maintainer's store (1,245 memories in scope,
+  21,564 passages), a one-shot `search --json` took 2.9 s, nearly all of it
+  the model; the interface answered a first `memories`, `journal` or `notes`
+  0.09 to 0.15 s after it started, a first search in 2.6 s, and warm searches
+  in 61 ms (the median of 80, 130 ms at most).
+
+### `mnemos search` looks, and changes nothing
+
+A search counted as a return. The command called recall's retriever with
+reinforcement on, so every memory a person's search found was woken,
+strengthened and linked as co-activated with what came back beside it: the
+agent's memory moved because someone looked through it. The command also
+opened the store for writing, which makes a store that isn't there, and it
+searched by words alone, with no meaning index.
+
+Now it is the agent's own recall, by meaning and by words, over the memories
+alone (no handoffs, notes or journal), run read-only: nothing it finds is
+woken, strengthened or linked, an archived memory never comes back, and a
+store that isn't there stays so. A test finds a dormant memory and checks
+every engram row, link, session reinforcement and meta value, and the file
+byte for byte. Without `--json` it prints as it did. The agent's recall and
+the cue are unchanged: what the agent is shown is still a return.
+
+### The person corrects or forgets, and the agent is told
+
+`mnemos correct` and `mnemos forget` decide whose they are as `mnemos
+remember` does: in an agent's own shell (`CLAUDECODE` or `AI_AGENT` set) or
+with `--signed-as` they are the agent's, signed as its corrections are, and
+otherwise the person's.
+
+- **The person's correction** writes their words unsigned, as `author_kind`
+  'person', and supersedes the memory exactly as the agent's correction does:
+  the link, the lineage both ways, the version keeping the old words. The new
+  one keeps what the old one meant, and its standing mark. The agent's next
+  full wake says it once, under "while i was away": `- Riley corrected a
+  memory of mine; it now says: "..."`.
+- **The person's forget** is the agent's own forget, with the person as the
+  one who forgot: the memory and its note are archived together (archive
+  reason `forgotten_by_person`), never deleted, and nothing is written in
+  their place. Recall never brings it back, by its words, its meaning, its
+  id or the archive, and neither does the cue or maintenance. The agent's
+  next full wake says once that its person let it go, and when, never the
+  words and never an id: `- Riley let a memory of mine go on Oct 18; its
+  words went with it.`, or `- Riley let 3 memories of mine go, on Oct 18 and
+  Oct 19; their words went with them.` (meta `person_letgo_shown_at`). The
+  line is never left out for room. An agent's own forget never counts.
+- **They act on what the person saw.** An id that is unknown, archived, or
+  replaced by a correction since changes nothing, and says which in one
+  sentence, naming the version in use now.
+
+The mind's tools, the cue and maintenance work as they did, and the code
+version stays 22.
+
 ### Meaning stays on this machine unless you choose Gemini
 
 **Breaking.** A GEMINI_API_KEY anywhere Mnemos looks (the environment, the

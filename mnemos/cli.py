@@ -7,7 +7,11 @@ Commands:
     mnemos inspect ID            Inspect a specific engram
     mnemos stats                 Show memory statistics
     mnemos snapshot              Print an inline Mermaid memory snapshot
-    mnemos search QUERY          Search memories
+    mnemos search QUERY          Search memories, by meaning and words (writes nothing)
+    mnemos memories              List the memories, oldest first (reads only)
+    mnemos correct ID TEXT       Correct a memory, in your own words
+    mnemos forget ID             Let a memory go: archived, never deleted
+    mnemos interface             The commands above for an app, one JSON line each
     mnemos consolidate [--deep]  Run a consolidation cycle
     mnemos export [--workspace]  Export workspace files (MEMORY.md, etc.)
     mnemos setup-openclaw        Register cron jobs for OpenClaw
@@ -158,9 +162,91 @@ def main(argv: list[str] | None = None) -> int:
     p_snapshot.add_argument("-n", "--max-items", type=int, default=6)
 
     # ── search ──
-    p_search = sub.add_parser("search", help="Search memories")
+    p_search = sub.add_parser(
+        "search", help="Search memories, by meaning and by words (writes nothing)",
+        description=(
+            "Search the memories as the agent's own recall does, by meaning and by "
+            "words, closest first. It only looks: nothing found is woken, "
+            "strengthened or linked, and an archived memory never comes back."
+        ),
+    )
+    _scope_options(p_search)
     p_search.add_argument("query", help="Search query")
     p_search.add_argument("-n", "--max-results", type=int, default=10)
+    p_search.add_argument(
+        "--json", action="store_true",
+        help='Print {"query", "results": [{"id", "words", "kept", "closeness", "found"}]}, '
+             "closest first; closeness is relative within one search, the first 1.0",
+    )
+
+    # ── memories ──
+    p_memories = sub.add_parser(
+        "memories", help="List the memories, active and dormant, oldest first (reads only)",
+    )
+    _scope_options(p_memories)
+    p_memories.add_argument(
+        "--state", default=None, metavar="active|dormant",
+        help="Only the active memories, or only the dormant ones",
+    )
+    p_memories.add_argument("--limit", type=int, default=None, metavar="N",
+                            help="At most N memories (default: all)")
+    p_memories.add_argument("--offset", type=int, default=0, metavar="M",
+                            help="Leave out the first M (default 0)")
+    p_memories.add_argument(
+        "--json", action="store_true",
+        help='Print {"memories": [{"id", "words", "kept", "state", "alive", "conversation", '
+             '"corrected", "impact", "author"}], "counts": {"active", "dormant", "archived"}}',
+    )
+
+    # ── correct / forget ──
+    for name, help_text, description in (
+        (
+            "correct", "Correct a memory, in your own words (in an agent's shell: the agent's)",
+            "Replace a memory's words with yours, by its id. The old version is archived, "
+            "never deleted, and the new one keeps what it meant. Run by you, the words are "
+            "yours, unsigned, and the agent wakes to the correction once. In an agent's own "
+            "shell (CLAUDECODE or AI_AGENT set), or with --signed-as, it is the agent's "
+            "correction instead. An id that is archived, or that a correction has replaced, "
+            "changes nothing and says so.",
+        ),
+        (
+            "forget", "Let a memory go: archived, never deleted (in an agent's shell: the agent's)",
+            "Let a memory go, by its id: it and its note are archived, never deleted, and "
+            "recall never brings it back. Run by you, the agent's next wake says that you "
+            "let a memory go, and when, never its words. In an agent's own shell "
+            "(CLAUDECODE or AI_AGENT set), or with --signed-as, it is the agent's forget "
+            "instead. An id that is archived, or that a correction has replaced, changes "
+            "nothing and says so.",
+        ),
+    ):
+        p_change = sub.add_parser(name, help=help_text, description=description)
+        _scope_options(p_change)
+        p_change.add_argument("memory_id", metavar="ID", help="The memory's id")
+        if name == "correct":
+            p_change.add_argument("text", metavar="TEXT", help="Its new words")
+        p_change.add_argument(
+            "--json", action="store_true",
+            help='Print {"id": <new>, "replaces": <old>, "corrected": <time>}' if name == "correct"
+            else 'Print {"id", "state": "archived", "forgotten": <time>}',
+        )
+        p_change.add_argument(
+            "--signed-as", default="", metavar="MODEL",
+            help="Do it as the agent, signed with this model id",
+        )
+
+    # ── interface ──
+    p_interface = sub.add_parser(
+        "interface", help="Answer the person's commands for an app: one JSON line each, on stdin",
+        description=(
+            "One long-lived process for an app the person uses. Each line on stdin is one "
+            'request, {"id": ..., "command": ..., ...}, for memories, search, correct, '
+            "forget, journal, notes or reply; each answer is one line on stdout, "
+            '{"id": ..., "result": ...} with what the one-shot --json command prints, or '
+            '{"id": ..., "error": "<one sentence>"}. The meaning model loads once, in the '
+            "background, as it starts. It ends when stdin closes."
+        ),
+    )
+    _scope_options(p_interface)
 
     # ── consolidate ──
     p_cons = sub.add_parser("consolidate", help="Run a consolidation cycle")
@@ -783,6 +869,10 @@ def main(argv: list[str] | None = None) -> int:
         "stats": _cmd_stats,
         "snapshot": _cmd_snapshot,
         "search": _cmd_search,
+        "memories": _cmd_memories,
+        "correct": _cmd_correct,
+        "forget": _cmd_forget,
+        "interface": _cmd_interface,
         "consolidate": _cmd_consolidate,
         "export": _cmd_export,
         "setup-openclaw": _cmd_setup_openclaw,
@@ -2092,24 +2182,32 @@ def _cmd_snapshot(args: argparse.Namespace) -> int:
 
 
 def _cmd_search(args: argparse.Namespace) -> int:
-    """Search memories."""
-    store = _get_store(args)
-    from .retrieval.reactive import ReactiveRetriever
+    """Search the memories by meaning and by words, as the agent's own recall
+    finds them, and change nothing (``MnemosRuntime.search_memories``).
+
+    It used to count as a return: the retriever reinforced what it found, so
+    a person searching woke dormant memories, strengthened them and linked
+    them, and it searched by words alone. It opened the store for writing
+    too, which makes a store that isn't there. Now it reads only."""
+    from .interface.person import Refused, search_view
     from .simple_runtime import how_found
 
-    retriever = ReactiveRetriever(store)
-    scope = _cli_scope(args)
-    results = retriever.retrieve(
-        cue=args.query,
-        agent_id=scope.agent_id,
-        person_id=scope.person_id,
-        project_scope=scope.project_scope,
-        max_results=args.max_results,
-    )
+    runtime = _journal_runtime(args, read_only=True)
+    try:
+        if args.json:
+            try:
+                view = search_view(runtime, args.query, args.max_results)
+            except Refused as exc:
+                print(exc, file=sys.stderr)
+                return 2
+            print(json.dumps(view, indent=2, ensure_ascii=False))
+            return 0
+        results = runtime.search_memories(args.query, max_results=args.max_results)
+    finally:
+        runtime.close()
 
     if not results:
         print("No memories found.")
-        store.close()
         return 0
 
     for r in results:
@@ -2118,9 +2216,110 @@ def _cmd_search(args: argparse.Namespace) -> int:
             content = content[:77] + "..."
         print(f"{how_found(r)} {content}")
         print(f"         id={r.engram.id} kind={r.engram.kind}")
-
-    store.close()
     return 0
+
+
+def _cmd_memories(args: argparse.Namespace) -> int:
+    """List the memories, active and dormant, oldest first; reads only, and
+    never creates a store (``interface.person.memories_view``)."""
+    from .interface.person import Refused, memories_view
+
+    try:
+        view = memories_view(
+            _cli_scope(args), state=args.state, limit=args.limit, offset=args.offset,
+        )
+    except Refused as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(view, indent=2, ensure_ascii=False))
+        return 0
+    for index, memory in enumerate(view["memories"]):
+        if index:
+            print()
+        header = f"{_utc_minute(memory['kept'])}, {memory['state']}, alive {memory['alive']:.2f}"
+        if memory["corrected"]:
+            header += f", corrected {_utc_minute(memory['corrected'])}"
+        if memory["author"] == "person":
+            header += ", in your words"
+        print(header)
+        print(f"  {memory['words']}".replace("\n", "\n  "))
+        print(f"  id: {memory['id']}")
+    counts = view["counts"]
+    if view["memories"]:
+        print()
+    print(
+        f"{counts['active']:,} active, {counts['dormant']:,} dormant, "
+        f"{counts['archived']:,} archived."
+    )
+    return 0
+
+
+def _cmd_correct(args: argparse.Namespace) -> int:
+    """Correct a memory by its id (``MnemosRuntime.correct_memory``)."""
+    return _change_memory(args, correcting=True)
+
+
+def _cmd_forget(args: argparse.Namespace) -> int:
+    """Forget a memory by its id (``MnemosRuntime.forget_memory``)."""
+    return _change_memory(args, correcting=False)
+
+
+def _change_memory(args: argparse.Namespace, *, correcting: bool) -> int:
+    """`mnemos correct` and `mnemos forget`: the person's, run in their own
+    terminal or app; the agent's in an agent's shell or with --signed-as, as
+    ``mnemos remember`` decides (``authorship.run_by_agent``). A refusal is
+    one plain sentence on stderr, and nothing changes."""
+    from .authorship import run_by_agent
+    from .code_version import OLDER_CODE_FIX, OLDER_CODE_MESSAGE
+    from .simple_runtime import MnemosRuntime, NothingChanged
+
+    signed_as = (getattr(args, "signed_as", "") or "").strip()
+    agent = run_by_agent(signed_as)
+    runtime = MnemosRuntime(
+        db_path=getattr(args, "db_path", None),
+        agent_id=getattr(args, "agent_id", None),
+        person_id=getattr(args, "person_id", None),
+        project_scope=getattr(args, "project_scope", None),
+        use_dedicated_model=False,
+        marks_lived=False,  # a person at the command line, not the agent living
+    )
+    try:
+        try:
+            if correcting:
+                done = runtime.correct_memory(
+                    args.memory_id, args.text, person=not agent, signed_as=signed_as,
+                )
+            else:
+                done = runtime.forget_memory(args.memory_id, person=not agent, signed_as=signed_as)
+        except NothingChanged as exc:
+            print(exc, file=sys.stderr)
+            return 1
+        stale = runtime._stale()
+    finally:
+        runtime.close()
+    if args.json:
+        print(json.dumps(done, indent=2, ensure_ascii=False))
+        return 0
+    if correcting:
+        whose = "as the agent's own words" if agent else "in your words"
+        print(f"Corrected, {whose}: {done['id']} replaces {done['replaces']}.")
+    else:
+        print(f"Forgotten: {done['id']} is archived, never deleted, and recall won't bring it back.")
+    if stale:
+        print(f"{OLDER_CODE_MESSAGE} {OLDER_CODE_FIX}")
+    return 0
+
+
+def _cmd_interface(args: argparse.Namespace) -> int:
+    """Answer the person's commands for an app until stdin closes
+    (``interface.person.serve``)."""
+    from .interface.person import serve
+
+    return serve(**{
+        key: getattr(args, key, None)
+        for key in ("db_path", "agent_id", "person_id", "project_scope")
+    })
 
 
 def _cmd_consolidate(args: argparse.Namespace) -> int:
@@ -2376,15 +2575,12 @@ def _cmd_remember(args: argparse.Namespace) -> int:
     ``--signed-as``, it keeps the agent's own words, signed, as before."""
     import re
 
+    from .authorship import run_by_agent
     from .code_version import OLDER_CODE_FIX, OLDER_CODE_MESSAGE
     from .simple_runtime import MnemosRuntime
 
     signed_as = (getattr(args, "signed_as", "") or "").strip()
-    agent = bool(
-        signed_as
-        or os.environ.get("CLAUDECODE", "").strip()
-        or os.environ.get("AI_AGENT", "").strip()
-    )
+    agent = run_by_agent(signed_as)
 
     runtime = MnemosRuntime(
         db_path=getattr(args, "db_path", None),

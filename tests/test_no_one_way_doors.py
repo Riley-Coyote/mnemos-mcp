@@ -311,8 +311,8 @@ def test_recalling_a_dormant_memory_by_its_id_wakes_it(tmp_path):
 
 
 def test_every_recall_path_wakes_what_it_returns_and_older_code_none(tmp_path):
-    """The advanced server, the bridge and `mnemos search` retrieve and
-    reinforce in one call. A dormant memory they return wakes too, and a store
+    """The advanced server and the bridge retrieve and reinforce in one call
+    (`mnemos search` only looks, since M07a). A dormant memory they return wakes too, and a store
     newer code has opened keeps its dormant memories as they are."""
     def retrieve(db) -> list[str]:
         store = EngramStore(str(db))

@@ -1407,6 +1407,20 @@ class EmbeddingIndex:
         results.sort(key=lambda x: x[1], reverse=True)
         return results[:k]
 
+    def share_embedder(self, other: "EmbeddingIndex") -> bool:
+        """Embed with ``other``'s backend, and the model it has loaded, when
+        both would embed the same way (the same backend and model): one model
+        for a process that keeps several indexes (``mnemos interface``),
+        rather than one load of it each. Returns whether it does now."""
+        mine, theirs = self._embedder, other._embedder
+        if (
+            mine is None or theirs is None or type(mine) is not type(theirs)
+            or mine.model_name != theirs.model_name
+        ):
+            return False
+        self._embedder = theirs
+        return True
+
     def embed_query(self, text: str) -> list[float] | None:
         """``text``'s vector, as recall compares it with the passages; None
         when embedding it failed (a network backend that timed out, a model
