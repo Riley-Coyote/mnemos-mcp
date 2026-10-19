@@ -15,10 +15,12 @@ import logging
 import os
 import math
 import re
+import secrets
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -329,8 +331,9 @@ def maintenance_index(db_path: str) -> EmbeddingIndex:
 # call again, as before; the test suite runs that way, for cycles it can see.
 _UPKEEP_ENV = "MNEMOS_MAINTENANCE"
 # The scope's claim on its automatic maintenance, so one process at a time
-# runs it: written when a process starts one, cleared when it finishes. A claim
-# this old is from a process that died, and no longer holds.
+# runs it: written when a process starts one, cleared when it finishes, by the
+# token that took it and no other. A claim this old is from a process that
+# died, and no longer holds.
 _UPKEEP_CLAIM = "upkeep_running"
 _UPKEEP_STALE = timedelta(minutes=15)
 # What went wrong with the last maintenance run in the background, until one
@@ -374,16 +377,84 @@ def _claim_holds(value: str | None, now: datetime) -> bool:
     return now - at < _UPKEEP_STALE
 
 
-def _spawn_upkeep(scope: MnemosScope) -> bool:
+def upkeep_claim_key(agent_id: str, person_id: str, project_scope: str) -> str:
+    """The meta key of one scope's claim on its maintenance."""
+    return f"simple:{agent_id}:{person_id}:{project_scope}:{_UPKEEP_CLAIM}"
+
+
+def claim_upkeep(
+    store: EngramStore, key: str, token: str, due: Callable[[], bool] | None = None,
+) -> str:
+    """Claim a scope's maintenance (its claim's meta ``key``) with ``token``,
+    in one transaction, when no other process holds the claim and ``due``,
+    when given, says the maintenance is due: "claimed", "not due", "running",
+    or "busy" when the store's lock couldn't be had. Only ``token`` gives the
+    claim up (``release_upkeep``).
+
+    A capture's maintenance takes it (``MnemosRuntime._claim_upkeep``), and so
+    does the scheduled job (``mnemos consolidate``), so one cycle runs at a
+    time per scope, whichever started it."""
+    now = datetime.now(timezone.utc)
+    try:
+        with store.transaction():
+            if due is not None and not due():
+                return "not due"
+            if _claim_holds(store.get_meta(key), now):
+                return "running"
+            store.set_meta(key, json.dumps({
+                "at": now.isoformat(), "by": os.getpid(), "token": token,
+            }))
+    except sqlite3.Error:
+        return "busy"
+    return "claimed"
+
+
+def _claim_token(value: str | None) -> str:
+    """The token a stored claim was taken with, or ``""``."""
+    try:
+        claim = json.loads(value or "{}")
+    except (ValueError, TypeError):
+        return ""
+    return str(claim.get("token") or "") if isinstance(claim, dict) else ""
+
+
+def release_upkeep(store: EngramStore, key: str, token: str) -> None:
+    """Give up a claim on a scope's maintenance, if it is still the one
+    ``token`` took. A holder that ran past the lapse (``_UPKEEP_STALE``) may
+    find a newer holder's claim there when it ends, and leaves it."""
+    if not token:
+        return
+    try:
+        with store.transaction():
+            if _claim_token(store.get_meta(key)) == token:
+                store.set_meta(key, "")
+    except sqlite3.Error:
+        pass  # the claim lapses on its own
+
+
+def _maintenance_stopped(failure: str) -> str:
+    """What a write's result says of its maintenance when the bookkeeping
+    after its save stopped before maintenance answered
+    (``MnemosRuntime._after_saving``)."""
+    return "\n".join([
+        "Requested: standard",
+        "Cycle: skipped",
+        f"Completed: not this time ({failure}); the next call starts it",
+        "Passes: none",
+    ])
+
+
+def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
     """Start ``scope``'s maintenance in a process of its own, detached, so it
-    outlives the session that asked for it. Returns whether it started."""
+    outlives the session that asked for it, holding the claim ``token`` took.
+    Returns whether it started."""
     if not sys.executable:
         return False
     db_path = Path(scope.db_path).expanduser()
     root = str(Path(__file__).resolve().parent.parent)
     command = [
         sys.executable, "-c", _UPKEEP_CHILD, root,
-        str(db_path), scope.agent_id, scope.person_id, scope.project_scope,
+        str(db_path), scope.agent_id, scope.person_id, scope.project_scope, token,
     ]
     options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
@@ -415,14 +486,16 @@ def _spawn_upkeep(scope: MnemosScope) -> bool:
 
 def run_background_upkeep(argv: list[str]) -> int:
     """The background process's work: the scope's automatic maintenance, as a
-    capture used to run it before answering. Clears the scope's claim when
-    done, and records what went wrong, if anything did, for the next capture
-    to say. Returns the process's exit status."""
-    db_path, agent_id, person_id, project_scope = argv
+    capture used to run it before answering. Gives up the scope's claim when
+    done (the capture's, by the token it took it with: the last argument),
+    and records what went wrong, if anything did, for the next capture to
+    say. Returns the process's exit status."""
+    db_path, agent_id, person_id, project_scope, *rest = argv
     runtime = MnemosRuntime(
         db_path=db_path, agent_id=agent_id, person_id=person_id, project_scope=project_scope,
     )
     runtime._upkeep_inline = True
+    runtime._upkeep_token = rest[0] if rest else ""
     failed = ""
     try:
         report = runtime.maintain(auto=True)
@@ -438,7 +511,7 @@ def run_background_upkeep(argv: list[str]) -> int:
         except Exception:
             pass
         try:
-            runtime._set_meta(_UPKEEP_CLAIM, "")
+            runtime._release_upkeep()
         except Exception:
             pass
         runtime.close()
@@ -1072,6 +1145,9 @@ class MnemosRuntime:
         # Whether this runtime runs automatic maintenance in the call that asks
         # for it: the background process's own runtime does (see maintain).
         self._upkeep_inline = False
+        # The token of the last claim on this scope's maintenance this runtime
+        # took (claim_upkeep), which alone gives it up.
+        self._upkeep_token = ""
 
     @property
     def db_path(self) -> Path:
@@ -3921,6 +3997,50 @@ class MnemosRuntime:
         except Exception:
             pass
 
+    @contextmanager
+    def _after_saving(self, saved: str) -> Iterator[list[str]]:
+        """Run what a write does once what it saved has committed: its
+        bookkeeping (meta, the vector, recall's meaning index, maintenance),
+        which never fails the call.
+
+        A capture whose memory was saved raised "database is locked" when the
+        meta write after it met another process's lock, and an agent told its
+        capture failed captures again: one thing remembered twice. Now the
+        first failure here stops the rest, is logged once, and the call
+        answers with what it saved, as usual. The failed write's transaction
+        is rolled back, so the store is as the next write needs it. What went
+        wrong is yielded, one line or none, for a result that reports on its
+        bookkeeping (a capture's maintenance). ``saved`` names what was saved,
+        for the log.
+
+        Inside a host mutation or a caller's transaction nothing has committed
+        yet: there a failure fails the call, and the whole operation rolls
+        back with it.
+        """
+        failed: list[str] = []
+        if self._host_mutation_active or getattr(self._store, "_transaction_depth", 0):
+            yield failed
+            return
+        try:
+            yield failed
+        except Exception as exc:
+            failed.append(f"{type(exc).__name__}: {exc}")
+            logging.getLogger(__name__).warning(
+                "Saved %s; what follows the save stopped: %s", saved, failed[0],
+            )
+            if self._store is not None:
+                try:
+                    self._store._rollback()
+                except sqlite3.Error:
+                    pass
+
+    def _maintain_after_saving(self, saved: str) -> str:
+        """A write's automatic maintenance, after its save: bookkeeping, which
+        never fails the call (``_after_saving``)."""
+        with self._after_saving(saved) as failed:
+            return self.maintain(auto=True)
+        return _maintenance_stopped(failed[0])
+
     def _signed_line(self, author: str) -> str:
         if author:
             return f"Signed: {signature(author)}"
@@ -4199,8 +4319,10 @@ class MnemosRuntime:
         )
         self._traced_write(handoff_id)
         # Recall finds it by its meaning from the next call on, once it has
-        # passages; by its words it is found at once.
-        self._index_for_recall(budget=None, only={handoff_id})
+        # passages; by its words it is found at once. Bookkeeping, after the
+        # save: it never fails the call (_after_saving).
+        with self._after_saving(f"handoff {handoff_id}"):
+            self._index_for_recall(budget=None, only={handoff_id})
         if session:
             lasts = (
                 "It replaces only the handoff this session left before; notes "
@@ -4261,8 +4383,9 @@ class MnemosRuntime:
         )
         self._traced_write(entry_id)
         # Recall finds it by its words at once, and by its meaning from the
-        # next call on, as it does a handoff.
-        self._index_for_recall(budget=None, only={entry_id})
+        # next call on, as it does a handoff; that never fails the call.
+        with self._after_saving(f"journal entry {entry_id}"):
+            self._index_for_recall(budget=None, only={entry_id})
         return (
             "Journal entry kept exactly as written.\n"
             f"Journal ID: {entry_id}\n"
@@ -4909,17 +5032,24 @@ class MnemosRuntime:
             salience=salience,
             foundational=domain in {"foundational", "identity"},
         )
-        # The vector, once the pair has committed (see Encoder.finish).
-        self._encoder.finish(engram)
         self._traced_write(engram.id, note_id)
-        # The first capture is the agent's own: the person's words have their
-        # own line in the wake.
-        if not person:
-            self._record_first_capture(note_id, engram.id, content)
-        # Continuity just arrived, so any run of empty packets is over.
-        self._set_meta("last_capture_session", str(self._current_session()))
-        self._set_meta("empty_context_streak", "0")
-        maintenance = self.maintain(auto=True)
+        # The memory is saved. What follows is bookkeeping, which never fails
+        # the call (_after_saving): told its capture failed, an agent captures
+        # it again.
+        maintenance = ""
+        with self._after_saving(f"memory {engram.id}") as failed:
+            # The vector, once the pair has committed (see Encoder.finish).
+            self._encoder.finish(engram)
+            # The first capture is the agent's own: the person's words have
+            # their own line in the wake.
+            if not person:
+                self._record_first_capture(note_id, engram.id, content)
+            # Continuity just arrived, so any run of empty packets is over.
+            self._set_meta("last_capture_session", str(self._current_session()))
+            self._set_meta("empty_context_streak", "0")
+            maintenance = self.maintain(auto=True)
+        if failed:
+            maintenance = _maintenance_stopped(failed[0])
 
         standing_line = ""
         if mark is not None:
@@ -5521,9 +5651,11 @@ class MnemosRuntime:
                         replacement, self._store, {},
                         author_model=corrector, author_session=session,
                     )
-        # The vector, once everything above has committed (Encoder.finish).
-        self._encoder.finish(replacement)
         self._traced_write(replacement.id, note_id, lesson_id)
+        # The vector, once everything above has committed (Encoder.finish):
+        # bookkeeping, which never fails the call (_after_saving).
+        with self._after_saving(f"correction {replacement.id}"):
+            self._encoder.finish(replacement)
 
         said_lines = []
         if kept:
@@ -5586,8 +5718,10 @@ class MnemosRuntime:
         self._traced_write(note["id"])
         # The revision dropped its passages with its old words. Index the new
         # words now, within the write's budget; if they don't fit, the note
-        # waits with no passages, never found by its old meaning.
-        self._index_for_recall(budget=None, only={note["id"]})
+        # waits with no passages, never found by its old meaning. That is
+        # bookkeeping, and never fails the call (_after_saving).
+        with self._after_saving(f"revision of note {note['id']}"):
+            self._index_for_recall(budget=None, only={note["id"]})
         if (impact or "").strip():
             return (
                 f"Updated {closest}continuity note {note['id']}.\n"
@@ -5939,13 +6073,13 @@ class MnemosRuntime:
                     said = self._correct_other_note(
                         note, correction, action, impact, query=query_text, **signing,
                     )
-                    maintenance = self.maintain(auto=True)
+                    maintenance = self._maintain_after_saving(f"correction of note {note['id']}")
                     return "\n".join([said, "Maintenance:", _indent(maintenance), *also])
                 if forget:
                     _retired_notes, retired_memories = self._forget_pair(
                         note, engram, action=action, query=query_text, **signing,
                     )
-                    maintenance = self.maintain(auto=True)
+                    maintenance = self._maintain_after_saving(f"forget of note {match['id']}")
                     lines = [f"Archived closest continuity note {match['id']}."]
                     if retired_memories:
                         lines.append(f"Its memory {', '.join(retired_memories)} was archived with it.")
@@ -5958,7 +6092,7 @@ class MnemosRuntime:
                     query=query_text,
                     **signing,
                 )
-                maintenance = self.maintain(auto=True)
+                maintenance = self._maintain_after_saving(f"correction {result['engram_id']}")
                 return "\n".join([
                     f"Updated closest continuity note {match['id']}.",
                     f"Memory ID: {result['engram_id']}",
@@ -6349,7 +6483,7 @@ class MnemosRuntime:
         failed = self._last_upkeep_failure()
         claim = self._claim_upkeep()
         if claim == "claimed":
-            if _spawn_upkeep(self.scope):
+            if _spawn_upkeep(self.scope, self._upkeep_token):
                 return "\n".join([
                     "Requested: standard",
                     "Cycle: started in the background",
@@ -6379,38 +6513,37 @@ class MnemosRuntime:
         ])
 
     def _claim_upkeep(self) -> str:
-        """Claim this scope's automatic maintenance, in one transaction, when
-        it is due (the activity gate) and no other process holds the claim:
-        "claimed", "not due", "running", or "busy" when the store's lock
-        couldn't be had. Two captures in different sessions within a cycle's
-        run used to start a cycle each, and the two fought over the lock."""
+        """Claim this scope's automatic maintenance (``claim_upkeep``) when it
+        is due (the activity gate) and no other process holds the claim, a
+        capture's or the scheduled job's: "claimed", "not due", "running", or
+        "busy" when the store's lock couldn't be had. Two captures in
+        different sessions within a cycle's run used to start a cycle each,
+        and the two fought over the lock."""
         assert self._store is not None
         try:
             config = load_config()
         except Exception:
             config = {}
         gate = ConsolidationDaemon(store=self._store, config=config)
-        key = self._meta_key(_UPKEEP_CLAIM)
-        now = datetime.now(timezone.utc)
-        try:
-            with self._store.transaction():
-                if not gate._should_run(
-                    self.scope.agent_id, self.scope.person_id, self.scope.project_scope,
-                ):
-                    return "not due"
-                if _claim_holds(self._store.get_meta(key), now):
-                    return "running"
-                self._store.set_meta(key, json.dumps({"at": now.isoformat(), "by": os.getpid()}))
-        except sqlite3.Error:
-            return "busy"
-        return "claimed"
+        token = secrets.token_hex(8)
+        taken = claim_upkeep(
+            self._store,
+            self._meta_key(_UPKEEP_CLAIM),
+            token,
+            due=lambda: gate._should_run(
+                self.scope.agent_id, self.scope.person_id, self.scope.project_scope,
+            ),
+        )
+        if taken == "claimed":
+            self._upkeep_token = token
+        return taken
 
     def _release_upkeep(self) -> None:
-        """Give up this scope's claim on its automatic maintenance."""
-        try:
-            self._set_meta(_UPKEEP_CLAIM, "")
-        except sqlite3.Error:
-            pass  # the claim lapses on its own
+        """Give up this scope's claim on its automatic maintenance, if it is
+        still the one this runtime took (``release_upkeep``)."""
+        self._ensure_init()
+        assert self._store is not None
+        release_upkeep(self._store, self._meta_key(_UPKEEP_CLAIM), self._upkeep_token)
 
     def _last_upkeep_failure(self) -> list[str]:
         """The line saying what went wrong with the last maintenance run in

@@ -2,6 +2,39 @@
 
 ## 0.4.1 (unreleased)
 
+### A saved capture never reports failure, and one maintenance cycle runs at a time
+
+A capture saves its memory and its note in one transaction, then does its
+bookkeeping: two meta values, its vector, its maintenance. When one of those
+later writes met another process's lock, the capture raised "database is
+locked" although the memory was kept, and an agent told its capture failed
+captures it again. On a scratch store, with the lock forced on that meta
+write, the capture raised with its memory and note saved, and the call's
+trace row was lost.
+
+Now everything after the save is bookkeeping, and it never fails the call: the
+first failure stops the rest, is logged once, the failed write's transaction
+is rolled back, and the call answers with what it saved, its maintenance line
+saying "not this time" and why. A correction, a handoff and a journal entry
+keep the same rule for what follows their saves. Inside a host mutation
+nothing has committed yet, so a failure there still rolls the whole operation
+back.
+
+The scheduled job (`mnemos consolidate`, and `--deep`) took no claim on the
+memory's maintenance, and the activity gate a capture asks reads the cycle
+log, which a cycle writes when it ends. So a capture during the job's cycle
+started a second cycle beside it: on a scratch store, a capture made while the
+job's cycle ran started one in the background, which ran and finished inside
+the job's. Now the job holds the claim a capture's maintenance takes while it
+runs, and gives it up when it ends, even when its cycle fails. A capture that
+finds it held starts no cycle ("another process is running this memory's
+maintenance now"), and a job that finds a capture's maintenance running runs
+none and says so; its next run does. A claim carries a token, and only the
+token that took it gives it up: a cycle that ran past the claim's fifteen
+minutes, and finds a newer claim when it ends, leaves that claim in place.
+
+No maintenance rule changed, and the code version stays 22.
+
 ### Your memory, from your own app
 
 An app that shows a person their agent's memory (Ghost's home is the first)

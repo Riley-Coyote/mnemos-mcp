@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import shutil
 import shlex
 import sqlite3
@@ -2323,11 +2324,11 @@ def _cmd_interface(args: argparse.Namespace) -> int:
 
 
 def _cmd_consolidate(args: argparse.Namespace) -> int:
-    """Run a consolidation cycle."""
+    """Run a consolidation cycle, holding the scope's claim on its maintenance
+    while it runs."""
     store = _get_store(args)
     from .code_version import MAINTENANCE_CODE_VERSION, OLDER_CODE_FIX, OLDER_CODE_MESSAGE
-    from .consolidation.daemon import ConsolidationDaemon
-    from .llm import create_client
+    from .simple_runtime import claim_upkeep, release_upkeep, upkeep_claim_key
 
     # The same gate as maintenance through a session: code older than the
     # store runs none of the passes, whose rules newer code has replaced.
@@ -2341,6 +2342,39 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
         )
         print(f"{OLDER_CODE_MESSAGE} {OLDER_CODE_FIX}")
         return 0
+
+    # One cycle at a time per scope. A capture's maintenance claims the scope
+    # before it starts a cycle, and this job took no claim: a capture while
+    # the job's cycle ran found nothing running and started a second cycle
+    # beside it. The job holds the same claim while it runs and gives it up
+    # however it ends. While another process holds it, the job runs no cycle,
+    # and the next run starts one.
+    scope = _cli_scope(args)
+    claim = upkeep_claim_key(scope.agent_id, scope.person_id, scope.project_scope)
+    token = secrets.token_hex(8)
+    taken = claim_upkeep(store, claim, token)
+    if taken != "claimed":
+        store.close()
+        print("Consolidation skipped: no passes ran.")
+        print(
+            "Another process is running this memory's maintenance now."
+            if taken == "running"
+            else "The store was busy; the next run starts it."
+        )
+        return 0
+    try:
+        _consolidate(args, store, scope)
+    finally:
+        release_upkeep(store, claim, token)
+        store.close()
+    return 0
+
+
+def _consolidate(args: argparse.Namespace, store, scope) -> None:
+    """The job's cycle, its report and the indexing after it, run while the
+    job holds the scope's claim (``_cmd_consolidate``)."""
+    from .consolidation.daemon import ConsolidationDaemon
+    from .llm import create_client
 
     llm_client = create_client()
     try:
@@ -2365,7 +2399,6 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
     label = "deep" if args.deep else "shallow"
     print(f"Running {label} consolidation...")
 
-    scope = _cli_scope(args)
     stats = daemon.run_cycle(
         deep=args.deep, agent_id=scope.agent_id, person_id=scope.person_id,
         project_scope=scope.project_scope,
@@ -2401,8 +2434,6 @@ def _cmd_consolidate(args: argparse.Namespace) -> int:
     _index_after_consolidating(store, args, scope, index)
     if index is not None:
         index.close()
-    store.close()
-    return 0
 
 
 def _report_consolidation(store, scope, stats: dict) -> None:
