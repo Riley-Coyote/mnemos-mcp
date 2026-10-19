@@ -351,15 +351,22 @@ def _env_search_paths() -> list:
 
 def _load_env_key(key_name: str) -> str:
     """Try to find an API key from env vars, then from .env files."""
+    return _find_env_key(key_name)[0]
+
+
+def _find_env_key(key_name: str) -> tuple[str, str]:
+    """A setting's value, and where it was found: "the environment", or the
+    path of the .env file it was read from. ("", "") when it is nowhere
+    Mnemos looks. `mnemos doctor` says where."""
     # 1. Environment variable
     val = os.environ.get(key_name, "").strip()
     if val:
-        return val
+        return val, "the environment"
 
     # 2. .env files, unless ambient config reads are disabled
     #    (test isolation, hermetic deployments)
     if _dotenv_disabled():
-        return ""
+        return "", ""
 
     for env_path in _env_search_paths():
         if env_path.exists():
@@ -369,11 +376,11 @@ def _load_env_key(key_name: str) -> str:
                     if line.startswith(f"{key_name}="):
                         val = line.split("=", 1)[1].strip().strip('"').strip("'")
                         if val:
-                            return val
+                            return val, str(env_path)
             except OSError:
                 continue
 
-    return ""
+    return "", ""
 
 
 

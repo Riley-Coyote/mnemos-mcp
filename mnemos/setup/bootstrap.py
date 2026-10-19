@@ -61,8 +61,12 @@ MNEMOS_MODEL={model}
 # ANTHROPIC_API_KEY=your-key-here
 # OPENAI_API_KEY=your-key-here
 
-# ── Embedding Support (optional) ──
-# GOOGLE_API_KEY=your-key-here
+# ── Meaning search (optional) ──
+# Local by default: nothing leaves this machine. Gemini sends the words of
+# every memory and question to Google instead, and only when chosen; a key
+# on its own chooses nothing.
+# MNEMOS_EMBEDDING_PROVIDER=gemini
+# GEMINI_API_KEY=your-key-here
 """
 
 

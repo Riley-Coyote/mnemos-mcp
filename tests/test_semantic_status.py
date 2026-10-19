@@ -159,7 +159,8 @@ def test_a_broken_import_is_reported_with_its_root_cause(broken_sentence_transfo
     assert "installed but failed to import" in reason
     assert ROOT_CAUSE in reason, "the cause that says what to fix was dropped"
     assert SURFACE in reason, "the message the user actually saw should stay recognizable"
-    assert "GEMINI_API_KEY" in reason
+    # A key on its own turns nothing on, so the reason doesn't send anyone for one.
+    assert "GEMINI_API_KEY" not in reason
     assert reason.index(ROOT_CAUSE) < reason.index(SURFACE), "lead with the root cause"
 
 
@@ -370,7 +371,7 @@ def test_a_gemini_failure_is_kept_without_the_api_key(monkeypatch, fresh_backend
         raise urllib.error.URLError("refused for key=SECRET-KEY-123")
 
     monkeypatch.setattr(urllib.request, "urlopen", refuse)
-    index = EmbeddingIndex(db_path=None, gemini_api_key="SECRET-KEY-123")
+    index = EmbeddingIndex(db_path=None, gemini_api_key="SECRET-KEY-123", provider="gemini")
 
     assert index.verify() is False
     status = index.status()

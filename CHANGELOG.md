@@ -2,6 +2,36 @@
 
 ## 0.4.1 (unreleased)
 
+### Meaning stays on this machine unless you choose Gemini
+
+**Breaking.** A GEMINI_API_KEY anywhere Mnemos looks (the environment, the
+working folder's `.env`, or `~/.mnemos/.env`) was enough to switch meaning
+search to Google's Gemini API, with no Mnemos setting at all: the words of
+every memory it indexed, and of every question recall and the cue asked by
+meaning, went to Google. Many people keep that key for other tools, and a
+mind that runs in a home folder with one in `~/.env` sent its memory out.
+Mnemos's model has waited for the person's choice since 0.4.0; now meaning
+does too. It is local unless the person chooses Gemini for Mnemos, with the
+key set: `MNEMOS_EMBEDDING_PROVIDER=gemini`, in the environment or a `.env`
+file Mnemos reads, or `{"embeddings": {"provider": "gemini"}}` in
+`~/.mnemos/config.json`. A key on its own chooses nothing. Gemini chosen
+without a key is local, never off and never another service, and a provider
+Mnemos doesn't know (it knows `local` and `gemini`) is local too, said once in
+the log. In code, `EmbeddingIndex(provider="gemini")` chooses, and
+`gemini_api_key=` on its own doesn't. `mnemos doctor` has a Meaning line:
+which provider meaning uses, its model, and why; when a GEMINI_API_KEY is
+there but not chosen, it says that Mnemos doesn't use it, that meaning stays
+on this machine, and how to choose Gemini.
+
+**Migration.** Nothing to do to stay local. A store Gemini indexed keeps its
+Gemini vectors, filed by model. The local model's are built beside them as
+Mnemos keeps its index up (a little with each capture, more with the scheduled
+upkeep, or all at once with `mnemos embeddings index`); until a memory has
+one, recall finds it by its words. To go on with Gemini, set
+`MNEMOS_EMBEDDING_PROVIDER=gemini` beside the key, and its vectors are used
+again. Until then, `mnemos repair dead-embeddings --write` would prune them,
+as it prunes the vectors of any model not in use.
+
 ### A capture answers before its maintenance runs
 
 A capture that came due for maintenance (five minutes after the last cycle,

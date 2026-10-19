@@ -859,6 +859,7 @@ def hanging(monkeypatch):
             )
         return real(request, timeout=timeout, **kwargs)
 
+    monkeypatch.setenv("MNEMOS_EMBEDDING_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-real")
     monkeypatch.setattr(urllib.request, "urlopen", rerouted)
     monkeypatch.setattr(ei, "_LOGGED", set(), raising=False)

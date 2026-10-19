@@ -52,6 +52,14 @@ A chosen provider is sent memories to classify the links between them and to
 weigh how surprising a new one is. It never writes in the agent's place: it
 rewords no memory, names no lesson and moves no belief.
 
+Meaning search embeds on this machine, with a local model. Google's Gemini
+embeddings are the one other choice, and Mnemos uses them only when the person
+chooses them for Mnemos: `MNEMOS_EMBEDDING_PROVIDER=gemini` (in the environment
+or a `.env` Mnemos reads) or `embeddings.provider` in its config, with a
+`GEMINI_API_KEY`. A `GEMINI_API_KEY` on its own chooses nothing. Chosen, Gemini
+is sent the words of every memory and question it embeds. `mnemos doctor` says
+which one meaning uses, and why.
+
 ## Stored Words and Trust
 
 A memory system can carry an attack across sessions: text with instructions in
@@ -120,5 +128,7 @@ Before a release:
 - verify agent/person/project scope isolation
 - verify docs say provider keys are optional
 - verify a provider key alone sends nothing (`scripts/readiness_check.py`, C5)
+- verify a `GEMINI_API_KEY` alone leaves meaning search local (`mnemos doctor`'s
+  Meaning line; `tests/test_meaning_stays_on_this_machine.py`)
 - verify `mnemos uninstall --write` removes only Mnemos's own hooks, servers and
   jobs, and leaves the memories

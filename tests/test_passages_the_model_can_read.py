@@ -622,6 +622,7 @@ def test_a_stalled_provider_holds_a_write_no_longer_than_its_budget(tmp_path, mo
     waits until it at most, and none starts after it."""
     budget = 0.5
     provider = _StalledProvider()
+    monkeypatch.setenv("MNEMOS_EMBEDDING_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(urllib.request, "urlopen", provider)
     monkeypatch.setattr(ei, "WRITE_NETWORK_TIMEOUT", budget)

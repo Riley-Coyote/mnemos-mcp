@@ -161,7 +161,8 @@ Set these in your agent's `.env` file or system environment:
 | `ANTHROPIC_API_KEY` | Anthropic API key | If using Anthropic |
 | `OPENAI_API_KEY` | OpenAI API key | If using OpenAI |
 | `MNEMOS_MODEL` | Model override | Optional |
-| `GOOGLE_API_KEY` | For embedding support | Optional |
+| `MNEMOS_EMBEDDING_PROVIDER` | Meaning search: `local` (the default; nothing leaves the machine) or `gemini` (sends the words of memories and questions to Google). A key on its own chooses nothing | Optional |
+| `GEMINI_API_KEY` | Gemini API key, used only when `MNEMOS_EMBEDDING_PROVIDER=gemini` | If using Gemini |
 
 ### Workspace Structure
 

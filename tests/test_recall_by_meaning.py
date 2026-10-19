@@ -1137,6 +1137,7 @@ def gemini(monkeypatch):
     The write path's waits are shortened (0.3 s) so a hang costs little here;
     the rule under test is that a write waits no longer than they say."""
     fake = _Gemini()
+    monkeypatch.setenv("MNEMOS_EMBEDDING_PROVIDER", "gemini")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(urllib.request, "urlopen", fake)
     monkeypatch.setattr(ei, "WRITE_NETWORK_TIMEOUT", 0.3, raising=False)

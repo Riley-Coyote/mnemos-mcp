@@ -2,14 +2,21 @@
 Embedding index for semantic similarity search.
 
 Supports two backends:
-  1. Gemini API (gemini-embedding-2-preview, 3072 dims) — default, high quality
-  2. Local sentence-transformers (all-MiniLM-L6-v2, 384 dims) — fallback if no API key
+  1. Local sentence-transformers (all-MiniLM-L6-v2, 384 dims) — the default:
+     it embeds on this machine, and nothing leaves it
+  2. Gemini API (gemini-embedding-2-preview, 3072 dims) — only when the person
+     chooses it for Mnemos: it is sent the words of every memory and question
+     it embeds
 
-Backend selection:
-  - If GEMINI_API_KEY is found (env var or .env files), uses Gemini API
-  - Otherwise falls back to local sentence-transformers
-  - If neither is available, all operations return empty results, and
-    status() says why — recall then seeds from keywords alone, which must
+Backend selection (``embedding_choice``, one answer for every index and for
+`mnemos doctor`):
+  - Gemini when MNEMOS_EMBEDDING_PROVIDER=gemini (the environment, or a .env
+    file Mnemos reads) or ``embeddings.provider`` in its config chooses it,
+    and a GEMINI_API_KEY is found. A key on its own chooses nothing
+  - Otherwise local sentence-transformers: nothing chosen, local chosen,
+    Gemini chosen with no key, or a provider Mnemos doesn't know
+  - If the local model can't run here, all operations return empty results,
+    and status() says why — recall then seeds from keywords alone, which must
     never happen without anyone being told
 
 Embeddings stored in SQLite alongside engrams. A vector is only ever
@@ -338,6 +345,92 @@ def _load_env_key(key_name: str) -> str | None:
     return _shared_load_env_key(key_name) or None
 
 
+# --- Which provider meaning search uses ---
+
+# The providers meaning search knows. The local model embeds on this machine;
+# Gemini, Google's API, is sent the words of every memory and question it
+# embeds. Local is the default.
+LOCAL = "local"
+GEMINI = "gemini"
+EMBEDDING_PROVIDERS = (LOCAL, GEMINI)
+# What chooses, in the environment or a .env file Mnemos reads.
+PROVIDER_SETTING = "MNEMOS_EMBEDDING_PROVIDER"
+# The model each provider embeds with, unless an index is given another.
+LOCAL_MODEL = "all-MiniLM-L6-v2"
+GEMINI_MODEL = "gemini-embedding-2-preview"
+
+
+def embedding_choice(
+    provider: str | None = None, *, gemini_api_key: str | None = None,
+) -> dict[str, str]:
+    """Which provider meaning search uses, with which model, and why: the one
+    answer for every index (``EmbeddingIndex``) and for `mnemos doctor`.
+
+    Only a choice made for Mnemos counts, as for its model
+    (``llm.chosen_provider``): ``provider`` when code passes one (None or
+    blank passes none), else MNEMOS_EMBEDDING_PROVIDER, in the environment or
+    a .env file Mnemos reads, else ``embeddings.provider`` in its config.
+    Nothing chosen is local. A
+    provider Mnemos doesn't know is said once, in the log, and is local; so
+    is Gemini chosen with no GEMINI_API_KEY (``gemini_api_key`` when code
+    passes one): never off, and never another service.
+
+    A key on its own chooses nothing. Until 2026-10-19 a GEMINI_API_KEY in the
+    environment, the working folder's .env or ~/.mnemos/.env was enough for
+    the words of every memory and question to go to Google, with no Mnemos
+    setting at all. People keep that key for other tools, and a mind that runs
+    in a home folder with one in ~/.env sent its memory out.
+
+    Returns ``provider`` (what meaning uses: "local" or "gemini") and its
+    ``model``; ``chosen``, what was asked for ("" for nothing), and
+    ``chosen_in``, where ("code", "the environment", a .env file's path, or
+    "config"); and ``key_in``, where a GEMINI_API_KEY is ("code", "the
+    environment", a .env file's path, or "" for nowhere). Reads, never writes.
+    """
+    from ..llm import _find_env_key
+
+    if provider is not None and provider.strip():
+        chosen, chosen_in = provider, "code"
+    else:
+        chosen, chosen_in = _find_env_key(PROVIDER_SETTING)
+        if not chosen:
+            chosen, chosen_in = _configured_provider(), "config"
+    chosen = chosen.strip().lower()
+    if not chosen:
+        chosen_in = ""
+    elif chosen not in EMBEDDING_PROVIDERS:
+        _log_once(
+            f"embedding-provider:{chosen}", logging.WARNING,
+            "Mnemos's embedding provider %r is not one it knows (local or gemini); "
+            "meaning search uses the local model, on this machine.", chosen,
+        )
+    key_in = "code" if gemini_api_key else _find_env_key("GEMINI_API_KEY")[1]
+    if chosen == GEMINI and key_in:
+        used, model = GEMINI, os.environ.get("MNEMOS_EMBEDDING_MODEL", GEMINI_MODEL)
+    else:
+        used, model = LOCAL, LOCAL_MODEL
+    return {
+        "provider": used,
+        "model": model,
+        "chosen": chosen,
+        "chosen_in": chosen_in,
+        "key_in": key_in,
+    }
+
+
+def _configured_provider() -> str:
+    """``embeddings.provider`` in Mnemos's config, or "" when it has none."""
+    try:
+        from ..config.loader import load_config
+
+        embeddings = load_config().get("embeddings")
+    except Exception:
+        return ""
+    if isinstance(embeddings, dict):
+        return str(embeddings.get("provider") or "")
+    return ""
+
+
 # --- Gemini API embedding ---
 
 def _timed_out(exc: BaseException) -> bool:
@@ -582,8 +675,8 @@ def _local_import_failed(exc: BaseException) -> None:
     )
     _log_once(
         "local-import", logging.WARNING,
-        "Semantic recall is off in this process: %s. Without GEMINI_API_KEY, "
-        "recall seeds from keywords only.", _LOCAL_UNAVAILABLE,
+        "Semantic recall is off in this process: %s. Recall seeds from keywords "
+        "only.", _LOCAL_UNAVAILABLE,
     )
 
 
@@ -907,10 +1000,14 @@ def _similarities(
 class EmbeddingIndex:
     """Embedding index for semantic similarity search.
 
-    Backend auto-selection:
-      1. Gemini API if GEMINI_API_KEY available (3072 dims, high quality)
-      2. Local sentence-transformers fallback (384 dims)
-      3. Disabled if neither available
+    Backend, as the person chose it (``embedding_choice``):
+      1. Local sentence-transformers (384 dims), the default, on this machine
+      2. Gemini API (3072 dims), only when chosen and a GEMINI_API_KEY is found
+      3. Disabled if the local model can't run here
+
+    ``provider`` ("local" or "gemini") is a choice made in code, and outranks
+    the person's settings; ``gemini_api_key`` on its own chooses nothing, as a
+    key anywhere else doesn't.
 
     Usage:
         index = EmbeddingIndex(db_path="~/.mnemos/memory.db")
@@ -924,6 +1021,7 @@ class EmbeddingIndex:
         model_name: str | None = None,
         gemini_api_key: str | None = None,
         *,
+        provider: str | None = None,
         read_only: bool = False,
     ) -> None:
         self._db_path = db_path
@@ -941,22 +1039,23 @@ class EmbeddingIndex:
         # Whether passage_vectors marks each row's scheme (``_marks_scheme``).
         self._scheme_marked = False
 
-        # Resolve Gemini API key
-        api_key = gemini_api_key or _load_env_key("GEMINI_API_KEY")
+        # Gemini only when chosen, and only with its key; local otherwise.
+        choice = embedding_choice(provider, gemini_api_key=gemini_api_key)
+        api_key = None
+        if choice["provider"] == GEMINI:
+            api_key = gemini_api_key or _load_env_key("GEMINI_API_KEY")
 
         if api_key:
-            gemini_model = model_name or os.environ.get(
-                "MNEMOS_EMBEDDING_MODEL", "gemini-embedding-2-preview"
-            )
-            self._embedder = _GeminiEmbedder(api_key, gemini_model)
+            self._embedder = _GeminiEmbedder(api_key, model_name or choice["model"])
             self._available = True
         elif _check_local_deps():
-            local_model = model_name or "all-MiniLM-L6-v2"
-            self._embedder = _LocalEmbedder(local_model)
+            self._embedder = _LocalEmbedder(model_name or LOCAL_MODEL)
             self._available = True
         else:
+            local = _LOCAL_UNAVAILABLE or "local embeddings are unavailable"
             self._unavailable_reason = (
-                f"no GEMINI_API_KEY is set, and {_LOCAL_UNAVAILABLE or 'local embeddings are unavailable'}"
+                f"Gemini is chosen but no GEMINI_API_KEY is set, and {local}"
+                if choice["chosen"] == GEMINI else local
             )
 
         if self._available and db_path and not read_only:

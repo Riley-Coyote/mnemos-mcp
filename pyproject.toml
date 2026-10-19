@@ -52,7 +52,10 @@ mcp = []
 # retrieval this install actually has.
 embeddings = ["sentence-transformers>=2.2.0"]
 
-# Hosted embeddings instead of local ones. Requires GEMINI_API_KEY.
+# Hosted embeddings instead of local ones, used only when chosen for Mnemos
+# (MNEMOS_EMBEDDING_PROVIDER=gemini, or embeddings.provider in its config)
+# with GEMINI_API_KEY set: the words of every memory and question it embeds go
+# to Google. A key on its own chooses nothing.
 gemini = ["google-generativeai>=0.5.0"]
 
 anthropic = ["anthropic>=0.25.0"]

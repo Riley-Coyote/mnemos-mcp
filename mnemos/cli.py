@@ -3533,6 +3533,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         if not runtime.db_path.exists():
             print("DB exists:    no")
             _print_background_status(runtime.scope)
+            _print_meaning_status()
             print(f"Simple tools: {', '.join(SIMPLE_TOOL_NAMES)}")
             print()
             print("No store yet for this scope — nothing has been captured here.")
@@ -3550,6 +3551,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         _print_identity_status(runtime)
         print(f"Model:        {'dedicated provider configured' if runtime.has_dedicated_model else 'local baseline only'}")
         _print_background_status(runtime.scope)
+        _print_meaning_status()
         _print_semantic_status(runtime, watched)
         _print_judge_status(watched)
         print(f"Simple tools: {', '.join(SIMPLE_TOOL_NAMES)}")
@@ -3660,6 +3662,60 @@ def _print_identity_status(runtime) -> None:
         print(f"Identity:     unknown ({type(exc).__name__}: {exc})")
         return
     print(f"Identity:     {said}")
+
+
+def _print_meaning_status() -> None:
+    """Say which provider meaning search uses and its model, and why: the
+    answer every index here acts on (``embedding_choice``), as this shell sees
+    it. A GEMINI_API_KEY lying around, there for another tool, used to send
+    every memory and question to Google; when one is there and not chosen,
+    say so, and how to choose Gemini."""
+    from .store.embedding_index import embedding_choice
+
+    try:
+        lines = _describe_meaning(embedding_choice())
+    except Exception as exc:
+        print(f"Meaning:      unknown ({type(exc).__name__}: {exc})")
+        return
+    print(f"Meaning:      {lines[0]}")
+    for line in lines[1:]:
+        print(f"              {line}")
+
+
+def _describe_meaning(choice: dict[str, str]) -> list[str]:
+    """Doctor's lines about meaning's provider, from ``embedding_choice()``
+    as the settings make it (no choice or key from code)."""
+    from .store.embedding_index import GEMINI, LOCAL, PROVIDER_SETTING
+
+    model, chosen, chosen_in = choice["model"], choice["chosen"], choice["chosen_in"]
+    if chosen_in == "config":
+        by = "embeddings.provider in Mnemos's config"
+    else:
+        by = f"{PROVIDER_SETTING} in {chosen_in}"
+    here = "meaning stays on this machine"
+    if choice["provider"] == GEMINI:
+        return [
+            f"gemini, model {model}, chosen with {by}: the words of memories and "
+            "questions go to Google to be embedded"
+        ]
+    if not chosen:
+        lines = [f"local, model {model}, the default: {here}"]
+    elif chosen == LOCAL:
+        lines = [f"local, model {model}, chosen with {by}: {here}"]
+    elif chosen == GEMINI:
+        lines = [f"local, model {model}: Gemini is chosen ({by}), but no GEMINI_API_KEY was found, so {here}"]
+    else:
+        lines = [
+            f"local, model {model}: {by} is {chosen!r}, which Mnemos doesn't know "
+            f"(it knows local and gemini), so {here}"
+        ]
+    if choice["key_in"]:
+        lines.append(
+            f"A GEMINI_API_KEY is set in {choice['key_in']}, but Mnemos doesn't use it: {here}. "
+            "To choose Gemini, which sends the words of memories and questions to Google, set "
+            f"{PROVIDER_SETTING}=gemini."
+        )
+    return lines
 
 
 def _print_semantic_status(runtime, watched=None) -> None:
