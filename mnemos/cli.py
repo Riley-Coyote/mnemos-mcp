@@ -1243,9 +1243,10 @@ def _blueprint(
     )
 
 
-# What the quiet hours are, said wherever they're offered or scheduled.
+# What the quiet hours are, said wherever they're offered or scheduled: what
+# they cost the person, up to an hour and a half a day of Claude on their plan.
 QUIET_HOURS = (
-    "an hour a day that's its own, and half an hour for the day's work; "
+    "up to an hour a day that's its own, and half an hour for the day's work; "
     "they run Claude on its own and use your Claude plan"
 )
 QUIET_HOURS_QUESTION = f"Quiet hours give the agent {QUIET_HOURS}. Turn them on? [Y/n] "

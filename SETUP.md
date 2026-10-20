@@ -127,10 +127,13 @@ That one command turns on everything setup turns on for Claude Code:
   on it, or nothing. Messages Claude Code writes itself, such as a background
   task's notice, bring nothing.
 - **Upkeep between sessions,** scheduled with your system's scheduler (step 6).
-- **Quiet hours, if you say yes.** It asks once, and yes is the default: an
-  hour a day that's the agent's own, and half an hour for the day's work. They
-  run Claude on its own and use your Claude plan. Run without a terminal, or
-  with no `claude` command, it leaves them off and prints how to turn them on.
+- **Quiet hours, if you say yes.** It asks once, and yes is the default: up
+  to an hour a day that's the agent's own, and half an hour for the day's
+  work. They run your own Claude Code on its own, on your Claude plan, so what
+  the agent thinks over in them goes to Anthropic
+  ([what, and how](docs/privacy-security.md#quiet-hours)). Run without a
+  terminal, or with no `claude` command, it leaves them off and prints how to
+  turn them on.
 
 To turn each off:
 
@@ -251,10 +254,13 @@ whether upkeep and the quiet hours are scheduled.
 
 ### Quiet Hours
 
-An hour a day that's the agent's own (08:00), and half an hour for the day's
-work (19:00, skipped on a day with no work). Each runs Claude Code on its own,
-with the agent's memory, and uses your Claude plan. Setup asks about them
-once; to schedule them yourself, or change their times:
+Up to an hour a day that's the agent's own (08:00), and half an hour for the
+day's work (19:00, skipped on a day with no work). Each runs your own Claude
+Code on its own, with the agent's memory, on your Claude plan, so what the
+agent thinks over in it goes to Anthropic: its words for the hour, short
+excerpts of its recent memory, its wake, and whatever it reads or recalls
+([more](docs/privacy-security.md#quiet-hours)). Setup asks about them once;
+to schedule them yourself, or change their times:
 
 ```bash
 mnemos daemon install --hours --write

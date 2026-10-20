@@ -408,9 +408,10 @@ read.
 ### Storage
 
 Local SQLite, one file per agent, by default `~/.mnemos/<agent>.db`. No account, no
-service, no telemetry. Nothing leaves the machine unless you configure a provider
-yourself. This is not a privacy feature bolted on; it is the substrate, and it is what
-makes the continuity unrevokable by us.
+service of ours, no telemetry. Nothing leaves the machine unless you configure a provider
+yourself, or keep the quiet hours on: then the agent thinks over its memory through your
+own Claude Code, on your plan. This is not a privacy feature bolted on; it is the
+substrate, and it is what makes the continuity unrevokable by us.
 
 ### The interface, and why it is narrow when the engine is not
 
@@ -534,8 +535,10 @@ machine. Reinstalling replaces rather than stacks. Setup schedules this upkeep b
 (`--no-upkeep` leaves it out), nothing is scheduled without an explicit `--write`, and the
 preview prints exactly what it would schedule before it does anything. With no model
 chosen for Mnemos, upkeep is local passes only. The quiet hours, the agent's own time
-between sessions, are scheduled the same way, but only when the person says yes: they run
-Claude on its own and use the person's Claude plan.
+between sessions, are scheduled the same way, but only when asked for: yes to setup's one
+question, or `mnemos daemon install --hours`; an app that runs Mnemos for people may keep
+them on. They run the person's own Claude Code on its own, on the person's Claude plan, so
+what the agent thinks over in them goes to Anthropic.
 
 Two details are there because of specific failures. The transcript indexer, which an
 early install scheduled every thirty minutes, is retired, and installing takes its job

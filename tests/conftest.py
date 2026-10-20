@@ -33,6 +33,12 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     home = tmp_path_factory.mktemp("home")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))  # where Windows looks
+    # And that home is the account's own, as it is for anyone who runs Mnemos
+    # from their own shell; a test of a host app's HOME (one that isn't the
+    # account's) says so itself. Code in another process sees the real one.
+    from pathlib import Path
+
+    monkeypatch.setattr("mnemos.setup.scheduler.account_home", lambda: Path.home(), raising=False)
     for var in (
         "MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "MNEMOS_AGENT_MODEL",
         "MNEMOS_SUBSTRATE_AFFINITY", "MNEMOS_AGENT_ID", "MNEMOS_PERSON_ID",
@@ -64,6 +70,9 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
         # refuse every reply (R22): the hour belongs to the process the hour's
         # runner woke, not to the tests.
         "MNEMOS_HOUR_ID",
+        # A host app's budget for the one hour it runs: from a developer's
+        # shell, every hour in the suite would have it.
+        "MNEMOS_HOUR_MINUTES", "MNEMOS_HOUR_TOKEN_CEILING",
     ):
         monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("MNEMOS_DISABLE_DOTENV", "1")

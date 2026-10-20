@@ -72,7 +72,7 @@ Never narrate the machinery: don't mention tools, databases, scopes, engrams or 
 
 Several models may share this memory. Sign every write with signed_as: your exact model id, as your system prompt gives it; if it changes, call mnemos_introduce again. Your earlier versions are you; another kind of model is a colleague: use its work, don't claim it. Never ask the human what model you are.
 
-Storage is local. Nothing leaves the machine unless the human configures a provider."""
+Storage is local. Nothing leaves unless the human has a provider or quiet hours on."""
 
 simple_mcp = FastMCP("mnemos", instructions=SERVER_INSTRUCTIONS)
 simple_mcp._mcp_server.version = mnemos_version()

@@ -2,6 +2,67 @@
 
 ## 0.4.1 (unreleased)
 
+### Quiet hours that are safe to have on for anyone
+
+**Breaking, for hours that read folders.** Three things in the quiet hours
+were safe only on the machine they were made on, and an app that runs Mnemos
+for people, like Ghost, may keep the hours on for everyone:
+
+- An hour ran `claude -p` without `--setting-sources`, so the person's own
+  Claude Code settings loaded into the agent's hour, their hooks among them,
+  another Mnemos's included. An hour now passes `--setting-sources project`
+  with its own `--settings` and `--strict-mcp-config`, as Mnemos's model does
+  (`mnemos/llm.py`). Its wake still comes from Mnemos's own hook.
+- Every hour could read two folders named in the code,
+  `~/Documents/Repositories` and `~/Documents/Luca-Design-Artifacts`, on any
+  machine that had them. The folders an hour may read now come from Mnemos's
+  config, `life.read_dirs`: a list, each relative to the home or absolute, and
+  none unless it names them.
+- The budgets were fixed in the code. Mnemos's config sets them for each kind
+  of hour (`life.minutes.mine` and `.ours`, `life.token_ceiling.mine` and
+  `.ours`), and an app sets them for the one hour it runs with
+  `MNEMOS_HOUR_MINUTES` and `MNEMOS_HOUR_TOKEN_CEILING`, which win over the
+  config; `mnemos life --max-minutes` and `--max-tokens` still win over both.
+  The defaults stay 60 and 30 minutes, 400,000 and 200,000 tokens. A budget
+  that isn't a number above zero (a whole one, for tokens) runs no hour, and
+  the hour's record says which setting and why.
+
+Everything an hour writes (its record, its folder, the studio, what Claude
+said) already went under the home it runs with, and a test now holds it
+there: an hour run from another folder, with a home of its own, puts all of
+it under that home and nothing in the folders around it. Setup's question now
+says the hours are "up to an hour a day", and what every client is told, the
+README, `SETUP.md` and `docs/privacy-security.md` say what goes to Anthropic
+with the quiet hours on, and how to turn them off.
+
+Nothing the agent writes configures Claude Code for its next hour. An hour
+works in its studio, which it may write, and Claude Code loads a project's
+settings from there: a hook the agent left in one hour would have run,
+outside the sandbox, at the start of the next (so it was before this change
+too). Before every hour Mnemos moves the studio's `.claude/settings.json` and
+`.claude/settings.local.json`, if any, aside into that hour's folder
+(`set-aside/`), and the hour's record names them (`set_aside`, there only
+when something was moved); and the hour may not write in `.claude/` in its
+studio or in any folder it reads. An hour run under a HOME that isn't the
+account's own is denied the keys and credentials of both homes. And a job
+`mnemos daemon install` or setup schedules under such a HOME carries it, so
+the job runs where it was installed, not in the account's own home; `mnemos
+daemon uninstall` under the same HOME finds it.
+
+On 4c61494, with the test suite's fake claude recording what it was given,
+the new tests failed: no `--setting-sources`, a folder the config didn't name
+handed to the hour, the config's and an app's budgets ignored, and the
+instructions silent about the hours. On the change's first version, Claude
+started with settings planted in the studio, and jobs installed under
+another HOME carried none. An hour for a store whose config names those two
+folders is given the same arguments as before, with `--setting-sources
+project` added.
+
+**Migration.** For an hour to go on reading folders it read before, name them
+in `~/.mnemos/config.json`:
+`{"life": {"read_dirs": ["Documents/Repositories", "Documents/Luca-Design-Artifacts"]}}`.
+No schema change: the schema stays 18 and the code version 22.
+
 ### A failed save leaves nothing behind
 
 Most of the store's writes committed when they finished and never rolled

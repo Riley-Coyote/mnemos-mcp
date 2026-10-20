@@ -7,8 +7,11 @@ schedule them was OpenClaw's cron templates, which most users do not have.
 Setup schedules this upkeep by default (``JOBS``). With no model chosen for
 Mnemos it runs local passes only.
 
-The quiet hours (``HOUR_JOBS``, mnemos/life.py) are scheduled only when the
-person says yes: they run Claude on its own, on the person's Claude plan.
+The quiet hours (``HOUR_JOBS``, mnemos/life.py) are scheduled only when asked
+for: yes to setup's one question, or ``mnemos daemon install --hours``. They
+run the person's own Claude Code on its own, on their Claude plan, so what
+the agent thinks over in them goes to Anthropic (docs/privacy-security.md,
+"Quiet Hours").
 
 Two jobs an earlier install scheduled are retired, and installing or
 uninstalling removes them (``RETIRED_JOBS``): the substrate tick and the
@@ -94,9 +97,11 @@ JOBS: tuple[SchedulerJob, ...] = (
 # The quiet hours (mnemos/life.py): time between sessions that belongs to the
 # agent. "mine" is its own hour, every day, with nothing asked of it; "ours"
 # is half an hour for the day's work, which the runner skips on a day with no
-# work. Each runs Claude Code on its own (`claude -p`), on the person's Claude
-# plan, so they are scheduled only when the person says so: yes to setup's
-# one question, or `mnemos daemon install --hours`.
+# work. Each runs the person's own Claude Code on its own (`claude -p`), on
+# their Claude plan, and what the agent thinks over in it goes to Anthropic,
+# so they are scheduled only when asked for: yes to setup's one question, or
+# `mnemos daemon install --hours` (an app that runs Mnemos for people may keep
+# them on).
 HOUR_JOBS: tuple[SchedulerJob, ...] = (
     SchedulerJob(
         name="hour-mine",
@@ -216,6 +221,30 @@ def hour_environment(
     if config_dir:
         environment["CLAUDE_CONFIG_DIR"] = os.path.abspath(os.path.expanduser(config_dir))
     return environment
+
+
+def account_home() -> Path:
+    """The account's own home folder, as the system has it, whatever HOME
+    says; HOME's when the system has none to give."""
+    try:
+        import pwd
+
+        return Path(pwd.getpwuid(os.getuid()).pw_dir)
+    except (ImportError, AttributeError, KeyError, OSError):
+        return Path.home()
+
+
+def home_environment() -> dict[str, str]:
+    """HOME, for jobs installed under a HOME that isn't the account's own (a
+    host app's, say), so each runs where it was installed: a scheduler starts
+    a job in the account's own home (launchd gives every job that HOME), and
+    its memory, its record and its studio would be there instead. Nothing
+    when HOME is the account's own, as for anyone who installs from their
+    own shell."""
+    home = Path.home()
+    if os.path.normpath(home) == os.path.normpath(account_home()):
+        return {}
+    return {"HOME": str(home)}
 
 
 def working_directory() -> str:
@@ -637,7 +666,9 @@ def plan(
     at ``hours``' times (their own by default), whether or not this install
     schedules them: status and uninstall find them by these. They can be
     scheduled only with ``hour_env`` (``hour_environment``), which needs the
-    claude command found (``hours_ready``).
+    claude command found (``hours_ready``). Every job carries HOME when this
+    HOME isn't the account's own (``home_environment``), and is found again
+    under the same HOME.
     """
     backend = backend or detect_backend()
     if has_model is None:
@@ -652,10 +683,11 @@ def plan(
         "scope_args": scope_args,
         "working_dir": working_dir,
     }
+    home_env = home_environment()
 
-    entries = [_entry(job, environment=None, **common) for job in selected]
+    entries = [_entry(job, environment=home_env or None, **common) for job in selected]
     hour_entries = [
-        _entry(job, environment=hour_env, **common)
+        _entry(job, environment={**(hour_env or {}), **home_env} or None, **common)
         for job in (hours if hours is not None else hour_jobs())
     ]
 

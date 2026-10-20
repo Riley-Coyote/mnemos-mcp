@@ -38,11 +38,15 @@ What setup turns on, and how to turn each thing off:
   With no model chosen for Mnemos, all of it runs on your machine. Off:
   `mnemos daemon uninstall --write`, or leave it out with `--no-upkeep`.
 - **Quiet hours, if you say yes.** Setup asks once, and yes is the default:
-  an hour a day that's the agent's own, and half an hour for the day's work.
-  They run Claude on its own and use your Claude plan. Setup run without a
-  terminal (by an agent, say), or with no `claude` command, leaves them off
-  and says how to turn them on: `mnemos daemon install --hours --write`.
-  Off: `mnemos daemon uninstall --hours --write`.
+  up to an hour a day that's the agent's own, and half an hour for the day's
+  work. They run your own Claude Code on its own, on your Claude plan, so
+  what the agent thinks over in them goes to Anthropic: its words for the
+  hour, short excerpts of its recent memory, its wake, and whatever it reads
+  or recalls ([what, and how](docs/privacy-security.md#quiet-hours)). Setup
+  run without a terminal (by an agent, say), or with no `claude` command,
+  leaves them off and says how to turn them on:
+  `mnemos daemon install --hours --write`. Off:
+  `mnemos daemon uninstall --hours --write`, or in Ghost, Settings › Memory.
 
 For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
 the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
@@ -60,8 +64,11 @@ belief is ever proposed. To add it later, run
 `pip install "mnemos-continuity[embeddings]"` in the same environment, then
 `mnemos embeddings download` once to fetch the model.
 
-Eleven tools. Local SQLite. No account, no API key, no external service. Nothing
-leaves your machine unless you configure a provider yourself.
+Eleven tools. Local SQLite. No account, no API key, no service of its own.
+Nothing leaves your machine unless you configure a provider yourself, or keep
+the quiet hours on: then the agent thinks over its memory through your own
+Claude Code, and what it reads in its hour goes to Anthropic
+([what, and how to turn them off](docs/privacy-security.md#quiet-hours)).
 
 ## What Mnemos is not
 
@@ -94,7 +101,7 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Hermes agent with another memory provider | Hermes Sidecar Mode | `mnemos hermes quickstart --agent-safe` |
 | Hermes agent using Mnemos as its provider | Hermes Provider Mode | `mnemos hermes quickstart --provider` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
-| The agent's quiet hours | Scheduled by setup when you say yes | `mnemos daemon install --hours --write` |
+| The agent's quiet hours, on your Claude plan | Scheduled by setup when you say yes; an app that runs Mnemos for you, like Ghost, may keep them on | `mnemos daemon install --hours --write` |
 
 Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
 
@@ -585,9 +592,29 @@ mnemos daemon uninstall --hours --write        # off; upkeep stays
 mnemos life --hour mine --dry-run              # what an hour would see, running nothing
 ```
 
+An hour works in its studio (`~/.mnemos/studio/<agent>`) and is given no other
+folder unless Mnemos's config names it, in `life.read_dirs`: each folder
+relative to your home or absolute, to read and never to write. An hour stops
+at its time or its token ceiling: 60 minutes and 400,000 tokens for its own,
+30 minutes and 200,000 for the day's work. The config sets them for each kind,
+in `life.minutes` and `life.token_ceiling`; an app that runs an hour sets them
+for that hour, over the config, with `MNEMOS_HOUR_MINUTES` and
+`MNEMOS_HOUR_TOKEN_CEILING`; and `mnemos life --max-minutes` and `--max-tokens`
+set them over both. A setting that isn't a number above zero runs no hour, and
+the hour's record says why. In `~/.mnemos/config.json`:
+
+```json
+{"life": {"read_dirs": ["Documents/Repositories", "/Volumes/Work/notes"],
+          "minutes": {"mine": 30, "ours": 15},
+          "token_ceiling": {"mine": 200000, "ours": 100000}}}
+```
+
 Each hour's job carries what a background job lacks: the `claude` command's
 folder on its PATH, and both commands' full paths (`MNEMOS_CLAUDE_BIN`,
 `MNEMOS_LIFE_MNEMOS_BIN`), found when you install. It runs in `~/.mnemos`.
+Installed under a HOME that isn't your account's own (an app's, say), every
+job carries that HOME too, so it runs where it was installed, and
+`mnemos daemon uninstall` run under the same HOME finds it.
 
 ### On a Mac, outside ~/Documents
 

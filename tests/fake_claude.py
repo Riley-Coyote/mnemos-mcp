@@ -21,6 +21,13 @@ Path(os.environ['FAKE_CLAUDE_LOG']).write_text(json.dumps({
     'argv': argv, 'stdin': sys.stdin.read(),
     'env_hour': os.environ.get('MNEMOS_HOUR_ID'),
     'env_config': os.environ.get('CLAUDE_CONFIG_DIR'),
+    # Where it started, and the Claude Code settings it would have found
+    # there as the project's (--setting-sources project).
+    'cwd': os.getcwd(),
+    'project_settings': sorted(
+        name for name in ('settings.json', 'settings.local.json')
+        if os.path.lexists(os.path.join('.claude', name))
+    ),
 }))
 mcp = json.loads(Path(argv[argv.index('--mcp-config') + 1]).read_text())
 args = mcp['mcpServers']['mnemos']['args']

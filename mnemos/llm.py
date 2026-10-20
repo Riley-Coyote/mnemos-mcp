@@ -431,8 +431,10 @@ def chosen_provider() -> str:
     config. A key on its own chooses nothing. People keep provider keys in
     their shells and projects for other tools, and until 2026-10-05 one
     OPENROUTER_API_KEY was enough for a capture's words to go to openrouter.ai
-    with no Mnemos setting at all. Nothing leaves the machine unless the
-    person configures a provider for Mnemos.
+    with no Mnemos setting at all. No model of Mnemos's is sent anything
+    unless the person configures a provider for Mnemos; the quiet hours, when
+    they're on, think over the memory through the person's own Claude Code
+    (mnemos/life.py).
     """
     provider = (
         os.environ.get("MNEMOS_LLM_PROVIDER", "").strip()

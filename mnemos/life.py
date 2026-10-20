@@ -7,6 +7,11 @@ was work since the last one. The runner gathers what is waiting from memory
 agent with `claude -p`, fenced, as the one model allowed to write as it.
 
 The engine prepares; the agent lives. Nothing here writes words into memory.
+
+An hour is safe to have on for anyone (2026-10-20): it loads none of the
+person's own Claude Code settings, is given no folder to read but the ones
+Mnemos's config names (``read_dirs``), spends what its budget allows
+(``budget``), and keeps everything of its own under the HOME it runs with.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import fcntl
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -30,8 +36,12 @@ from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 HOUR_KINDS = ("mine", "ours")
 # The hour's model when the memory has no resident yet (``hour_model``).
 HOUR_MODEL = "claude-opus-5-5"
+# What an hour may spend when nothing sets it otherwise (``budget``).
 DEFAULT_MINUTES = {"mine": 60, "ours": 30}
 DEFAULT_TOKEN_CEILING = {"mine": 400_000, "ours": 200_000}
+# A host app's budget for the one hour it runs; each wins over the config.
+MINUTES_SETTING = "MNEMOS_HOUR_MINUTES"
+TOKEN_CEILING_SETTING = "MNEMOS_HOUR_TOKEN_CEILING"
 STOP_GRACE_SECONDS = 10
 FIRST_LOOK_HOURS = 24
 HANDOFF_LINES = 20
@@ -47,11 +57,16 @@ ALLOW = {
     "ours": ("mcp__mnemos",),
     "mine": ("mcp__mnemos", "Bash", "WebSearch", "WebFetch"),
 }
-READ_DIRS = ("Documents/Repositories", "Documents/Luca-Design-Artifacts")
 SECRET_PATHS = (
     ".ssh", ".aws", ".gnupg", ".codex", ".config", ".netrc", ".claude.json",
     ".claude/.credentials.json", ".claude-2/.claude.json", "Library/Keychains",
 )
+# The Claude Code settings an hour would load from its studio, which is its
+# working folder (``--setting-sources project``; the local ones too, were they
+# loaded). The agent writes in its studio, so before every hour they are moved
+# aside, into the hour's own folder (``_set_aside``): nothing the agent writes
+# configures Claude Code for its next hour, whose hooks run outside the sandbox.
+STUDIO_SETTINGS = (".claude/settings.json", ".claude/settings.local.json")
 BASH_DENY = (
     "Bash(git push:*)", "Bash(git remote:*)", "Bash(gh:*)", "Bash(curl:*)", "Bash(wget:*)",
     "Bash(ssh:*)", "Bash(scp:*)", "Bash(rsync:*)", "Bash(open:*)", "Bash(osascript:*)",
@@ -191,20 +206,151 @@ def _there(path) -> bool:
         return False
 
 
+def _life_config() -> dict:
+    """The ``life`` section of Mnemos's config, read as ``embeddings.provider``
+    is (``~/.mnemos/config.json`` under the HOME the hour runs with), or an
+    empty one when there is none or it can't be read."""
+    try:
+        from .config.loader import load_config
+
+        section = load_config().get("life")
+    except Exception:
+        return {}
+    return section if isinstance(section, dict) else {}
+
+
+def read_dirs() -> list[Path]:
+    """The folders an hour may read besides its studio: ``life.read_dirs`` in
+    Mnemos's config, a list of folders, each relative to HOME or absolute.
+    None unless the config names them. Until 2026-10-20 the two folders
+    Riley's hours read were named in this file, so an hour on anyone's machine
+    could read that person's folders of the same names. A folder that isn't
+    there for this process is left out (``_there``), and an entry that isn't a
+    folder's name names none."""
+    named = _life_config().get("read_dirs")
+    if not isinstance(named, list):
+        return []
+    folders: list[Path] = []
+    for name in named:
+        if not isinstance(name, str) or not name:
+            continue
+        try:
+            path = Path(os.path.normpath(Path.home() / Path(name).expanduser()))
+        except RuntimeError:  # ~someone, whose home can't be found
+            continue
+        if path not in folders and _there(path):
+            folders.append(path)
+    return folders
+
+
+def _above_zero(value, *, whole: bool):
+    """``value`` as a number above zero, a whole one when ``whole``, or None."""
+    if isinstance(value, bool):
+        return None
+    try:
+        if not whole:
+            number = float(value)
+            if not math.isfinite(number):
+                return None
+        elif isinstance(value, float):
+            number = int(value) if value.is_integer() else 0
+        else:
+            number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number > 0 else None
+
+
+def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None) -> tuple[float, int, str]:
+    """What one hour may spend: ``(seconds, tokens, "")``, or with the third
+    saying why no hour can run.
+
+    Each comes from the first of these that sets it: what the caller passes
+    (``mnemos life --max-minutes``, ``--max-tokens``); a host app's budget for
+    the one hour it runs, MNEMOS_HOUR_MINUTES and MNEMOS_HOUR_TOKEN_CEILING;
+    Mnemos's config, ``life.minutes.<kind>`` and ``life.token_ceiling.<kind>``;
+    DEFAULT_MINUTES and DEFAULT_TOKEN_CEILING. A host app gives a new mind a
+    gentler cap this way, and the defaults stay as they were. A setting that
+    isn't a number above zero (a whole one, for tokens) runs no hour, rather
+    than one on a budget nobody chose."""
+    config = _life_config()
+    wrong: list[str] = []
+
+    def first(passed, setting, key, default, unit, whole):
+        if passed is not None:
+            return passed
+        value, where = os.environ.get(setting, "").strip(), setting
+        if not value:
+            section = config.get(key)
+            value = section.get(kind) if isinstance(section, dict) else None
+            where = f"life.{key}.{kind} in Mnemos's config"
+            if value is None:
+                return default
+        number = _above_zero(value, whole=whole)
+        if number is None:
+            wrong.append(f"{where} needs {unit} above zero, not {value!r}.")
+            return default
+        return number
+
+    if max_seconds is None:
+        max_seconds = first(max_minutes, MINUTES_SETTING, "minutes", DEFAULT_MINUTES[kind],
+                            "a number of minutes", False) * 60
+    max_tokens = first(max_tokens, TOKEN_CEILING_SETTING, "token_ceiling",
+                       DEFAULT_TOKEN_CEILING[kind], "a whole number of tokens", True)
+    return max_seconds, max_tokens, " ".join(wrong)
+
+
+def _studio_settings(studio: Path) -> list[Path]:
+    """The Claude Code settings files in the studio (``STUDIO_SETTINGS``), or
+    its ``.claude`` itself when that is a link: what it points at (the
+    person's own ``~/.claude``, say) is never touched, only the link."""
+    claude = studio / ".claude"
+    if claude.is_symlink():
+        return [claude]
+    return [studio / name for name in STUDIO_SETTINGS if os.path.lexists(studio / name)]
+
+
+def _set_aside(studio: Path, folder: Path):
+    """Move the studio's Claude Code settings, if any, into the hour's own
+    folder (``folder/set-aside``) before the hour starts, yielding where each
+    was once it has moved. A file the agent wrote there in an hour, or that
+    came by any other way, would otherwise configure the next one: its hooks
+    run outside the sandbox. A link moves as the link."""
+    for path in _studio_settings(studio):
+        target = folder / "set-aside" / path.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(path), str(target))
+        yield str(path)
+
+
 def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL):
-    read_dirs = [Path.home() / name for name in READ_DIRS if _there(Path.home() / name)]
+    folders = read_dirs()
     mcp = {"mcpServers": {"mnemos": {
         "type": "stdio", "command": mnemos_bin,
         "args": ["--db-path", str(store), "--agent-id", scope["agent_id"],
                  "--person-id", scope["person_id"], "--project-scope", scope["project_scope"], "serve"],
         "env": {"MNEMOS_HOUR_ID": hour_id},
     }}}
+    from .setup import scheduler
+
     deny = []
-    for directory in read_dirs:
+    for directory in folders:
         deny.append(f"Edit(/{directory}/**)")
+    # Nor may the agent write Claude Code's settings where an hour could find
+    # them: in its studio, or a folder it reads. Claude Code holds every tool
+    # that writes a file to the Edit rules.
+    for directory in (studio_dir(scope["agent_id"]), *folders):
+        deny.append(f"Edit(/{directory}/.claude/**)")
+    # The secrets in the home the hour runs with, and in the account's own
+    # when that is another: a host app runs an hour with a HOME of its own.
+    homes = [Path.home()]
+    account = scheduler.account_home()
+    if os.path.normpath(account) != os.path.normpath(homes[0]):
+        homes.append(account)
     for name in SECRET_PATHS:
-        path = Path.home() / name
-        deny.extend([f"Read(/{path})", f"Read(/{path}/**)"])
+        for home in homes:
+            path = home / name
+            deny.extend([f"Read(/{path})", f"Read(/{path}/**)"])
     deny.extend(["Read(//**/.env)", "Read(//**/.env.*)"])
     if kind == "mine":
         deny.extend(BASH_DENY)
@@ -221,14 +367,20 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
         "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True,
                     "allowUnsandboxedCommands": False},
     }
+    # The hour loads none of the person's own Claude Code settings (their user
+    # and local settings, whose hooks, another Mnemos's among them, would run
+    # in the agent's hour): only its studio's, this file and its own MCP
+    # config, as Mnemos's model does (mnemos/llm.py). The wake still comes
+    # from Mnemos's own hook, in this file.
     cmd = [claude_bin, "--model", model, "--restricted",
            "--tools", TOOLS[kind],
+           "--setting-sources", "project",
            "--strict-mcp-config", "--mcp-config", str(folder / "mcp.json"),
            "--settings", str(folder / "settings.json"),
            "--permission-mode", "acceptEdits", "--permission-prompts", "none",
            "--output-format", "stream-json", "--verbose",
            "--no-session-persistence", "-p"]
-    for directory in read_dirs:
+    for directory in folders:
         cmd += ["--add-dir", str(directory)]
     return mcp, settings, cmd
 
@@ -352,11 +504,12 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
     live = Path(resolved.db_path).expanduser()
     hours = hours_dir(resolved.agent_id)
     records_path = hours / "hours.jsonl"
-    if max_seconds is None:
-        max_seconds = (DEFAULT_MINUTES[kind] if max_minutes is None else max_minutes) * 60
-    if max_tokens is None:
-        max_tokens = DEFAULT_TOKEN_CEILING[kind]
+    max_seconds, max_tokens, unbudgeted = budget(
+        kind, max_minutes=max_minutes, max_tokens=max_tokens, max_seconds=max_seconds,
+    )
     if dry_run:
+        if unbudgeted:
+            return {"status": "failed", "reason": unbudgeted}
         if not live.exists():
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         since = since_for(kind, _records(records_path))
@@ -378,6 +531,8 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         print(f"Since: {_minute(since)}", file=out)
         if skip:
             print("The hour would skip: " + skip, file=out)
+        for path in _studio_settings(studio_dir(resolved.agent_id)):
+            print(f"Set aside before the hour, into its folder: {path}", file=out)
         print("\n── prompt (stdin) ──\n" + prompt, file=out)
         print("\n── command ──\n" + shlex.join(cmd), file=out)
         print("\n── mcp.json ──\n" + json.dumps(mcp, indent=2), file=out)
@@ -408,6 +563,9 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 return record
             since = since_for(kind, _records(records_path))
             record["since"] = since
+            if unbudgeted:
+                record.update(status="failed", reason=unbudgeted)
+                return record
             if not live.exists():
                 record.update(status="failed", reason=f"There is no memory store at {live}.")
                 return record
@@ -448,6 +606,11 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             (folder / "settings.json").write_text(json.dumps(settings, indent=2))
             studio = studio_dir(resolved.agent_id)
             (studio / "worktrees").mkdir(parents=True, exist_ok=True)
+            # Nothing in the studio configures Claude Code for this hour, and
+            # the record says what was moved aside, one path at a time: a move
+            # that fails ends the hour before Claude starts.
+            for path in _set_aside(studio, folder):
+                record.setdefault("set_aside", []).append(path)
             env = dict(os.environ)
             env["MNEMOS_HOUR_ID"] = hour_id
             if config_dir is not None:

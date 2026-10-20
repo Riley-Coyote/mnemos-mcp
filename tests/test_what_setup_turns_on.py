@@ -318,7 +318,9 @@ def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd,
     assert _claude_code(tmp_path) == 0
 
     assert asked == [cli.QUIET_HOURS_QUESTION]
-    assert "an hour a day that's its own, and half an hour for the day's work" in asked[0]
+    # In plain words, what they cost: up to an hour and a half a day of Claude,
+    # on the person's own plan.
+    assert "up to an hour a day that's its own, and half an hour for the day's work" in asked[0]
     assert "they run Claude on its own and use your Claude plan" in asked[0]
     assert asked[0].endswith("[Y/n] ")
     assert launchd.loaded == LABELS | HOURS
@@ -374,7 +376,7 @@ def test_without_a_terminal_nothing_is_asked_or_scheduled(tmp_path, launchd, cla
 
     assert launchd.loaded == LABELS
     out = capsys.readouterr().out
-    assert "Quiet hours: off. They give the agent an hour a day that's its own" in out
+    assert "Quiet hours: off. They give the agent up to an hour a day that's its own" in out
     assert "To turn them on: mnemos daemon install --hours --write" in out
 
 

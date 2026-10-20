@@ -13,13 +13,14 @@ With no dedicated provider configured, Mnemos:
 - scopes memory by agent, person, and project
 - avoids OpenRouter, Anthropic, OpenAI, and OpenClaw requirements
 - does not read arbitrary files or browser history
-- does not transmit memory data over the network
+- does not transmit memory data over the network, except through your own
+  Claude Code in the quiet hours, when they're on ([Quiet Hours](#quiet-hours))
 - loads its local meaning model offline; the one step that uses the network is
   `mnemos embeddings download`, which you run yourself
 
 What the agent reads from its memory goes into its own context, and so to the
 model the agent runs on, like everything else in that context. Mnemos itself
-sends memory nowhere.
+sends memory nowhere, except to your own Claude Code in the quiet hours.
 
 Simple mode tools still mutate local state:
 
@@ -59,6 +60,45 @@ or a `.env` Mnemos reads) or `embeddings.provider` in its config, with a
 `GEMINI_API_KEY`. A `GEMINI_API_KEY` on its own chooses nothing. Chosen, Gemini
 is sent the words of every memory and question it embeds. `mnemos doctor` says
 which one meaning uses, and why.
+
+## Quiet Hours
+
+The quiet hours are the agent's time between sessions: up to an hour a day of
+its own, and half an hour for the day's work, skipped on a day with none.
+Mnemos's setup asks about them once, with yes as the default, and leaves them
+off when there is no one at a terminal to ask. An app that runs Mnemos for
+you, like Ghost, may keep them on.
+
+**How.** Each hour runs your own Claude Code on its own (`claude -p`), on your
+Claude plan. It loads none of your own Claude Code settings or hooks: only the
+hour's own, with Mnemos as its one MCP server. Claude Code settings left in
+the agent's studio are moved aside, into the hour's record, before each hour
+starts, and the hour may not write any. It may not read the keys and
+credentials (`~/.ssh`, `~/.aws`, `.env` files and the like) in the home it
+runs with, nor in your account's own home when an app runs it under another.
+
+**What goes to Anthropic**, as from any Claude Code session:
+
+- the hour's prompt: the agent's own words for the hour, and short excerpts of
+  what's waiting for it (recent handoffs, captures and open questions, and its
+  latest journal entry);
+- its wake, the memory it would wake to at the start of a session;
+- whatever it reads or recalls during the hour: its memory, through Mnemos's
+  tools; its studio (`~/.mnemos/studio/<agent>`); and the folders
+  `life.read_dirs` in Mnemos's config names, none unless you name them. In its
+  own hour it can search and read the web too.
+
+What it keeps goes into its memory, on this machine, and the record of each
+hour into `~/.mnemos/hours/<agent>/`, under the home the hour runs with. An
+hour stops at its time or its token ceiling: 60 minutes and 400,000 tokens for
+its own, 30 minutes and 200,000 for the day's work, unless `life.minutes` and
+`life.token_ceiling` in Mnemos's config, or an app for the one hour it runs
+(`MNEMOS_HOUR_MINUTES`, `MNEMOS_HOUR_TOKEN_CEILING`), set them otherwise.
+`mnemos life --hour mine --dry-run` prints an hour's prompt and command, and
+runs nothing.
+
+**To turn them off:** `mnemos daemon uninstall --hours --write`, or in Ghost,
+Settings › Memory.
 
 ## Stored Words and Trust
 

@@ -146,6 +146,8 @@ def test_ok_hour_records_everything(db, home, tmp_path):
 def test_command_line_and_fences(db, home, tmp_path, kind):
     from mnemos.life import ALLOW, BASH_DENY, SECRET_PATHS, TOOLS
     (home / 'Documents/Repositories').mkdir(parents=True)
+    # The folders an hour may read are the ones Mnemos's config names.
+    (home / '.mnemos/config.json').write_text(json.dumps({'life': {'read_dirs': ['Documents/Repositories']}}))
     if kind == 'ours':
         work(db)
     record = run(db, kind)

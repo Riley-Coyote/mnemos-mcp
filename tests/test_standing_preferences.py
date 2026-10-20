@@ -351,10 +351,12 @@ def test_the_tool_descriptions_carry_the_mark_and_the_instructions_do_not():
     # 1,890 since the journal and the notes to the human (R22, R27), two lines
     # paid for by shortening what the handoff and capture descriptions already
     # say; 1,891 since the agent's earlier versions are the agent, paid for by
-    # folding the line about introducing oneself into the one about signing.
-    # Advanced mode adds 156 characters to these, which is why this stops at
-    # 1,891: its instructions must fit in 2,048 too.)
-    assert len(SERVER_INSTRUCTIONS) == 1891
+    # folding the line about introducing oneself into the one about signing;
+    # 1,890 since what leaves the machine names the quiet hours (WP-M15a),
+    # in one character fewer than the line it replaced. Advanced mode adds
+    # 156 characters to these, so they can grow by two at most: its
+    # instructions must fit in 2,048 too.)
+    assert len(SERVER_INSTRUCTIONS) == 1890
     assert re.search(r"\bstanding\b", SERVER_INSTRUCTIONS, re.IGNORECASE) is None
 
 

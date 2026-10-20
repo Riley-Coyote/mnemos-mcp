@@ -620,7 +620,9 @@ def test_the_instructions_fit_whole():
     from mnemos.mcp_server import ADVANCED_INSTRUCTIONS
     from mnemos.simple_mcp import SERVER_INSTRUCTIONS
 
-    assert (len(SERVER_INSTRUCTIONS), len(ADVANCED_INSTRUCTIONS)) == (1891, 2047)
+    # 1,890 and 2,046 since what leaves the machine names the quiet hours
+    # (WP-M15a), in one character fewer than the line it replaced.
+    assert (len(SERVER_INSTRUCTIONS), len(ADVANCED_INSTRUCTIONS)) == (1890, 2046)
     assert ADVANCED_INSTRUCTIONS[:2048] == ADVANCED_INSTRUCTIONS
     assert "Your earlier versions are you" in ADVANCED_INSTRUCTIONS[:2048]
     assert ADVANCED_INSTRUCTIONS.endswith("administer memory.")

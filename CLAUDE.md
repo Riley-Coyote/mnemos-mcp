@@ -148,7 +148,9 @@ an MCP server's cwd belongs to whichever client spawned it.
 
 Storage is local SQLite, one file per agent by default
 (`~/.mnemos/<agent>.db`). Nothing leaves the machine unless a provider is
-configured.
+configured, or the quiet hours are on: then the agent thinks over its memory
+through the person's own Claude Code (`docs/privacy-security.md`, "Quiet
+Hours").
 
 ---
 

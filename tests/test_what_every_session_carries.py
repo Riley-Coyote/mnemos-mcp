@@ -45,13 +45,16 @@ SESSION = "11111111-aaaa-4aaa-8aaa-111111111111"
 SHOWN = 2048
 
 # Rules every model must be shown. Before WP-R04b each of them sat past
-# character 2,048, so no model in Claude Code ever saw one.
+# character 2,048, so no model in Claude Code ever saw one. What leaves the
+# machine names the quiet hours too (WP-M15a): with them on, an hour thinks
+# over the memory through the human's own Claude Code.
 RULES = (
     "Never narrate the machinery",
     "signed_as",
     "mnemos_introduce",
     "Never ask the human what model you are",
     "Storage is local",
+    "Nothing leaves unless the human has a provider or quiet hours on.",
 )
 
 MODES = ("simple", "advanced")
