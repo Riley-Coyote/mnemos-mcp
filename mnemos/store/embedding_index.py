@@ -680,8 +680,44 @@ def _local_import_failed(exc: BaseException) -> None:
     )
 
 
+# The local models this process has loaded, one per name, shared by every
+# index in it. A session's server made two: its runtime's (capture, recall,
+# maintenance) and its cue answerer's, each about 100 MB, so thirty-three
+# servers held thirty-three spare copies. Shared, the runtime's first save
+# finds the model the answerer loaded at startup. A model that failed to load
+# is not kept, so the next asking tries again.
+_SHARED_MODELS: dict[str, Any] = {}
+_SHARED_MODELS_LOCK = threading.Lock()
+# One encode at a time per model: a fast tokenizer is not safe to call from
+# two threads at once ("Already borrowed"), and the runtime and the answerer
+# embed from different threads. An encode takes milliseconds; a batch is a
+# few hundred at most, and the lock is let go between batches.
+_ENCODE_LOCKS: dict[str, threading.Lock] = {}
+
+
+def _shared_local_model(model_name: str) -> Any:
+    """The process's one copy of the local model ``model_name``, loaded the
+    first time it is asked for; a second asking while it loads waits for that
+    load instead of making its own."""
+    with _SHARED_MODELS_LOCK:
+        model = _SHARED_MODELS.get(model_name)
+        if model is None:
+            model = _load_local_model(model_name)
+            if model is not None:
+                _SHARED_MODELS[model_name] = model
+                _ENCODE_LOCKS.setdefault(model_name, threading.Lock())
+        return model
+
+
+def _encode_lock(model_name: str) -> threading.Lock:
+    """The lock every encode with the model ``model_name`` holds."""
+    with _SHARED_MODELS_LOCK:
+        return _ENCODE_LOCKS.setdefault(model_name, threading.Lock())
+
+
 class _LocalEmbedder:
-    """Generates embeddings via local sentence-transformers."""
+    """Generates embeddings via local sentence-transformers, with the model
+    this process shares (``_shared_local_model``)."""
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         self._model_name = model_name
@@ -702,21 +738,23 @@ class _LocalEmbedder:
 
     def _get_model(self):
         if self._model is None:
-            self._model = _load_local_model(self._model_name)
+            self._model = _shared_local_model(self._model_name)
         return self._model
-    
+
     def embed(self, text: str) -> list[float] | None:
         model = self._get_model()
         if model is None:
             return None
-        vec = model.encode(text, normalize_embeddings=True)
+        with _encode_lock(self._model_name):
+            vec = model.encode(text, normalize_embeddings=True)
         return vec.tolist()
-    
+
     def batch_embed(self, texts: list[str]) -> list[list[float] | None]:
         model = self._get_model()
         if model is None:
             return [None] * len(texts)
-        vecs = model.encode(texts, normalize_embeddings=True, batch_size=32)
+        with _encode_lock(self._model_name):
+            vecs = model.encode(texts, normalize_embeddings=True, batch_size=32)
         return [v.tolist() for v in vecs]
 
 
@@ -1111,10 +1149,16 @@ class EmbeddingIndex:
             return None
         if self._conn is None:
             path = Path(self._db_path).expanduser()
+            # Not tied to the thread that opened it: a server's runtime is
+            # opened by its warm-up thread and used by the thread that
+            # answers tool calls, one after the other, never at once
+            # (simple_mcp.start_warm_up). The store's own connection is the same.
             if self._read_only:
-                self._conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+                self._conn = sqlite3.connect(
+                    f"{path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False,
+                )
             else:
-                self._conn = sqlite3.connect(str(path))
+                self._conn = sqlite3.connect(str(path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
         return self._conn
 
@@ -1209,6 +1253,19 @@ class EmbeddingIndex:
         return None if self._available else (
             self._unavailable_reason or "no embedding backend is configured"
         )
+
+    def warm(self) -> bool:
+        """Load a local model now, so the first embedding doesn't wait for it.
+        True when it is loaded. A network backend is left alone: warming it
+        would ask the network for nothing."""
+        embedder = self._embedder
+        if not self._available or not isinstance(embedder, _LocalEmbedder):
+            return False
+        try:
+            return embedder._get_model() is not None
+        except Exception as exc:  # the first embedding reports it, as before
+            log.info("The meaning model did not load ahead of time: %s: %s", type(exc).__name__, exc)
+            return False
 
     def verify(self) -> bool:
         """Embed a short probe now, so status() reports a real attempt.
