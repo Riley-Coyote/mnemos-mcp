@@ -2,6 +2,24 @@
 
 ## 0.4.1 (unreleased)
 
+### A session's first save doesn't wait for Mnemos to open
+
+A server opened its runtime on its first tool call: the store's checks, the
+meaning model's libraries and the model itself. On a copy of a real store a
+fresh server's first capture took 1.7 s twenty seconds after the server
+started, and the next took 0.1 s; on a busy Mac the first took 12 s. Now a
+server opens its runtime in the background as it starts, where the prompt
+hook is in use (the rule the cue answerer already follows for its model) and
+the store exists: twenty seconds in, the first capture took 0.16 to 0.22 s. A
+call that comes while it is still opening waits for it, as it waited for its
+own opening before. Opening counts no session and runs no maintenance; a
+server whose store doesn't exist yet makes none.
+
+Every index in a process now shares one copy of each local model, and encodes
+with it one call at a time. The runtime and the cue answerer each loaded their
+own, about 50 MB more a server; a server that had saved and recalled held 40
+to 70 MB less with one copy.
+
 ### Quiet hours that are safe to have on for anyone
 
 **Breaking, for hours that read folders.** Three things in the quiet hours

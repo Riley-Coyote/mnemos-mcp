@@ -2683,6 +2683,17 @@ class MnemosRuntime:
             embedding_index=self._embedding_index,
         )
 
+    def warm(self) -> None:
+        """Do a first call's slow work before the call comes: open the store
+        (its checks), import the meaning model's libraries and load a local
+        model. A session's first capture waited for all of it, 2 to 5 s on a
+        real store and more on a busy Mac, while the next took 0.1 s. Counts
+        no session, marks no lived day and runs no maintenance: those belong
+        to the first call."""
+        self._ensure_init()
+        if self._embedding_index is not None:
+            self._embedding_index.warm()
+
     def _older_than_store(self) -> int | None:
         """The store's minimum when this code is older than it, else None.
 

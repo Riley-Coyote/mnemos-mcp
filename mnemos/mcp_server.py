@@ -1558,6 +1558,8 @@ def run_server(
     # Without it the prompt hook finds memories by their words alone, and its
     # judge, when switched on, shows nothing.
     answerer = _simple_mcp.start_cue_answerer()
+    # And the runtime the simple tools use, opened before the first call.
+    _simple_mcp.start_warm_up()
 
     def _shutdown(signum, frame):
         logger.info("Shutting down MCP server...")

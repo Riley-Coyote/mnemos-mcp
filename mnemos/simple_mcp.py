@@ -10,6 +10,8 @@ import base64
 import logging
 import signal
 import sys
+import threading
+from pathlib import Path
 from typing import Any
 
 from mcp import types
@@ -79,6 +81,10 @@ simple_mcp._mcp_server.version = mnemos_version()
 
 _runtime: MnemosRuntime | None = None
 _runtime_kwargs: dict[str, Any] = {}
+# Held while the runtime is made, warmed or replaced: a tool call that comes
+# while the warm-up is opening it waits for that, rather than opening a second
+# runtime beside it (start_warm_up).
+_runtime_lock = threading.RLock()
 # This server's cue answerer, once started: the health card reads its judge's
 # counts (WP-R16b).
 _cue_answerer: Any = None
@@ -110,22 +116,60 @@ def configure_runtime(
     """Configure the runtime used by simple tools."""
 
     global _runtime, _runtime_kwargs
-    if _runtime is not None:
-        _runtime.close()
-    _runtime = None
-    _runtime_kwargs = {
-        "db_path": db_path,
-        "agent_id": agent_id,
-        "person_id": person_id,
-        "project_scope": project_scope,
-    }
+    with _runtime_lock:
+        if _runtime is not None:
+            _runtime.close()
+        _runtime = None
+        _runtime_kwargs = {
+            "db_path": db_path,
+            "agent_id": agent_id,
+            "person_id": person_id,
+            "project_scope": project_scope,
+        }
 
 
 def _get_runtime() -> MnemosRuntime:
     global _runtime
-    if _runtime is None:
-        _runtime = MnemosRuntime(**_runtime_kwargs)
-    return _runtime
+    with _runtime_lock:
+        if _runtime is None:
+            _runtime = MnemosRuntime(**_runtime_kwargs)
+        return _runtime
+
+
+def start_warm_up() -> threading.Thread | None:
+    """Open this server's runtime in the background as it starts
+    (``MnemosRuntime.warm``), so a session's first capture doesn't wait for
+    it. Returns the thread, or None when nothing was started.
+
+    Only where the prompt hook is in use, the cue answerer's rule for loading
+    its model at once (``cue.hook_in_use``): elsewhere a session may never
+    call a tool, and the libraries and the model would take several hundred
+    megabytes for nothing. Never where the store doesn't exist yet: starting a
+    server must not make one, as reading never does. The model is the one the
+    answerer loads, shared in this process. A warm-up that fails leaves the
+    runtime to open on the first call, as before."""
+    try:
+        from .cue import hook_in_use
+        from .simple_scope import resolve_scope
+
+        if not hook_in_use():
+            return None
+        if not Path(resolve_scope(**_runtime_kwargs).db_path).expanduser().exists():
+            return None
+    except Exception as exc:
+        logger.warning("Mnemos did not warm up: %s: %s", type(exc).__name__, exc)
+        return None
+
+    def warm() -> None:
+        try:
+            with _runtime_lock:
+                _get_runtime().warm()
+        except Exception as exc:  # the first call opens it, as it did before
+            logger.warning("Mnemos did not warm up: %s: %s", type(exc).__name__, exc)
+
+    thread = threading.Thread(target=warm, name="mnemos-warm-up", daemon=True)
+    thread.start()
+    return thread
 
 
 def register_simple_tools(server: FastMCP) -> None:
@@ -693,6 +737,7 @@ def run_simple_server(
         project_scope=project_scope,
     )
     answerer = start_cue_answerer()
+    start_warm_up()
 
     def _shutdown(signum, frame):
         logger.info("Shutting down Mnemos simple MCP server...")
