@@ -36,8 +36,8 @@ apart at the end, for the tools:
    remember`` or ``mnemos correct`` since the last wake that showed it, at
    most three, oldest first, one line saying the person let memories go
    (``mnemos forget``) and on which days, never their words, and the
-   person's replies to the agent's notes that haven't reached a packet yet,
-   at most three, each delivered once.
+   person's replies to the agent's notes, and notes of their own, that
+   haven't reached a packet yet, at most three, each delivered once.
 8. For the memory tools: the ids and calls for what the packet showed, in the
    order it showed them, never to be shown to the person.
 
@@ -768,6 +768,7 @@ def _compose(
     # What the closing section lists for the tools, in the order shown.
     tools: dict[str, Any] = {
         "standing": [], "more": 0, "cut": [], "beliefs": [], "calls": [], "replies": [],
+        "person_notes": [],
     }
     # Being comes before news. Someone waking doesn't first recall last
     # night's events; they are simply themselves, with the people they know,
@@ -1001,28 +1002,35 @@ def _letgo_line(name: str, times: list[str], woke_at: str | None) -> str:
 def _reply_lines(
     packet: dict[str, Any], shown: dict[str, Any], tools: dict[str, Any],
 ) -> list[str]:
-    """The person's replies to the agent's notes that have not reached a
-    packet yet, each as "<person> replied to my note "<its first line>":
-    <reply>".
+    """The person's replies to the agent's notes, and notes of their own, that
+    have not reached a packet yet, oldest first: a reply as "<person> replied
+    to my note "<its first line>": <reply>", and a note of their own, which
+    answers nothing, as "<person> left me a note (<when>): <note>".
 
-    Never left out for room (``_drop_order``): a reply the reader was not
-    shown must not be marked delivered. A long one is cut at a sentence
+    Never left out for room (``_drop_order``): a reply or note the reader was
+    not shown must not be marked delivered. A long one is cut at a sentence
     boundary, and its whole waits behind its id in the closing section. The
-    note is "my" note only when the agent who wrote it is the reader; another
-    model's is named, and one no one can place is just "a note". Ids and tool
-    names stay in the closing section.
+    note a reply answers is "my" note only when the agent who wrote it is the
+    reader; another model's is named, and one no one can place is just "a
+    note". Ids and tool names stay in the closing section.
     """
     person = packet.get("person_name") or "the person I'm with"
     reader = packet.get("reader_model") or ""
     lines = []
     for item in packet.get("replies") or []:
         words, cut = cut_at_sentence(item.get("text") or "", _REPLY_CHARS)
-        title, _ = cut_at_sentence(_first_line(item.get("reply_to_text") or ""), _REPLIED_NOTE_CHARS)
-        about = f' "{title}"' if title else ""
-        owner = _whose_note(item.get("reply_to_model"), reader)
-        lines.append(f"- {person} replied to {owner} note{about}: {words}")
+        if item.get("in_reply_to"):
+            title, _ = cut_at_sentence(
+                _first_line(item.get("reply_to_text") or ""), _REPLIED_NOTE_CHARS,
+            )
+            about = f' "{title}"' if title else ""
+            owner = _whose_note(item.get("reply_to_model"), reader)
+            lines.append(f"- {person} replied to {owner} note{about}: {words}")
+            tools["replies"].append(item["id"])
+        else:
+            lines.append(f"- {person} left me a note ({_age_text(item.get('created_at'))}): {words}")
+            tools["person_notes"].append(item["id"])
         shown["replies"].append(item["id"])
-        tools["replies"].append(item["id"])
         if cut:
             tools["cut"].append(item["id"])
     return lines
@@ -1353,6 +1361,12 @@ def _format_tools(packet: dict[str, Any], tools: dict[str, Any]) -> str:
     if tools.get("replies"):
         lines.append(
             f"- replies to my notes, in order: {', '.join(tools['replies'])}; to answer one: "
+            'mnemos_note(text="…", kind="…", in_reply_to="<its id>")'
+        )
+    if tools.get("person_notes"):
+        whose = f"{packet['person_name']}'s notes" if packet.get("person_name") else "notes"
+        lines.append(
+            f"- {whose} to me, in order: {', '.join(tools['person_notes'])}; to answer one: "
             'mnemos_note(text="…", kind="…", in_reply_to="<its id>")'
         )
     if tools["cut"]:

@@ -878,12 +878,17 @@ def test_the_only_code_that_writes_these_words_is_the_tools_and_the_persons_own_
 
     assert calls("write_journal_entry") == ["simple_runtime.py:MnemosRuntime.journal"]
     assert calls("write_note") == [
-        "simple_runtime.py:MnemosRuntime.note", "simple_runtime.py:MnemosRuntime.reply_to_note",
+        "simple_runtime.py:MnemosRuntime._person_writes", "simple_runtime.py:MnemosRuntime.note",
+    ]
+    # The person's words, reply or note of their own, go through one place.
+    assert calls("_person_writes") == [
+        "simple_runtime.py:MnemosRuntime.person_note", "simple_runtime.py:MnemosRuntime.reply_to_note",
     ]
     # The person's own command, and the same command answered for the
     # person's own app by `mnemos interface` (M07a): neither is a tool the
-    # agent calls.
+    # agent calls. A note of the person's own (M17) is written the same two ways.
     assert calls("reply_to_note") == ["cli.py:_cmd_notes_reply", "interface/person.py:Interface.reply"]
+    assert calls("person_note") == ["cli.py:_cmd_notes_write", "interface/person.py:Interface.note"]
     assert calls("journal") == ["simple_mcp.py:register_simple_tools.mnemos_journal"]
     assert calls("note") == ["simple_mcp.py:register_simple_tools.mnemos_note"]
 
@@ -1117,15 +1122,21 @@ def test_health_says_what_the_journal_holds_and_raises_no_alarm(tmp_path):
         rt.reply_to_note(note, "A reply.")
         data = rt.health()
         card = format_health_card(data)
+        # The count is the person's words waiting: replies and their own notes (M17).
+        rt.person_note("A note of mine.")
+        both = format_health_card(rt.health())
     finally:
         rt.close()
 
-    assert "Journal:       0 entries; notes: 0 by the agent, 0 by the person; 0 replies not yet delivered" in empty
+    assert ("Journal:       0 entries; notes: 0 by the agent, 0 by the person; "
+            "0 replies and notes not yet delivered") in empty, empty
     assert data["journal"] == {
         "journal_entries": 2, "notes_by_agent": 1, "notes_by_person": 1, "replies_waiting": 1,
     }
     assert ("Journal:       2 entries; notes: 1 by the agent, 1 by the person; "
-            "1 reply not yet delivered") in card, card
+            "1 reply or note not yet delivered") in card, card
+    assert ("Journal:       2 entries; notes: 1 by the agent, 2 by the person; "
+            "2 replies and notes not yet delivered") in both, both
     assert "ATTENTION" not in card, "the journal raised an alarm"
     assert card.index("Last handoff:") < card.index("Journal:") < card.index("Last dream:")
 
@@ -1195,7 +1206,7 @@ def test_the_json_shapes_match_the_contract(tmp_path, capsys):
 
     assert main(["notes", "--json", *base]) == 0
     notes = json.loads(capsys.readouterr().out)
-    assert [set(row) for row in notes] == [NOTE_KEYS] * 3
+    assert [set(row) for row in notes] == [NOTE_KEYS | {"delivered_at"}, NOTE_KEYS, NOTE_KEYS]
     by_id = {row["id"]: row for row in notes}
     assert [row["id"] for row in notes] == [reply, unsigned, note], "newest first"
     assert by_id[note] | {"created_at": None} == {
@@ -1205,7 +1216,7 @@ def test_the_json_shapes_match_the_contract(tmp_path, capsys):
     assert by_id[unsigned]["model"] is None
     assert by_id[reply] | {"created_at": None} == {
         "id": reply, "kind": None, "text": "A reply.", "author": "person", "model": None,
-        "in_reply_to": note, "created_at": None, "read_at": None,
+        "in_reply_to": note, "created_at": None, "read_at": None, "delivered_at": None,
     }, "a reply has no kind, and is no model's"
 
 
@@ -1329,3 +1340,256 @@ def test_the_trace_says_what_was_written_and_what_the_packet_showed(tmp_path):
     assert entry in shown and reply in shown, shown
     # Ids only: no words of the journal or the reply are in the trace.
     assert "tide" not in json.dumps(dict(trace)) and "Thursday" not in json.dumps(dict(trace))
+
+
+# ── 10. A note from the person, not a reply (WP-M17) ──
+#
+# The person can leave the agent a note of their own (`mnemos notes write`, and
+# the interface's `note`), with no note of the agent's to answer. It is their
+# words, kept as theirs; it reaches the agent's waking packet once, through the
+# replies' path, said as their own note; and `notes --json` says when it did.
+
+PERSON_NOTE_KEYS = NOTE_KEYS | {"delivered_at"}
+_LEFT_A_NOTE = re.compile(r"- Riley left me a note \((?:just now|\d+ minutes? ago)\): (.*)")
+
+
+def test_notes_write_keeps_the_persons_own_note_exactly_as_given(tmp_path, capsys, monkeypatch):
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        rt.note("A note of the agent's, so a store is here.", "made", signed_as=OPUS)
+    finally:
+        rt.close()
+    words = "The harbour office  closes early on Fridays now.\nNo need to answer."
+
+    assert main(["notes", "write", "--db-path", str(db), *SCOPE_ARGS, words]) == 0
+    out = capsys.readouterr().out
+    [kept] = _rows(db, "SELECT * FROM notes WHERE author = 'person'")
+    assert (kept["text"], kept["kind"], kept["model_id"], kept["in_reply_to"]) == (words, "", "", "")
+    assert (kept["hour_id"], kept["delivered_at"], kept["read_at"]) == ("", None, None)
+    assert (kept["agent_id"], kept["person_id"], kept["project_scope"]) == tuple(SCOPE.values())
+    # It prints the stored note: its words, as the listing shows them, and its id.
+    assert "Note kept, in your own words." in out and "your note" in out, out
+    assert "  The harbour office  closes early on Fridays now.\n  No need to answer." in out, out
+    assert f"id: {kept['id']}" in out, out
+
+    # The listing calls it the person's note, not a reply, and it answers nothing.
+    assert main(["notes", "--db-path", str(db), *SCOPE_ARGS]) == 0
+    listing = capsys.readouterr().out
+    assert "your note" in listing and "your reply" not in listing and "answers:" not in listing, listing
+
+    # Refused, and nothing written: empty, blank, a stray paste, an agent's hour.
+    for refused in ("", "   ", " \n\t ", "x" * 16_385):
+        assert main(["notes", "write", "--db-path", str(db), *SCOPE_ARGS, refused]) == 1, repr(refused[:8])
+    err = capsys.readouterr().err
+    assert "Nothing saved: The note was empty." in err and "at most 16,384 characters" in err, err
+    assert main(["notes", "write", "--db-path", str(db), *SCOPE_ARGS, "y" * 16_384]) == 0
+    capsys.readouterr()
+    monkeypatch.setenv("MNEMOS_HOUR_ID", "hour-2026-10-22-mine")
+    assert main(["notes", "write", "--db-path", str(db), *SCOPE_ARGS, "from inside an hour"]) == 1
+    assert "no one is in the room" in capsys.readouterr().err
+    assert _rows(db, "SELECT length(text) AS n FROM notes WHERE author = 'person' ORDER BY created_at") == [
+        {"n": len(words)}, {"n": 16_384},
+    ]
+
+
+def test_notes_write_without_a_store_saves_nothing_and_makes_no_store(tmp_path, capsys):
+    db = tmp_path / "nothing-here.db"
+    assert main(["notes", "write", "--db-path", str(db), *SCOPE_ARGS, "Hello."]) == 1
+    assert "Nothing saved" in capsys.readouterr().err
+    assert not db.exists()
+
+
+def test_notes_write_json_is_the_same_item_as_notes_json(tmp_path, capsys):
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        rt.note("A note of the agent's.", "noticed", signed_as=OPUS)
+    finally:
+        rt.close()
+    base = ["--db-path", str(db), *SCOPE_ARGS]
+
+    assert main(["notes", "write", "--json", *base, "Back on Thursday."]) == 0
+    written = json.loads(capsys.readouterr().out)
+    assert main(["notes", "--json", "write", *base, "And the gnome stays."]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert main(["notes", "--json", *base]) == 0
+    listed = json.loads(capsys.readouterr().out)
+
+    assert listed[:2] == [second, written], "newest first, the same items"
+    assert set(written) == PERSON_NOTE_KEYS
+    assert written | {"id": None, "created_at": None} == {
+        "id": None, "kind": None, "text": "Back on Thursday.", "author": "person", "model": None,
+        "in_reply_to": None, "created_at": None, "read_at": None, "delivered_at": None,
+    }
+
+
+def test_a_persons_note_reaches_the_hook_once_as_their_own_note_across_processes(tmp_path):
+    home = _home(tmp_path)
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        note_id = _said(rt.note("The pier timetable changed.", "noticed", signed_as=OPUS), "Note ID: ")
+    finally:
+        rt.close()
+    words = "I moved the  ferry notes to the shared board."
+
+    wrote = _cli("notes", "write", "--json", "--db-path", str(db), *SCOPE_ARGS, words, home=home)
+    assert wrote.returncode == 0, wrote.stderr
+    mine = json.loads(wrote.stdout)
+    replied = _cli("notes", "reply", "--db-path", str(db), *SCOPE_ARGS, note_id, "Checked it.", home=home)
+    assert replied.returncode == 0, replied.stderr
+    listed = _cli("notes", "--json", "--db-path", str(db), *SCOPE_ARGS, home=home)
+    before = {row["id"]: row for row in json.loads(listed.stdout)}
+    assert before[mine["id"]]["delivered_at"] is None
+
+    first = _hook(db, home, scope_args=tuple(SCOPE_ARGS))
+    human = _human(first)
+    said = _LEFT_A_NOTE.findall(human)
+    assert said == [" ".join(words.split())], first
+    assert "replied to a note" not in first, "a note of their own is not a reply"
+    assert '- Riley replied to my note "The pier timetable changed.": Checked it.' in human, first
+    assert "mnemos_" not in human and not UUID.search(human), human
+    tools = first.split("### for the memory tools", 1)[1]
+    assert f"Riley's notes to me, in order: {mine['id']}" in tools, tools
+    assert f"replies to my notes, in order: {mine['id']}" not in tools, tools
+
+    after = {row["id"]: row for row in json.loads(
+        _cli("notes", "--json", "--db-path", str(db), *SCOPE_ARGS, home=home).stdout)}
+    assert after[mine["id"]]["delivered_at"] is not None
+    assert datetime.fromisoformat(after[mine["id"]]["delivered_at"])
+
+    second = _hook(db, home, scope_args=tuple(SCOPE_ARGS))
+    assert "left me a note" not in second and "replied to" not in second, second
+    again = {row["id"]: row for row in json.loads(
+        _cli("notes", "--json", "--db-path", str(db), *SCOPE_ARGS, home=home).stdout)}
+    assert again[mine["id"]]["delivered_at"] == after[mine["id"]]["delivered_at"], "delivered once"
+
+
+def test_notes_json_carries_delivered_at_on_person_notes_and_changes_nothing_else(tmp_path, capsys):
+    """Ghost and the phone read today's shape: an agent's note is exactly as it
+    was, and a person's note or reply gains one field, ``delivered_at``."""
+    home = _home(tmp_path)
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        note = _said(rt.note("A note.", "pickup", signed_as=OPUS), "Note ID: ")
+        reply = rt.reply_to_note(note, "A reply.")
+    finally:
+        rt.close()
+    base = ["--db-path", str(db), *SCOPE_ARGS]
+
+    assert main(["notes", "--json", *base]) == 0
+    listed = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    assert set(listed[note]) == NOTE_KEYS
+    assert set(listed[reply]) == PERSON_NOTE_KEYS and listed[reply]["delivered_at"] is None
+
+    _hook(db, home, scope_args=tuple(SCOPE_ARGS))
+    assert main(["notes", "--json", *base]) == 0
+    listed = {row["id"]: row for row in json.loads(capsys.readouterr().out)}
+    [stamp] = _rows(db, "SELECT delivered_at FROM notes WHERE id = ?", (reply,))
+    assert listed[reply]["delivered_at"] == stamp["delivered_at"] is not None
+    assert set(listed[note]) == NOTE_KEYS
+
+
+def test_a_reply_still_needs_the_note_it_answers(tmp_path):
+    """The store now keeps a person's note with nothing to answer; a reply with
+    no note named must not become one."""
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        rt.note("A note.", "made", signed_as=OPUS)
+        for nothing in ("", "   "):
+            with pytest.raises(ValueError, match="answers one of the agent's notes"):
+                rt.reply_to_note(nothing, "Into the void.")
+    finally:
+        rt.close()
+    assert _rows(db, "SELECT COUNT(*) AS n FROM notes WHERE author = 'person'") == [{"n": 0}]
+
+
+def test_no_tool_the_agent_calls_can_author_a_note_as_the_person(tmp_path, served):
+    """Only the person's own surfaces (`mnemos notes write` and the interface's
+    `note`) write a person's note. ``mnemos_note`` stays the agent's: its
+    parameters name no author, and whatever it is given, what it keeps is the
+    agent's, signed, with a kind."""
+    from mnemos.simple_runtime import SIMPLE_TOOL_NAMES
+
+    assert not [name for name in SIMPLE_TOOL_NAMES if "person" in name or "write" in name]
+    assert "author" not in _tool("mnemos_note").parameters["properties"]
+    note = _tool("mnemos_note").fn
+    for kind in ("person", "from_person", "", "note", "reply"):
+        assert note("Pretending to be Riley.", kind).startswith("Nothing saved:"), kind
+    kept = note("A real note.", "made", signed_as=OPUS)
+    answer = note("Following up on my own.", "question", signed_as=OPUS,
+                  in_reply_to=_said(kept, "Note ID: "))
+    assert answer.startswith("Note kept exactly as written."), answer
+    assert _rows(tmp_path / "memory.db", "SELECT author, kind, model_id FROM notes ORDER BY created_at") == [
+        {"author": "agent", "kind": "made", "model_id": OPUS},
+        {"author": "agent", "kind": "question", "model_id": OPUS},
+    ]
+
+
+def test_the_code_version_is_raised_for_the_persons_own_note():
+    """Code from before M17 would show a note of the person's own as a reply
+    to "a note" and mark it delivered; raised, it stands down from marking it,
+    and the code that knows the note delivers it."""
+    assert MAINTENANCE_CODE_VERSION >= 23
+
+
+
+# ── 11. An agent's shell can't write the person's words (WP-M17, round 2) ──
+
+_NOT_YOURS = (
+    "These are the person's words, so an agent's shell can't write them. "
+    "Leave your own note with mnemos_note."
+)
+
+
+@pytest.mark.parametrize("variable", ["CLAUDECODE", "AI_AGENT"])
+def test_notes_write_and_reply_refuse_in_an_agents_shell_and_save_nothing(
+    tmp_path, capsys, monkeypatch, variable,
+):
+    """`remember`, `correct` and `forget` switch to the agent's authorship in
+    an agent's own shell; a note or a reply is only ever the person's words,
+    so these refuse instead, and nothing is saved."""
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        note_id = _said(rt.note("A note of the agent's.", "question", signed_as=OPUS), "Note ID: ")
+    finally:
+        rt.close()
+    before = _all_rows(db)
+    base = ["--db-path", str(db), *SCOPE_ARGS]
+    monkeypatch.setenv(variable, "1")
+
+    assert main(["notes", "write", *base, "Pretending to be Riley."]) == 1
+    assert main(["notes", "write", "--json", *base, "Pretending to be Riley."]) == 1
+    assert main(["notes", "reply", *base, note_id, "Pretending to be Riley."]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == "", captured.out
+    assert captured.err.splitlines() == [_NOT_YOURS] * 3, captured.err
+    assert _all_rows(db) == before, "something was saved, or the note was marked read"
+
+
+def test_from_a_plain_shell_notes_write_and_reply_still_write_as_the_person(tmp_path, capsys):
+    """The suite's conftest clears CLAUDECODE and AI_AGENT, as the person's own
+    terminal has neither; both commands write, as the person's."""
+    import os
+
+    assert not os.environ.get("CLAUDECODE") and not os.environ.get("AI_AGENT")
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        note_id = _said(rt.note("A note of the agent's.", "question", signed_as=OPUS), "Note ID: ")
+    finally:
+        rt.close()
+    base = ["--db-path", str(db), *SCOPE_ARGS]
+
+    assert main(["notes", "write", *base, "My own note."]) == 0
+    assert main(["notes", "reply", *base, note_id, "My reply."]) == 0
+    capsys.readouterr()
+    assert _rows(db, "SELECT text, author, model_id, in_reply_to FROM notes "
+                     "WHERE author = 'person' ORDER BY created_at") == [
+        {"text": "My own note.", "author": "person", "model_id": "", "in_reply_to": ""},
+        {"text": "My reply.", "author": "person", "model_id": "", "in_reply_to": note_id},
+    ]

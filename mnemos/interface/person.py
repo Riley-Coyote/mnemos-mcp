@@ -2,8 +2,8 @@
 
 The person's commands, each with ``--json`` in the shapes an app reads (Ghost's
 home is the first): ``mnemos memories``, ``mnemos search``, ``mnemos correct``
-and ``mnemos forget``, beside ``mnemos journal``, ``mnemos notes`` and ``mnemos
-notes reply``. And ``mnemos interface``: one long-lived process that answers the
+and ``mnemos forget``, beside ``mnemos journal``, ``mnemos notes``, ``mnemos
+notes reply`` and ``mnemos notes write``. And ``mnemos interface``: one long-lived process that answers the
 same commands in the same shapes, one JSON request a line on stdin and one JSON
 line an answer on stdout, so the meaning model loads once rather than once a
 command (4.4 s on the maintainer's Mac, then about 14 ms a query).
@@ -13,7 +13,8 @@ memory is not the agent remembering: nothing a search finds is woken,
 strengthened or linked. A correction or a forget the person makes (outside an
 agent's shell) is the person's: the new words unsigned and ``author_kind``
 'person', a forget archived as ``forgotten_by_person``, and the agent wakes to
-each once. Nothing is deleted.
+each once. A reply or a note of the person's own is the person's too, and the
+agent wakes to each once. Nothing is deleted.
 
 Times are ISO 8601 in UTC (``utc_iso``).
 """
@@ -55,7 +56,7 @@ STATES = ("active", "dormant")
 #: Anything else (none, or a kind a newer Mnemos adds) is "unknown".
 AUTHORS = {"agent": "agent", "person": "person", "tool": "tool", "system": "tool", "import": "tool"}
 #: What ``mnemos interface`` answers.
-COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply")
+COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note")
 _JOURNAL_LAST = 5
 
 
@@ -403,6 +404,24 @@ class Interface:
                 pass
             assert writer._store is not None
             return note_view(writer._store.get_note(reply_id, **writer._scope_args()))
+        finally:
+            writer.close()
+
+    def note(self, request: Mapping[str, Any]) -> Any:
+        """A note of the person's own to the agent, answering nothing: kept
+        exactly as given, as theirs, and the stored note answered in the
+        ``notes`` item shape. It writes nothing else, and never makes a store."""
+        text = _words(request, "text")
+        if not self._held():
+            raise Refused("Nothing saved: there is no memory here yet.")
+        writer = self._runtime(read_only=False)
+        try:
+            try:
+                note_id = writer.person_note(text)
+            except ValueError as exc:
+                raise Refused(f"Nothing saved: {exc}") from exc
+            assert writer._store is not None
+            return note_view(writer._store.get_note(note_id, **writer._scope_args()))
         finally:
             writer.close()
 

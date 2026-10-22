@@ -22,6 +22,7 @@ Commands:
     mnemos journal [--last N]    Read the agent's journal
     mnemos notes [--unread]      Read the agent's notes to you
     mnemos notes reply ID TEXT   Reply to one of them, in your own words
+    mnemos notes write TEXT      Leave the agent a note of your own
     mnemos log [--no-open]       A page to watch the agent's days (read-only, this machine only)
     mnemos hermes install        Install Mnemos for Hermes Agent
     mnemos hermes quickstart     Safely install Mnemos for Hermes Agent
@@ -241,7 +242,7 @@ def main(argv: list[str] | None = None) -> int:
         description=(
             "One long-lived process for an app the person uses. Each line on stdin is one "
             'request, {"id": ..., "command": ..., ...}, for memories, search, correct, '
-            "forget, journal, notes or reply; each answer is one line on stdout, "
+            "forget, journal, notes, reply or note; each answer is one line on stdout, "
             '{"id": ..., "result": ...} with what the one-shot --json command prints, or '
             '{"id": ..., "error": "<one sentence>"}. The meaning model loads once, in the '
             "background, as it starts. It ends when stdin closes."
@@ -344,11 +345,12 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── notes ──
     p_notes = sub.add_parser(
-        "notes", help="The notes the agent leaves you, and your replies",
+        "notes", help="The notes the agent leaves you, your replies, and your own notes",
         description=(
             "Read the notes the agent left you, newest first. Reading them marks the "
             "agent's notes as read; --json only reads. `notes reply ID TEXT` answers "
-            "one in your own words, and the agent wakes with your reply."
+            "one in your own words, and the agent wakes with your reply. `notes write "
+            "TEXT` leaves the agent a note of your own, and it wakes with that once too."
         ),
     )
     _scope_options(p_notes)
@@ -358,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
     p_notes.add_argument(
         "--json", action="store_true",
         help='Print the notes as JSON: [{"id", "kind", "text", "author", "model", '
-             '"in_reply_to", "created_at", "read_at"}]',
+             '"in_reply_to", "created_at", "read_at"}]; yours also carry "delivered_at"',
     )
     notes_sub = p_notes.add_subparsers(dest="notes_command")
     p_notes_reply = notes_sub.add_parser(
@@ -367,6 +369,21 @@ def main(argv: list[str] | None = None) -> int:
     _scope_options(p_notes_reply)
     p_notes_reply.add_argument("note_id", help="The id of the note you are answering")
     p_notes_reply.add_argument("text", nargs="+", help="Your reply, in your own words")
+    p_notes_write = notes_sub.add_parser(
+        "write", help="Leave the agent a note of your own, in your own words",
+        description=(
+            "Leave the agent a note that answers nothing: your words, kept exactly as "
+            "given and as yours. The agent wakes with it once. An agent's own shell "
+            "(CLAUDECODE or AI_AGENT set) can't write it. Put -- before words "
+            "that begin with a dash."
+        ),
+    )
+    _scope_options(p_notes_write)
+    p_notes_write.add_argument(
+        "--json", action="store_true", default=argparse.SUPPRESS,
+        help="Print the stored note as JSON, the same item as `notes --json`",
+    )
+    p_notes_write.add_argument("text", nargs="+", help="Your note, in your own words")
 
     # ── log ──
     p_log = sub.add_parser(
@@ -2749,12 +2766,14 @@ def _cmd_journal(args: argparse.Namespace) -> int:
 
 
 def _cmd_notes(args: argparse.Namespace) -> int:
-    """The notes the agent left you and your replies: list them, or reply."""
-    from .authorship import display_name
+    """The notes the agent left you, your replies and your own notes: list
+    them, reply, or write one."""
     from .simple_runtime import current_hour
 
     if getattr(args, "notes_command", None) == "reply":
         return _cmd_notes_reply(args)
+    if getattr(args, "notes_command", None) == "write":
+        return _cmd_notes_write(args)
     runtime = _journal_runtime(args, read_only=True)
     try:
         notes = runtime.notes(unread=args.unread)
@@ -2770,17 +2789,7 @@ def _cmd_notes(args: argparse.Namespace) -> int:
     for index, note in enumerate(notes):
         if index:
             print()
-        if note["author"] == "person":
-            header = f"{_utc_minute(note['created_at'])}  your reply"
-        else:
-            by = display_name(note["model"]) if note["model"] else "unsigned"
-            unread = "" if note["read_at"] else "  (unread)"
-            header = f"{_utc_minute(note['created_at'])}  {note['kind'] or 'note'}, {by}{unread}"
-        print(header)
-        print(f"  {note['text']}".replace("\n", "\n  "))
-        if note["in_reply_to"]:
-            print(f"  answers: {note['in_reply_to']}")
-        print(f"  id: {note['id']}")
+        _print_note(note)
     # Reading them is what makes them read; a pass of the agent's own hours has
     # no one in the room to have read anything.
     unread_ids = [note["id"] for note in notes if note["author"] == "agent" and not note["read_at"]]
@@ -2798,9 +2807,82 @@ def _cmd_notes(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_note(note: dict) -> None:
+    """One note as `mnemos notes` lists it: when and whose, its words, what it
+    answers, and its id."""
+    from .authorship import display_name
+
+    if note["author"] == "person":
+        header = f"{_utc_minute(note['created_at'])}  {'your reply' if note['in_reply_to'] else 'your note'}"
+    else:
+        by = display_name(note["model"]) if note["model"] else "unsigned"
+        unread = "" if note["read_at"] else "  (unread)"
+        header = f"{_utc_minute(note['created_at'])}  {note['kind'] or 'note'}, {by}{unread}"
+    print(header)
+    print(f"  {note['text']}".replace("\n", "\n  "))
+    if note["in_reply_to"]:
+        print(f"  answers: {note['in_reply_to']}")
+    print(f"  id: {note['id']}")
+
+
+# What `notes write` and `notes reply` say in an agent's own shell. Unlike
+# `remember`, `correct` and `forget`, which write as the agent there, these
+# are only ever the person's words, so they refuse.
+_NOT_THE_PERSON = (
+    "These are the person's words, so an agent's shell can't write them. "
+    "Leave your own note with mnemos_note."
+)
+
+
+def _refused_in_an_agents_shell() -> bool:
+    """True, having said why on stderr, when an agent's own shell runs a
+    command that writes only the person's words (``run_by_agent``)."""
+    from .authorship import run_by_agent
+
+    if run_by_agent():
+        print(_NOT_THE_PERSON, file=sys.stderr)
+        return True
+    return False
+
+
+def _cmd_notes_write(args: argparse.Namespace) -> int:
+    """Store a note of your own to the agent, one that answers nothing. It is
+    your words, kept exactly as given and as yours (never signed as a model's),
+    and the agent wakes with it once. Like a reply, it is never the first thing
+    to make a store, and an agent's own shell can't write it."""
+    from .simple_runtime import note_view
+
+    if _refused_in_an_agents_shell():
+        return 1
+    probe = _journal_runtime(args, read_only=False)
+    try:
+        if not probe.db_path.exists():
+            print("Nothing saved: there is no memory here yet.", file=sys.stderr)
+            return 1
+        try:
+            note_id = probe.person_note(" ".join(args.text))
+        except ValueError as exc:
+            print(f"Nothing saved: {exc}", file=sys.stderr)
+            return 1
+        assert probe._store is not None
+        note = note_view(probe._store.get_note(note_id, **probe._scope_args()))
+    finally:
+        probe.close()
+    if getattr(args, "json", False):
+        print(json.dumps(note, indent=2, ensure_ascii=False))
+        return 0
+    print("Note kept, in your own words. The agent wakes with it once.")
+    print()
+    _print_note(note)
+    return 0
+
+
 def _cmd_notes_reply(args: argparse.Namespace) -> int:
     """Store your own reply to one of the agent's notes. It is your words, kept
-    as yours (never signed as a model's), and the agent wakes with it once."""
+    as yours (never signed as a model's), and the agent wakes with it once. An
+    agent's own shell can't write it."""
+    if _refused_in_an_agents_shell():
+        return 1
     probe = _journal_runtime(args, read_only=False)
     try:
         if not probe.db_path.exists():

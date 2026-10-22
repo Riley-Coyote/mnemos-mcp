@@ -26,7 +26,7 @@ from tests.test_recall_by_meaning import _ConceptEmbedder
 OPUS = "claude-opus-5-5"
 SCOPE = {"agent_id": "nova", "person_id": "riley", "project_scope": "demo"}
 SCOPE_ARGS = ["--agent-id", "nova", "--person-id", "riley", "--project-scope", "demo"]
-COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply")
+COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note")
 
 
 def _here(db: Path):
@@ -180,6 +180,9 @@ def test_every_refusal_is_one_plain_sentence_with_the_requests_id(tmp_path):
             json.dumps({"id": 6, "command": "correct", "memory_id": ids["pier"], "text": " "}),
             json.dumps({"id": 7, "command": "notes", "unread": "yes"}),
             json.dumps({"id": 8, "command": "reply", "note_id": ids["note"], "text": ""}),
+            json.dumps({"id": 9, "command": "note", "text": "  "}),
+            json.dumps({"id": 10, "command": "note", "text": 7}),
+            json.dumps({"id": 11, "command": "note", "text": "x" * 16_385}),
         )]
     finally:
         interface.close()
@@ -196,6 +199,9 @@ def test_every_refusal_is_one_plain_sentence_with_the_requests_id(tmp_path):
         {"id": 6, "error": "A correction needs the memory's new words."},
         {"id": 7, "error": '"unread" is true or false.'},
         {"id": 8, "error": "Nothing saved: The note was empty."},
+        {"id": 9, "error": "Nothing saved: The note was empty."},
+        {"id": 10, "error": '"text" takes text.'},
+        {"id": 11, "error": "Nothing saved: A note is at most 16,384 characters; this one is 16,385."},
     ]
 
 
@@ -211,6 +217,7 @@ def test_without_a_store_the_interface_reads_nothing_and_makes_nothing(tmp_path)
             {"command": "correct", "memory_id": "engram_01ABC0000000000000000000", "text": "words"},
             {"command": "forget", "memory_id": "engram_01ABC0000000000000000000"},
             {"command": "reply", "note_id": "x", "text": "hello"},
+            {"command": "note", "text": "hello"},
         ])]
     finally:
         interface.close()
@@ -223,6 +230,7 @@ def test_without_a_store_the_interface_reads_nothing_and_makes_nothing(tmp_path)
         "No memory engram_01ABC0000000000000000000 is held here.",
         "No memory engram_01ABC0000000000000000000 is held here.",
         "Nothing saved: there are no notes here yet.",
+        "Nothing saved: there is no memory here yet.",
     ]
     assert not db.exists()
 
@@ -298,7 +306,53 @@ def test_every_command_the_interface_answers_has_a_one_shot_beside_it(command):
     from mnemos.interface.person import COMMANDS as answered
 
     assert command in answered
-    one_shot = {"reply": ["notes", "reply"]}.get(command, [command])
+    one_shot = {"reply": ["notes", "reply"], "note": ["notes", "write"]}.get(command, [command])
     with pytest.raises(SystemExit) as helped:
         main([*one_shot, "--help"])
     assert helped.value.code == 0
+
+
+def test_a_note_of_the_persons_own_is_the_same_item_as_notes_and_writes_nothing_else(
+    tmp_path, capsys,
+):
+    """The interface's ``note`` (M17): the person's own words, with no note of
+    the agent's to answer, kept as theirs. It answers with the stored note in
+    the ``notes`` item shape, and writes nothing but that one row."""
+    db = tmp_path / "memory.db"
+    note = _seeded(db)["note"]
+
+    def counts() -> dict[str, object]:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            tables = [row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+            found: dict[str, object] = {
+                table: conn.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0] for table in tables
+            }
+            found["stamps"] = conn.execute("SELECT id, read_at, delivered_at FROM notes ORDER BY id").fetchall()
+            return found
+        finally:
+            conn.close()
+
+    before = counts()
+    words = "Back Thursday.  The gnome stays where he is."
+    answers = _interface(db, tmp_path, [
+        {"id": 1, "command": "note", "text": words},
+        {"id": 2, "command": "notes"},
+    ])
+    written, listed = answers[0]["result"], answers[1]["result"]
+
+    assert written | {"id": None, "created_at": None} == {
+        "id": None, "kind": None, "text": words, "author": "person", "model": None,
+        "in_reply_to": None, "created_at": None, "read_at": None, "delivered_at": None,
+    }
+    assert listed[0] == written and listed[0] == _one_shot(db, capsys, "notes", "--json")[0]
+    assert [entry["id"] for entry in listed[1:]] == [note]
+    after = counts()
+    assert after.pop("notes") == before.pop("notes") + 1
+    stamps_after, stamps_before = after.pop("stamps"), before.pop("stamps")
+    assert [row for row in stamps_after if row[0] != written["id"]] == stamps_before, "no note was marked"
+    assert {table: n for table, n in after.items() if table != "memory_trace"} == {
+        table: n for table, n in before.items() if table != "memory_trace"
+    }
+

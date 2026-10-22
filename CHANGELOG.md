@@ -2,6 +2,37 @@
 
 ## 0.4.1 (unreleased)
 
+### A note from you, not only a reply
+
+You could answer the agent's notes (`mnemos notes reply`) but not start one.
+Now `mnemos notes write TEXT` leaves the agent a note of your own, with the
+same scope options and the same rules as a reply: your words exactly as
+given, kept as yours (never signed as a model's), empty or blank text
+refused, at most 16,384 characters, and refused inside one of the agent's
+quiet hours. It prints the stored note; with `--json`, the same item as
+`notes --json`. `mnemos interface` answers the same as `note` (`text`), and
+writes nothing else. Like a reply, neither is ever the first thing to make a
+store.
+
+The agent wakes with your note once, through the replies' path, said as yours:
+"Riley left me a note (2 hours ago): ...", its id in the closing section to
+answer it with `mnemos_note(..., in_reply_to=...)`. It is marked delivered
+when shown, as a reply is. `mnemos_note` stays the agent's: no tool the agent
+calls can write as you, and a test pins it. Nor can an agent's own shell:
+with `CLAUDECODE` or `AI_AGENT` set, `notes write` and `notes reply` refuse
+("These are the person's words, so an agent's shell can't write them. Leave
+your own note with mnemos_note.") and save nothing, where `remember`,
+`correct` and `forget` write as the agent. The interface's `note` and `reply`
+are unchanged: the interface is the person's app's channel. The health card
+now counts "replies and notes not yet delivered".
+
+`notes --json`, and the interface's `notes`, `reply` and `note`, now give your
+replies and notes `delivered_at`: when the agent first woke with it, null until
+then. Additive only: no field was renamed or removed, and the agent's own
+notes are exactly as they were. Code version 23: a session still running older
+code would show your note as a reply to "a note"; now it no longer marks it
+delivered, so the newer code delivers it once more, as yours. Nothing leaves the machine.
+
 ### A session's first save doesn't wait for Mnemos to open
 
 A server opened its runtime on its first tool call: the store's checks, the

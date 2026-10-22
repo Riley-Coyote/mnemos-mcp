@@ -349,6 +349,8 @@ mnemos memories --json --state dormant --limit 100 --offset 0
 mnemos search --json -n 10 "the ferry"    # by meaning and by words, closest first
 mnemos correct --json <id> "new words"    # yours: unsigned, and the agent is told once
 mnemos forget --json <id>                 # archived, never deleted, never recalled again
+mnemos notes --json                       # the agent's notes to you, your replies and your notes
+mnemos notes write --json "your words"    # leave the agent a note of your own
 mnemos interface                          # all of these for an app, one JSON line each
 ```
 
@@ -367,11 +369,23 @@ mnemos interface                          # all of these for an app, one JSON li
   agent's instead, as with `mnemos remember`. They act only on a memory still
   in use: one archived, or replaced by a correction since, changes nothing and
   says so. Put `--` before the id when the words could begin with a dash.
+- **Notes go both ways.** The agent leaves you notes with `mnemos_note`.
+  `mnemos notes reply` answers one, and `mnemos notes write` leaves the agent
+  a note of your own that answers nothing. Either is kept exactly as you gave
+  it, as yours (never a model's), at most 16,384 characters, and refused
+  inside one of the agent's quiet hours. The agent wakes with each once: a
+  reply as "<you> replied to my note ...", a note of yours as "<you> left me a
+  note (<when>): ...". In `notes --json`, your replies and notes carry
+  `delivered_at`, null until the agent has woken with them; nothing else in
+  the shape changed. Only your own commands write as you: no tool the agent
+  calls can, and in an agent's own shell (`CLAUDECODE` or `AI_AGENT` set)
+  `notes write` and `notes reply` refuse and save nothing, rather than write
+  as the agent the way `remember`, `correct` and `forget` do.
 - **`mnemos interface`** is one process an app keeps open. Each line it reads
   is a request, `{"id": 1, "command": "search", "query": "the ferry"}`, for
   `memories` (`state`, `limit`, `offset`), `search` (`query`, `max_results`),
   `correct` (`memory_id`, `text`), `forget` (`memory_id`), `journal` (`last`),
-  `notes` (`unread`) or `reply` (`note_id`, `text`); each line it writes is
+  `notes` (`unread`), `reply` (`note_id`, `text`) or `note` (`text`); each line it writes is
   the answer, `{"id": 1, "result": ...}` with exactly what the one-shot
   `--json` prints, or `{"id": 1, "error": "..."}`. It loads the meaning model
   once, in the background as it starts, so a search answers in tens of

@@ -4498,14 +4498,40 @@ class MnemosRuntime:
         once.
         """
 
+        if not (note_id or "").strip():
+            # The store keeps a note of the person's own with no note named;
+            # a reply with none named must not become one.
+            raise ValueError("A reply answers one of the agent's notes.")
+        return self._person_writes(text, "reply", in_reply_to=note_id)
+
+    def person_note(self, text: str) -> str:
+        """Keep a note of the person's own to the agent, one that answers
+        nothing, and return its id. Raises ``ValueError`` with a plain reason
+        when it is refused.
+
+        Like a reply, this stores the person's words exactly as given, signed
+        as the person's (``author`` 'person', no kind, no model), and only the
+        person's own surfaces call it (``mnemos notes write`` and the
+        interface's ``note``): no tool the agent calls reaches it, and
+        ``mnemos_note`` stays the agent's. It is refused inside one of the
+        agent's quiet hours, and past ``MAX_REPLY_CHARS``. It reaches the
+        agent's next waking packet once, through the replies' path, as their
+        own note.
+        """
+
+        return self._person_writes(text, "note")
+
+    def _person_writes(self, text: str, what: str, *, in_reply_to: str = "") -> str:
+        """Store the person's own words as a ``what`` ("reply" or "note"),
+        under the rules both share."""
         if current_hour():
             raise ValueError(
-                "A reply is the person's own words, and no one is in the room during "
+                f"A {what} is the person's own words, and no one is in the room during "
                 "one of the agent's hours."
             )
         if len(text) > MAX_REPLY_CHARS:
             raise ValueError(
-                f"A reply is at most {MAX_REPLY_CHARS:,} characters; this one is {len(text):,}."
+                f"A {what} is at most {MAX_REPLY_CHARS:,} characters; this one is {len(text):,}."
             )
         self._ensure_init()
         assert self._store is not None
@@ -4513,7 +4539,7 @@ class MnemosRuntime:
             text,
             author="person",
             **self._scope_args(),
-            in_reply_to=note_id,
+            in_reply_to=in_reply_to,
             session_id=harness_session(),
         )
 
@@ -7392,8 +7418,12 @@ def notes_view(store: EngramStore, *, unread: bool, **scope: str) -> list[dict[s
 def note_view(row: Mapping[str, Any]) -> dict[str, Any]:
     """A note as the command and the interface read it:
     ``{id, kind, text, author, model, in_reply_to, created_at, read_at}``. A
-    person's reply has no kind and no model; what is not known is ``None``."""
-    return {
+    person's note or reply has no kind and no model, and adds
+    ``delivered_at``: when it first reached the agent's waking packet, null
+    until it has. A note of the person's own answers nothing (``in_reply_to``
+    null). What is not known is ``None``. Additive only: Ghost and the phone
+    read this shape."""
+    view = {
         "id": row["id"],
         "kind": row["kind"] or None,
         "text": row["text"],
@@ -7403,6 +7433,9 @@ def note_view(row: Mapping[str, Any]) -> dict[str, Any]:
         "created_at": row["created_at"],
         "read_at": row["read_at"],
     }
+    if row["author"] == "person":
+        view["delivered_at"] = row["delivered_at"]
+    return view
 
 
 def _signed_row(row: Mapping[str, Any]) -> dict[str, Any]:
@@ -7656,8 +7689,9 @@ def describe_code(code: Mapping[str, Any] | None) -> tuple[str, str | None]:
 
 def describe_journal(journal: Mapping[str, Any] | None) -> str | None:
     """The health card's one line about the journal and the notes: how many
-    entries, how many notes each author wrote, and how many replies of the
-    person's have not yet reached the agent's waking packet. None when the
+    entries, how many notes each author wrote, and how many of the person's
+    replies and own notes have not yet reached the agent's waking packet
+    (``replies_waiting``, a name kept for what reads it). None when the
     snapshot has no such section."""
     if not journal:
         return None
@@ -7667,7 +7701,7 @@ def describe_journal(journal: Mapping[str, Any] | None) -> str | None:
         f"{entries} {'entry' if entries == 1 else 'entries'}; "
         f"notes: {int(journal.get('notes_by_agent') or 0)} by the agent, "
         f"{int(journal.get('notes_by_person') or 0)} by the person; "
-        f"{waiting} {'reply' if waiting == 1 else 'replies'} not yet delivered"
+        f"{waiting} {'reply or note' if waiting == 1 else 'replies and notes'} not yet delivered"
     )
 
 

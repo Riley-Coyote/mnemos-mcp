@@ -753,9 +753,10 @@ CREATE TABLE IF NOT EXISTS journal_entries (
 );
 
 -- Notes between the agent and the person (v16), kept the same way. An agent's
--- note has a kind (NOTE_KINDS); a person's reply has none and names the note it
--- answers in `in_reply_to`. `delivered_at` is when a reply first reached the
--- agent's waking packet; `read_at` is when the person first read an agent note.
+-- note has a kind (NOTE_KINDS); a person's has none, and as a reply names the
+-- note it answers in `in_reply_to` (a note of their own names none).
+-- `delivered_at` is when a person's note or reply first reached the agent's
+-- waking packet; `read_at` is when the person first read an agent note.
 -- Both are bookkeeping and nothing else changes after a note is written.
 CREATE TABLE IF NOT EXISTS notes (
     id TEXT PRIMARY KEY,
@@ -5118,8 +5119,9 @@ class EngramStore:
         """Keep one note exactly as written, and return its id.
 
         An agent's note (``author`` 'agent') has a kind from ``NOTE_KINDS`` and
-        is signed with ``model_id``. A person's reply (``author`` 'person') has
-        no kind, is no model's, and answers one of the agent's notes. When
+        is signed with ``model_id``. A person's note (``author`` 'person') has
+        no kind and is no model's: as a reply it answers one of the agent's
+        notes, and with no ``in_reply_to`` it is a note of their own. When
         ``in_reply_to`` names a note it must be one of this exact scope: a
         reply to nothing would be a note no one could place. Raises
         ``ValueError`` with a plain reason when a note is refused.
@@ -5134,11 +5136,8 @@ class EngramStore:
             problem = note_kind_problem(kind)
             if problem:
                 raise ValueError(problem)
-        else:
-            if kind:
-                raise ValueError("A reply has no kind.")
-            if not in_reply_to:
-                raise ValueError("A reply answers one of the agent's notes.")
+        elif kind:
+            raise ValueError("A note of the person's has no kind.")
         entry_id = _new_id()
         with self.transaction() as conn:
             if in_reply_to:
@@ -5213,10 +5212,12 @@ class EngramStore:
         project_scope: str = "global",
         limit: int = 3,
     ) -> list[dict[str, Any]]:
-        """The person's replies that have not yet reached the agent's waking
-        packet, oldest first, at most ``limit``, each with the words and the
-        signature of the agent's note it answers (``reply_to_text``,
-        ``reply_to_model``). Reads: delivering one is ``mark_replies_delivered``."""
+        """The person's replies, and notes of their own, that have not yet
+        reached the agent's waking packet, oldest first, at most ``limit``. A
+        reply comes with the words and the signature of the agent's note it
+        answers (``reply_to_text``, ``reply_to_model``); a note of their own
+        answers none, and has neither. Reads: delivering one is
+        ``mark_replies_delivered``."""
         rows = self._rows_if_table(
             """
             SELECT r.*, n.text AS reply_to_text, n.model_id AS reply_to_model
@@ -5241,8 +5242,9 @@ class EngramStore:
         person_id: str = "user",
         project_scope: str = "global",
     ) -> list[str]:
-        """Record that these replies reached the agent's waking packet, once:
-        a reply already delivered keeps the time it was. Returns the ids this
+        """Record that these replies (or notes of the person's own) reached
+        the agent's waking packet, once: one already delivered keeps the time
+        it was. Returns the ids this
         call marked. Bookkeeping, so the caller never calls it for code older
         than the store."""
         return self._stamp_notes(
@@ -5308,7 +5310,8 @@ class EngramStore:
         project_scope: str = "global",
     ) -> dict[str, int]:
         """How much of the journal and the notes this scope holds: entries,
-        notes by each author, and replies not yet delivered. Reads."""
+        notes by each author, and the person's replies and own notes not yet
+        delivered (``replies_waiting``). Reads."""
         scope = (agent_id, person_id, project_scope)
         entries = self._rows_if_table(
             "SELECT COUNT(*) FROM journal_entries "
