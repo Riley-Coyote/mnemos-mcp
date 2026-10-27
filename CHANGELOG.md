@@ -2,6 +2,26 @@
 
 ## 0.4.1 (unreleased)
 
+### An agent that signs its memories wakes on Windows
+
+On Windows, from its second session on, an agent that signs its memories got
+"Error executing tool mnemos_context" instead of its wake. To show the newest
+quiet hour once, the wake asks the hours' runner (`mnemos.life`) where an hour
+keeps its records. That module locks with fcntl, which Windows lacks, so it
+can't be imported there, and the wake imported it one line above the guard
+that turns any failure there into "no hour". Now the import is inside that
+guard, as the log page already had it: on Windows the wake shows no hour, as
+it should where hours can't run. `mnemos life` there now says in one sentence
+that the quiet hours run on macOS and Linux, where it failed with a traceback.
+0.4.0 has the bug too; the wake learned to show an hour in #118.
+
+The Windows black box never signed, so it never reached that wake. Now it has
+the agent wake as itself, the wake every agent that signs gets from its
+second session on. On 15c30c1, with the hours' runner made unimportable as on
+Windows, the two new tests fail (the wake on the import, `mnemos life` with a
+traceback) and so does the black box, at that wake. No schema change, and the
+code version stays 23.
+
 ### A note from you, not only a reply
 
 You could answer the agent's notes (`mnemos notes reply`) but not start one.
