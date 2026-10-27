@@ -6,7 +6,7 @@
 
 Three things in the repository weren't Mnemos: `forge/`, a skill for creating
 OpenClaw agents and dispatching coding agents to terminal panes; the old
-project page `index.html`, last rewritten for 0.4 and served by nothing now;
+project page `index.html`, made in April and served by nothing now;
 and `synapse-panel.png`, which only that page showed. They're gone from the
 tree, and stay in its history. Nothing in the package, the tests or the
 release checks used them, and the source distribution is smaller by them.
