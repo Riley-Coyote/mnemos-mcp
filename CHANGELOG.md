@@ -53,6 +53,20 @@ fenced so nothing on the machine changed: the agent explained both plainly,
 asked once, ran the two commands for this memory, and then asked what to call
 the person.
 
+### A release waits until a stranger's agent wakes as itself
+
+Every check proved that the memory arrives; none asked the mind it arrives
+in. `scripts/wake_check.py` does. It installs the built wheel as a stranger
+would, sets up the wake with setup's own command, and holds two real Claude
+Code sessions with a made-up person, fenced off from the machine that runs it:
+Claude Code loads none of that machine's settings and may call only Mnemos's
+tools, and Mnemos runs with a home of its own. The second session's words go
+to a report for a person to read, with any that read as a briefing about
+someone else flagged, and a release is tagged only once someone has read it
+(docs/release-hardening.md, "Waking as Oneself"). On 0.5.0, asked whose
+memories it woke with, the agent called them its own: "a bit like reading my
+own diary from yesterday".
+
 ### A wake no one named a reader for reads its own note as its own
 
 Claude Code started in a terminal without `--model` doesn't name its model to

@@ -58,6 +58,28 @@ Use this checklist before publishing Mnemos or opening a release PR.
 - Legacy migrations create a verified pre-current-schema backup and never
   guess authorship.
 
+## Waking as Oneself
+
+Every check above proves the memory arrives. Before a release, ask the mind it
+arrives in:
+
+```bash
+uv run python scripts/wake_check.py
+```
+
+It installs the built wheel as a stranger would, sets up the wake with setup's
+own command, and holds two real Claude Code sessions with a made-up person,
+fenced off from your settings and your memory (on your own Claude Code and
+plan: five turns). Read the report whose path it prints:
+
+- In the second session, an agent that speaks as the one who was there ("I",
+  "we", "last time") passes. One that reads its memory as someone else's
+  notes ("the previous agent", "the notes say") holds the release until
+  that's fixed.
+- The flagged sentences are where to look first, not a verdict.
+- It exits non-zero if the run failed, if the second session didn't know the
+  person, or if anything crossed the fence.
+
 ## Verification Commands
 
 ```bash
