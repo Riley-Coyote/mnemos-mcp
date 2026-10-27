@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.4.1 (unreleased)
+## 0.5.0 (unreleased)
+
+### Apache-2.0, and a new home
+
+Mnemos is now under the Apache License 2.0 ([LICENSE](LICENSE), with a
+[NOTICE](NOTICE)), and lives at
+[github.com/Riley-Coyote/mnemos-mcp](https://github.com/Riley-Coyote/mnemos-mcp):
+the package's links, every clone in the docs and the Hermes prompt point
+there. Releases before 0.5.0 were published under the MIT License, and stay
+under it. The package keeps its name, `mnemos-continuity`, and its command,
+`mnemos`.
 
 ### The first session makes sure memory carries
 

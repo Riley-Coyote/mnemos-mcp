@@ -5,7 +5,7 @@ Mnemos can be installed by a Hermes agent as an additive identity-continuity lay
 ## Paste This Prompt Into Hermes
 
 ```text
-Install Mnemos for yourself from https://github.com/Riley-Coyote/mnemos.
+Install Mnemos for yourself from https://github.com/Riley-Coyote/mnemos-mcp.
 
 Use agent-safe Sidecar Mode unless I explicitly approve Provider Mode.
 Do not overwrite SOUL.md, MEMORY.md, USER.md, AGENTS.md, or project context files.
@@ -13,8 +13,8 @@ Do not change memory.provider in agent-safe mode.
 Preserve any existing Hermes memory provider such as Honcho, Supermemory, Mem0, or Hindsight.
 
 Run the safest install and verification flow:
-  git clone https://github.com/Riley-Coyote/mnemos.git
-  cd mnemos
+  git clone https://github.com/Riley-Coyote/mnemos-mcp.git
+  cd mnemos-mcp
   uv run --extra mcp mnemos hermes quickstart --agent-safe
   uv run --extra mcp mnemos hermes doctor
 

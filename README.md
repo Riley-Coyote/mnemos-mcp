@@ -139,8 +139,8 @@ want Mnemos to occupy Hermes' single external `memory.provider` slot.
 ### From A Checkout
 
 ```bash
-git clone https://github.com/Riley-Coyote/mnemos.git
-cd mnemos
+git clone https://github.com/Riley-Coyote/mnemos-mcp.git
+cd mnemos-mcp
 python -m pip install -e ".[mcp,embeddings]"
 mnemos doctor
 ```
@@ -529,7 +529,7 @@ Hermes's built-in memory. It writes nothing in the agent's place.
 Paste this into Hermes when you want the agent to install Mnemos for itself:
 
 ```text
-Install Mnemos for yourself from https://github.com/Riley-Coyote/mnemos.
+Install Mnemos for yourself from https://github.com/Riley-Coyote/mnemos-mcp.
 
 Use a persistent local checkout or installed package so the mnemos command still works after Hermes restarts.
 Use agent-safe Sidecar Mode unless I explicitly approve Provider Mode.
@@ -538,10 +538,10 @@ Do not change memory.provider in agent-safe mode.
 Preserve any existing Hermes memory provider such as Honcho, Supermemory, Mem0, or Hindsight.
 
 If the repo is not already present:
-  git clone https://github.com/Riley-Coyote/mnemos.git
+  git clone https://github.com/Riley-Coyote/mnemos-mcp.git
 
 Then enter the persistent Mnemos checkout:
-  cd mnemos
+  cd mnemos-mcp
 
 Run:
   uv run --extra mcp mnemos hermes quickstart --agent-safe
@@ -925,4 +925,5 @@ python -m py_compile mnemos/simple_runtime.py mnemos/simple_mcp.py mnemos/mcp_se
 
 ## License
 
-MIT
+Apache-2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE). Releases before 0.5.0
+were published under the MIT License, and stay under it.

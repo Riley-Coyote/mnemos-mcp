@@ -3,8 +3,8 @@
 ## Development Setup
 
 ```bash
-git clone https://github.com/Riley-Coyote/mnemos.git
-cd mnemos
+git clone https://github.com/Riley-Coyote/mnemos-mcp.git
+cd mnemos-mcp
 python -m venv .venv
 source .venv/bin/activate
 pip install -e ".[all,dev]"
@@ -46,4 +46,4 @@ Mnemos is organized into these layers:
 
 ## License
 
-MIT
+Apache-2.0 ([LICENSE](LICENSE)). Contributions are made under the same license.

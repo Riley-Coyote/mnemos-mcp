@@ -92,8 +92,8 @@ Each scene: **[VISUAL]** (use the matching frame) · **[ON-SCREEN]** (the cards/
 
 **Step 0 — Install Mnemos (once):**
 ```bash
-git clone https://github.com/Riley-Coyote/mnemos.git
-cd mnemos
+git clone https://github.com/Riley-Coyote/mnemos-mcp.git
+cd mnemos-mcp
 python -m pip install -e ".[mcp]"
 mnemos doctor          # prints readiness checks — should be all green
 ```
@@ -155,8 +155,8 @@ installs in one of two modes. Choose based on whether that slot is already taken
 
 **Step 0 — Be in a persistent Mnemos checkout** (so the `mnemos` command still exists after Hermes restarts):
 ```bash
-git clone https://github.com/Riley-Coyote/mnemos.git    # if not already present
-cd mnemos
+git clone https://github.com/Riley-Coyote/mnemos-mcp.git    # if not already present
+cd mnemos-mcp
 ```
 
 **Step 1 — Install. Choose ONE:**
@@ -190,7 +190,7 @@ More detail: `HERMES_INSTALL.md` and `docs/hermes-integration.md` in the repo.
 ### 5C · Quick command appendix
 ```bash
 # install
-git clone https://github.com/Riley-Coyote/mnemos.git && cd mnemos
+git clone https://github.com/Riley-Coyote/mnemos-mcp.git && cd mnemos-mcp
 python -m pip install -e ".[mcp]"      # or: pipx install "mnemos-continuity[mcp]"
 mnemos doctor
 

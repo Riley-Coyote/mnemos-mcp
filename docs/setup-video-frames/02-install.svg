@@ -27,7 +27,7 @@
   <text x="96" y="74" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13" letter-spacing="3.5" fill="#ffffff" fill-opacity="0.5">INSTALL</text>
   <text x="1184" y="74" text-anchor="end" font-family="JetBrains Mono, ui-monospace, monospace" font-size="13" letter-spacing="3" fill="#ffffff" fill-opacity="0.28">01 — SETUP</text>
   <g font-family="JetBrains Mono, ui-monospace, monospace" font-size="24">
-    <text x="96" y="208"><tspan fill="#ffffff" fill-opacity="0.42">$ </tspan><tspan fill="#ffffff" fill-opacity="0.82">git clone https://github.com/Riley-Coyote/mnemos.git</tspan></text>
+    <text x="96" y="208"><tspan fill="#ffffff" fill-opacity="0.42">$ </tspan><tspan fill="#ffffff" fill-opacity="0.82">git clone https://github.com/Riley-Coyote/mnemos-mcp.git</tspan></text>
     <text x="96" y="252"><tspan fill="#ffffff" fill-opacity="0.42">$ </tspan><tspan fill="#ffffff" fill-opacity="0.82">cd mnemos &amp;&amp; pip install -e ".[mcp]"</tspan></text>
     <text x="96" y="296"><tspan fill="#ffffff" fill-opacity="0.42">$ </tspan><tspan fill="#ffffff" fill-opacity="0.95">mnemos doctor</tspan></text>
   </g>

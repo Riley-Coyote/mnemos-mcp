@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos-continuity"
-version = "0.4.0"
+version = "0.5.0"
 description = "Local-first continuity memory for AI agents"
 readme = "README.md"
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 authors = [
     { name = "Riley Ralmuto", email = "r.ralmuto@gmail.com" },
@@ -16,7 +16,7 @@ keywords = ["ai", "agents", "memory", "mcp", "continuity", "cognitive-architectu
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -98,9 +98,9 @@ select = ["E9", "F63", "F7", "F82"]
 mnemos = "mnemos.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/Riley-Coyote/mnemos"
-Repository = "https://github.com/Riley-Coyote/mnemos"
-Issues = "https://github.com/Riley-Coyote/mnemos/issues"
+Homepage = "https://github.com/Riley-Coyote/mnemos-mcp"
+Repository = "https://github.com/Riley-Coyote/mnemos-mcp"
+Issues = "https://github.com/Riley-Coyote/mnemos-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["mnemos"]
