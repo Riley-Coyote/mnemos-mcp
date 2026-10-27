@@ -247,6 +247,26 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
         executable, env, db, "riley", "mnemos", owner_read_and_forget
     )
 
+    async def owner_wakes_as_itself(session: ClientSession) -> None:
+        # The model that signed, introduced again, wakes in its own words: the
+        # wake every agent that signs gets from its second session on, and the
+        # one that looks for the newest quiet hour. On Windows, where the
+        # hours' runner can't be imported, this wake once failed.
+        introduced = await session.call_tool(
+            "mnemos_introduce",
+            {"agent_model": "independent-blackbox", "agent_name": "Verifier"},
+        )
+        assert not introduced.isError, text_of(introduced)
+        woke = await session.call_tool("mnemos_context", {})
+        assert not woke.isError, text_of(woke)
+        packet = text_of(woke)
+        assert "### where i was" in packet, packet
+        assert "Next: verify the fresh session receives this exact handoff first." in packet, packet
+
+    await with_session(
+        executable, env, db, "riley", "mnemos", owner_wakes_as_itself
+    )
+
 
 def audit_database(db: Path, network_marker: Path) -> None:
     assert db.is_file()

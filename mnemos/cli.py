@@ -2690,7 +2690,14 @@ def _close_note(runtime, content: str) -> dict | None:
 
 
 def _cmd_life(args: argparse.Namespace) -> int:
-    from . import life
+    try:
+        from . import life
+    except ImportError as exc:  # the runner locks with fcntl, which Windows lacks
+        print(
+            f"The quiet hours can't run on this system ({exc}); they run on macOS and Linux.",
+            file=sys.stderr,
+        )
+        return 1
     from .simple_scope import resolve_scope
 
     scope_args = {

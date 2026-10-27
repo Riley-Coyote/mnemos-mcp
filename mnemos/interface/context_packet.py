@@ -1744,10 +1744,12 @@ def _latest_hour(
     once. Its ``first_line`` is the first line of the first journal entry it
     wrote that this scope holds, or ``""``, and ``journal_id`` that entry's id.
     None otherwise, and on any error."""
-    # Imported here, not at the top: the packet doesn't load the hours' runner.
-    from ..life import hours_dir
-
     try:
+        # Imported here, not at the top: the packet doesn't load the hours'
+        # runner. And inside the guard: where the hours can't run, the runner
+        # can't be imported (it locks with fcntl, which Windows lacks).
+        from ..life import hours_dir
+
         path = hours_dir(scope["agent_id"]) / "hours.jsonl"
         if not path.exists():
             return None
