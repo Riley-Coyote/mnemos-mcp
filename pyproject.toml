@@ -36,7 +36,7 @@ dependencies = [
     # The floor is what CI tests, and the first 1.x with the fix for
     # GHSA-84m7-p3x7-pcfv (an HTTP-transport leak; Mnemos serves over stdio
     # and was never exposed, but an audit would rightly flag anything older).
-    "mcp[cli]>=1.30.0,<2",
+    "mcp[cli]>=1.30.0,<3",
     "ulid-py>=1.1.0",
     "python-dotenv>=1.0.0",
 ]
