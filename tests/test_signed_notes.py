@@ -253,10 +253,11 @@ class TestThePacket:
         (home / ".mnemos").mkdir(parents=True)
 
         packet = _hook(db_path, home, {"hook_event_name": "SessionStart"})
-        # Said once, in the opening, not on every note.
+        # Said once, in the opening, not on every note: the resident's own note
+        # is then its own.
         assert "This memory is mostly Fable 5.1's; if I'm not Fable 5.1, I'm visiting." in packet
-        assert "### where things were left\nFable 5.1, " in packet
-        assert "yours if" not in packet and "Yours" not in packet
+        assert "### where i was\n" in packet
+        assert "yours if" not in packet and "Yours" not in packet and "colleague" not in packet
 
     def test_the_mcp_packet_names_the_reader_it_detects(self, tmp_path, monkeypatch):
         db_path = tmp_path / "shared.db"

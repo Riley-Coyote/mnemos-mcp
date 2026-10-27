@@ -207,13 +207,17 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
         )
         assert HANDOFF in packet, packet
         assert packet.count(HANDOFF) == 1, packet
-        # The handoff is signed by the model that introduced itself, and is
-        # never handed to the reader as its own words (this session never said
-        # which model it is).
+        # The handoff is signed by the model that introduced itself. This
+        # session never said which model it is, so the wake says once whose
+        # memory this is, and the resident's own note then reads as its own,
+        # never as a colleague's (Riley, 2026-10-27).
         assert "From your previous session, in your own words" not in packet, packet
-        for own_words in ("### where i left off", "### where i was"):
-            assert own_words not in packet, packet
-        assert "### where things were left\nindependent-blackbox, " in packet, packet
+        assert packet.count(
+            "This memory is mostly independent-blackbox's; "
+            "if I'm not independent-blackbox, I'm visiting."
+        ) == 1, packet
+        assert "### where i was\n" in packet, packet
+        assert "colleague" not in packet and "don't claim" not in packet, packet
         # The wake is the agent's own words: the reflection it signed is there,
         # as what has been changing; the capture it reflected on is read back
         # by recall, not carried in the wake.

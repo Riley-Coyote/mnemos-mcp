@@ -50,7 +50,11 @@ then the store-wide things (beliefs, unsigned notes) are its own; an earlier
 version of its line is itself. Another kind of model is a guest: its own notes
 are still its own, the rest is labelled with who wrote
 it, and the opening says whose memory it is visiting. A reader the harness
-didn't name gets every note labelled, and the opening says so once.
+didn't name is told once, in the opening, that it is visiting unless it is
+the resident; its notes and journal are then placed as the resident's, so the
+resident's own read as its own and another kind of model's as a colleague's,
+and the resident's latest quiet hour shows. The rest stays labelled with who
+wrote it.
 
 The SessionStart hook injects this text and ``mnemos_context`` returns it, so the
 two can no longer disagree. Building it never runs maintenance. Besides the
@@ -306,9 +310,11 @@ def build_context_packet(
         None if wake == "light"
         else first_restart(store, scope, reader_session, session_counter)
     )
-    # Read before this packet records its delivery: an hour shows once.
+    # Read before this packet records its delivery: an hour shows once. A
+    # reader no one named gets the resident's, as it gets its notes
+    # (``_placing_reader``).
     hour = (
-        None if wake == "light" or voice != SELF
+        None if wake == "light" or voice not in (SELF, UNKNOWN)
         else _latest_hour(store, scope, owner, woke)
     )
 
@@ -601,6 +607,16 @@ def _whose(
     return _UNPLACED, name, age, session
 
 
+def _placing_reader(packet: dict[str, Any]) -> str:
+    """Whom the packet places a signed note against: the reader, or, when the
+    harness didn't name one, this memory's resident. The opening has already
+    told a reader that isn't the resident that it is visiting
+    (``_opening_line``), so the resident's own note reads as its own, not as a
+    colleague's (Riley, 2026-10-27), and only another kind of model's note is
+    a colleague's."""
+    return packet.get("reader_model") or packet.get("resident") or ""
+
+
 def _joined(*parts: str | None) -> str:
     return ", ".join(part for part in parts if part)
 
@@ -873,7 +889,7 @@ def _format_left_off(
     handoff = packet.get("handoff")
     if not handoff:
         return ""
-    reader_model = packet.get("reader_model") or ""
+    reader_model = _placing_reader(packet)
     reader_session = packet.get("reader_session") or ""
     label, whose = when_left(handoff, reader_model, reader_session)
     relations = {whose}
@@ -916,9 +932,32 @@ def _format_where_left(
     if left_off and journal:
         return f"{left_off}\n\n{journal}"
     if journal:
-        heading = "### where i was" if packet.get("voice") == SELF else "### where things were left"
+        own = packet.get("voice") == SELF or (
+            packet.get("voice") == UNKNOWN and _journal_whose(packet) == _OWN
+        )
+        heading = "### where i was" if own else "### where things were left"
         return f"{heading}\n{journal}"
     return left_off
+
+
+def _journal_placed(
+    packet: dict[str, Any], entry: dict[str, Any],
+) -> tuple[str, str, str, bool | None]:
+    """Whose the journal's latest entry is, placed as a handoff is."""
+    return _whose(
+        {
+            "author_model": entry.get("model_id"),
+            "author_session": entry.get("session_id"),
+            "created_at": entry.get("created_at"),
+        },
+        _placing_reader(packet),
+        packet.get("reader_session") or "",
+    )
+
+
+def _journal_whose(packet: dict[str, Any]) -> str:
+    entry = packet.get("journal")
+    return _journal_placed(packet, entry)[0] if entry else ""
 
 
 def _format_journal(
@@ -931,8 +970,8 @@ def _format_journal(
     days old: "last time I wrote in my journal (5 hours ago): ...".
 
     It says "I" only when the entry is the reader's own, by the rule a handoff
-    follows (``_whose``): an entry another kind of model signed is a colleague's, and
-    one no one can place says who signed it. No id and no tool name here; when
+    follows (``_whose``, against ``_placing_reader``): an entry another kind of
+    model signed is a colleague's, and one no one can place says who signed it. No id and no tool name here; when
     more of the entry exists than this line, its id waits in the closing
     section, where ``mnemos_recall`` reads it whole.
     """
@@ -943,15 +982,7 @@ def _format_journal(
     hour = packet.get("hour") or {}
     if _hour_shows(packet, dropped) and hour.get("journal_id") == entry.get("id"):
         return ""
-    whose, name, age, _session = _whose(
-        {
-            "author_model": entry.get("model_id"),
-            "author_session": entry.get("session_id"),
-            "created_at": entry.get("created_at"),
-        },
-        packet.get("reader_model") or "",
-        packet.get("reader_session") or "",
-    )
+    whose, name, age, _session = _journal_placed(packet, entry)
     text = entry.get("text") or ""
     words, cut = cut_at_sentence(_first_line(text), _JOURNAL_LINE_CHARS)
     if whose == _OWN:

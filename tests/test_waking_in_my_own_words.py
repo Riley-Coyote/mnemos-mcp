@@ -182,6 +182,39 @@ def test_a_quiet_hour_shows_while_i_was_away(runtime):
     assert "- my quiet hour (" not in second, second
 
 
+def test_a_reader_no_one_named_gets_the_residents_quiet_hour(runtime):
+    """Quiet hours are on unless the person says no, and most people start
+    Claude Code without naming a model to its hooks: the resident's hour
+    shows to a reader no one named, as its notes do (Riley, 2026-10-27)."""
+    runtime.handoff("Where I stopped: the harbour ledger balances.", signed_as=OPUS)
+    entry = runtime._store.write_journal_entry(
+        "\nThe tide came in while I read.\nThen I wrote about the ledger.", **SCOPE,
+        written="between_sessions", model_id=OPUS, hour_id="hour-1",
+    )
+    now = datetime.now(timezone.utc)
+    runtime._set_meta("last_context_delivery_at", (now - timedelta(hours=2)).isoformat())
+    hours = life.hours_dir("nova")
+    hours.mkdir(parents=True)
+    record = {"id": "hour-1", "kind": "mine", "status": "done", "store": "live", "model": OPUS,
+              "started_at": (now - timedelta(hours=1, minutes=30)).isoformat(),
+              "ended_at": (now - timedelta(hours=1)).isoformat(), "journal_ids": [entry]}
+    (hours / "hours.jsonl").write_text(json.dumps(record) + "\n")
+
+    prompt = _packet(runtime, reader_model="", mark_surfaced=True)["prompt"]
+    assert "if I'm not Opus 5.5, I'm visiting." in prompt, prompt
+    assert "- my quiet hour (1 hour ago): The tide came in while I read." in prompt, prompt
+    assert "### where i was\n" in prompt, prompt
+
+
+def test_a_reader_no_one_named_reads_its_own_journal_as_its_own(runtime):
+    runtime.capture("Riley keeps the harbour ledger in ledger/2026.csv.", signed_as=OPUS)
+    runtime._store.write_journal_entry("The ledger balanced at last.", **SCOPE, model_id=OPUS)
+
+    prompt = _packet(runtime, reader_model="")["prompt"]
+    assert "### where i was\nlast time I wrote in my journal (" in prompt, prompt
+    assert "): The ledger balanced at last." in prompt, prompt
+
+
 def test_replies_now_wake_under_while_i_was_away(runtime):
     note = runtime.note("Do you want the harbour survey redone?", "question", signed_as=OPUS)
     note_id = re.search(r"Note ID: (\S+)", note).group(1)

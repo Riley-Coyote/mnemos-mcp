@@ -42,6 +42,22 @@ fenced so nothing on the machine changed: the agent explained both plainly,
 asked once, ran the two commands for this memory, and then asked what to call
 the person.
 
+### A wake no one named a reader for reads its own note as its own
+
+Claude Code started in a terminal without `--model` doesn't name its model to
+its hooks, and that is how most people start it. The wake couldn't place the
+reader, so it said once, in the opening, "if I'm not Opus 5.5, I'm visiting",
+and then treated the resident's own last note as no one's: "where things were
+left", signed with its own name, and "A colleague's note is theirs: I take
+what's useful and don't claim the work." It read its own work as someone
+else's. Now, after that one line, its notes and journal are placed as the
+resident's: its own note is "where i was", its journal "last time I wrote in
+my journal", and only a note another kind of model signed is a colleague's.
+Its latest quiet hour shows too, which before only a reader the harness named
+saw. The rest of the wake, which says whose memory it is ("what Opus 5.5 has
+come to see"), stays as it was. The Claude desktop app names the model when
+it starts a session, so its wakes were already the reader's own.
+
 ### Out of the repository: forge, and the old project page
 
 Three things in the repository weren't Mnemos: `forge/`, a skill for creating

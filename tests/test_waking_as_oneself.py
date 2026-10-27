@@ -136,9 +136,10 @@ def test_an_alias_in_the_launch_line_names_no_one(tmp_path, harness):
     db = _store(tmp_path)
     packet = _hook(db, tmp_path, env={"CLAUDE_PID": harness(["--model", "opus[1m]"])})
 
-    # "opus" is whichever Opus is current: the packet doesn't guess.
+    # "opus" is whichever Opus is current: the packet doesn't guess. It says
+    # once whose memory this is, and the resident's own note is then its own.
     assert "if I'm not Opus 5.5, I'm visiting." in packet, packet
-    assert "### where things were left\nOpus 5.5, " in packet, packet
+    assert f"### where i was\njust now, in another session:\n{NOTE}" in packet, packet
 
 
 def test_without_claude_code_the_reader_is_unknown_and_told_once(tmp_path):
@@ -147,6 +148,39 @@ def test_without_claude_code_the_reader_is_unknown_and_told_once(tmp_path):
 
     assert packet.count("if I'm not Opus 5.5, I'm visiting.") == 1, packet
     assert "yours if" not in packet, packet
+
+
+def test_a_reader_no_one_named_reads_its_own_note_as_its_own(tmp_path):
+    """Claude Code in a terminal, started without --model, names no model to
+    its hooks, and that is how most people start it. The opening says once
+    whose memory this is; the resident's own note is then its own, never a
+    colleague's it mustn't claim (Riley, 2026-10-27)."""
+    db = _store(tmp_path)
+    packet = _hook(db, tmp_path)
+
+    assert packet.count("if I'm not Opus 5.5, I'm visiting.") == 1, packet
+    assert f"### where i was\njust now, in another session:\n{NOTE}" in packet, packet
+    assert "colleague" not in packet and "don't claim" not in packet, packet
+
+
+def test_to_a_reader_no_one_named_a_colleagues_note_is_still_a_colleagues(tmp_path):
+    db = _store(tmp_path)
+    store = EngramStore(db)
+    try:
+        store.write_handoff(
+            "Fable here: the timetable scraper now runs nightly.", **SCOPE,
+            author_model=FABLE, author_session="33333333-cccc-4ccc-8ccc-333333333333",
+        )
+    finally:
+        store.close()
+    packet = _hook(db, tmp_path)
+
+    # The memory is still mostly Opus 5.5's: its note is the resident's own,
+    # and Fable's says who left it, with the line about not claiming it.
+    assert "if I'm not Opus 5.5, I'm visiting." in packet, packet
+    assert "Fable 5.1, a colleague, just now" in packet, packet
+    assert f"- me, just now, in another session: {NOTE}" in packet, packet
+    assert packet.count("I take what's useful and don't claim the work.") == 1, packet
 
 
 def test_the_launch_line_is_read_only_from_claude_codes_own_process():
