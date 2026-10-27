@@ -2,6 +2,14 @@
 
 ## 0.4.1 (unreleased)
 
+### The capture tool's example names no one
+
+`mnemos_capture` tells every agent what an impact is with an example, and the
+example named the person Mnemos was built with: "Riley corrected me twice on
+the same thing". An agent working for anyone else read a stranger's name in
+its own tools. It now reads "They corrected me twice on the same thing".
+Nothing else in what a client is shown changed.
+
 ### A note from you, not only a reply
 
 You could answer the agent's notes (`mnemos notes reply`) but not start one.

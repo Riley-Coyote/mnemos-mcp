@@ -408,7 +408,7 @@ def register_simple_tools(server: FastMCP) -> None:
             importance: "low", "high", or leave as "auto".
             impact: What this changed in how you understand things — the
                 lesson, not the event. This is the part that survives when
-                the details fade, and only you can write it: "Riley
+                the details fade, and only you can write it: "They
                 corrected me twice on the same thing" is what happened;
                 "I should check the live page before claiming a fix works"
                 is what it meant. Leave it out rather than padding it; your
