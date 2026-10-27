@@ -25,14 +25,22 @@ mnemos mcp install claude-code --write
 mnemos hooks install claude-code --write
 ```
 
+Mnemos needs Python 3.10 or newer. Install it somewhere it will stay: the
+hooks call the `mnemos` that set them up, by its full path. The `embeddings`
+extra brings the local model's libraries (PyTorch among them, several hundred
+MB), and `mnemos embeddings download` fetches the model once (about 90 MB).
+
 Then start Claude Code: it wakes with its memory, and the memory tools are there.
 
 What setup turns on, and how to turn each thing off:
 
 - **Waking with its memory.** Each session starts with what the agent kept.
-- **The cue.** Each message you send of four words or more brings up to three
-  memories that may bear on it. A shorter one ("yes, do it") and messages
-  Claude Code writes itself, such as a background task's notice, bring nothing. Off: `mnemos hooks install claude-code --no-prompt --write`.
+- **The cue.** Each message you send with four or more meaningful words brings
+  up to three memories that may bear on it. A shorter one ("yes, do it") and
+  messages Claude Code writes itself, such as a background task's notice, bring
+  nothing. Off: `mnemos hooks install claude-code --no-prompt --write`. That
+  runs setup again without the cue, so it schedules upkeep unless you add
+  `--no-upkeep`, and asks about quiet hours again if they're off.
 - **Upkeep between sessions.** Every 4 hours memories fade a little with time
   and related ones are linked, and a deeper pass runs each night at 03:00.
   With no model chosen for Mnemos, all of it runs on your machine. Off:
@@ -46,7 +54,7 @@ What setup turns on, and how to turn each thing off:
   run without a terminal (by an agent, say), or with no `claude` command,
   leaves them off and says how to turn them on:
   `mnemos daemon install --hours --write`. Off:
-  `mnemos daemon uninstall --hours --write`, or in Ghost, Settings › Memory.
+  `mnemos daemon uninstall --hours --write`.
 
 For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
 the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
@@ -56,7 +64,8 @@ To take Mnemos out again: `mnemos uninstall` says what it would remove, and
 `mnemos uninstall --write` removes it: its hooks, its server entries for Claude
 Code, Codex and Claude Desktop, and its scheduled jobs. Anyone else's hooks and
 servers stay. The memories stay too, in `~/.mnemos`; they're the agent's, so
-deleting them is left to you.
+deleting them is left to you. If you set Mnemos up with `--agent-id` or a
+server `--name`, give `mnemos uninstall` the same.
 
 Without the `embeddings` extra, Mnemos still works, but recall matches words
 only, and an idea the agent keeps returning to can't be noticed, so no new
@@ -65,10 +74,14 @@ belief is ever proposed. To add it later, run
 `mnemos embeddings download` once to fetch the model.
 
 Eleven tools. Local SQLite. No account, no API key, no service of its own.
-Nothing leaves your machine unless you configure a provider yourself, or keep
-the quiet hours on: then the agent thinks over its memory through your own
-Claude Code, and what it reads in its hour goes to Anthropic
-([what, and how to turn them off](docs/privacy-security.md#quiet-hours)).
+Nothing leaves your machine unless you turn it on yourself: a model provider,
+Gemini embeddings, the cue's judge, or the quiet hours, which think over the
+memory through your own Claude Code, so what the agent reads in its hour goes
+to Anthropic ([each one, and how to turn it off](docs/privacy-security.md)).
+
+Mnemos runs on macOS and Linux. On Windows the memory and its tools work, and
+upkeep runs while a session is open; the quiet hours and scheduled upkeep need
+macOS or Linux.
 
 ## What Mnemos is not
 
@@ -101,7 +114,7 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Hermes agent with another memory provider | Hermes Sidecar Mode | `mnemos hermes quickstart --agent-safe` |
 | Hermes agent using Mnemos as its provider | Hermes Provider Mode | `mnemos hermes quickstart --provider` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
-| The agent's quiet hours, on your Claude plan | Scheduled by setup when you say yes; an app that runs Mnemos for you, like Ghost, may keep them on | `mnemos daemon install --hours --write` |
+| The agent's quiet hours, on your Claude plan | Scheduled by setup when you say yes; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
 
 Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
 
@@ -164,7 +177,7 @@ Simple mode exposes eleven user-facing tools:
 
 | Tool | Purpose |
 |---|---|
-| `mnemos_context` | Startup continuity packet. Auto-creates local storage, runs lightweight maintenance, and can optionally include an identity graph artifact. |
+| `mnemos_context` | Startup continuity packet. Creates local storage if there's none, records what it delivered, and can optionally include an identity graph artifact. It runs no maintenance. |
 | `mnemos_handoff` | Leave an exact, signed note in the agent's own words for whoever works in this scope next — possibly a different model. Each session keeps its own note: a new one replaces only what that session left before (history is kept), so parallel sessions no longer overwrite each other. Remove one with `mnemos_correct`. |
 | `mnemos_capture` | Capture durable preferences, decisions, project state, workflows, and context. |
 | `mnemos_recall` | Search scoped continuity and durable memory with natural language. |
@@ -335,6 +348,10 @@ alone (127.0.0.1, at an address made fresh each time), and it asks nothing of
 the internet, since its fonts ship with Mnemos. If your agent has no quiet
 hours yet, or nothing is scheduled to run them, the page says so;
 [Quiet Hours](#quiet-hours) says how to schedule them.
+
+To keep it open beside your chat, start it with `mnemos log --no-open` and
+open the address it prints in your harness's own browser (the browser pane in
+Claude's desktop app, for one). The address is new each time the page starts.
 
 ### Your Agent's Memory, From Your Own App
 
@@ -618,7 +635,7 @@ set them over both. A setting that isn't a number above zero runs no hour, and
 the hour's record says why. In `~/.mnemos/config.json`:
 
 ```json
-{"life": {"read_dirs": ["Documents/Repositories", "/Volumes/Work/notes"],
+{"life": {"read_dirs": ["Projects/notes", "/srv/notes"],
           "minutes": {"mine": 30, "ours": 15},
           "token_ceiling": {"mine": 200000, "ours": 100000}}}
 ```
@@ -642,11 +659,19 @@ instead, then run setup again.
 
 ### Dedicated Model Providers
 
-Mnemos uses a model only when you choose one for it: `MNEMOS_LLM_PROVIDER`,
-or the provider you give setup. A key on its own chooses nothing, so an
-`OPENAI_API_KEY` in your shell or a project's `.env`, there for another tool,
-never sends memory anywhere. A chosen provider without its key is no
-provider, never another one.
+Mnemos uses a model only when you choose one for it: `MNEMOS_LLM_PROVIDER`
+(in the environment or a `.env` Mnemos reads), `llm.provider` in
+`~/.mnemos/config.json`, or the provider you give setup. A key on its own
+chooses nothing, so an `OPENAI_API_KEY` in your shell or a project's `.env`,
+there for another tool, never sends memory anywhere. A chosen provider without
+its key is no provider, never another one.
+
+Your own Claude, through the `claude` command on your Claude plan, with no API
+key; what it's sent goes to Anthropic (`subscription` names the same choice):
+
+```bash
+MNEMOS_LLM_PROVIDER=claude-cli
+```
 
 OpenRouter:
 
@@ -745,6 +770,11 @@ mnemos setup-openclaw --agent main --dry-run
 mnemos identity diff --soul ./SOUL.md
 mnemos identity accept --divergence 1 --note "Accepted updated self-model"
 ```
+
+`identity diff` leaves the agent a continuity note about what it found, unless
+you pass `--no-note`. With a provider chosen, it also sends the provider up to
+twelve findings (a claim from SOUL.md beside what the memory keeps returning
+to) to annotate, unless you pass `--no-enrich`.
 
 Hermes commands:
 

@@ -14,23 +14,32 @@ With no dedicated provider configured, Mnemos:
 - avoids OpenRouter, Anthropic, OpenAI, and OpenClaw requirements
 - does not read arbitrary files or browser history
 - does not transmit memory data over the network, except through your own
-  Claude Code in the quiet hours, when they're on ([Quiet Hours](#quiet-hours))
+  Claude Code in the quiet hours, when they're on ([Quiet Hours](#quiet-hours)),
+  and to the cue's judge, when you switch it on ([The Cue's Judge](#the-cues-judge))
 - loads its local meaning model offline; the one step that uses the network is
   `mnemos embeddings download`, which you run yourself
 
 What the agent reads from its memory goes into its own context, and so to the
 model the agent runs on, like everything else in that context. Mnemos itself
-sends memory nowhere, except to your own Claude Code in the quiet hours.
+sends memory nowhere unless you turn something on: the quiet hours, a provider,
+Gemini embeddings or the cue's judge, each below.
 
 Simple mode tools still mutate local state:
 
-- `mnemos_context` can create the database and log maintenance
+- `mnemos_context` creates the database if there is none, records what it
+  delivered (a handoff read, a question shown) and counts the session; it runs
+  no maintenance
 - `mnemos_context(include_graph=true)` can return a scoped SVG identity graph
   artifact and structured graph data
 - `mnemos_capture` writes continuity and durable memories
+- `mnemos_handoff`, `mnemos_journal` and `mnemos_note` keep the agent's words
+  exactly as given
+- `mnemos_reflect` keeps the agent's answer to a question its memory asked
+- `mnemos_introduce` records which model the session is
 - `mnemos_recall` can reconsolidate access metadata
 - `mnemos_correct` can archive, revise, or supersede memory
 - `mnemos_maintain` runs consolidation and bookkeeping
+- `mnemos_health` only reads
 
 Tool annotations describe these risks to MCP clients, but annotations are only
 hints. They are not a security boundary.
@@ -44,14 +53,19 @@ deterministic. Optional dedicated providers run only when explicitly configured.
 ## Dedicated Providers
 
 Dedicated model providers are optional, and Mnemos uses one only when the
-person chooses it for Mnemos: `MNEMOS_LLM_PROVIDER`, or the provider given to
-setup. A provider key lying in the environment or a project's `.env`, there for
-another tool, chooses nothing. A chosen provider without its key is no
-provider, never another one.
+person chooses it for Mnemos: `MNEMOS_LLM_PROVIDER` (in the environment or a
+`.env` Mnemos reads), `llm.provider` in its config, or the provider given to
+setup. The providers are `claude-cli` (the person's own `claude` command, on
+their Claude plan, so Anthropic; `subscription` names the same one),
+`openrouter`, `anthropic` and `openai`. A provider key lying in the environment
+or a project's `.env`, there for another tool, chooses nothing. A chosen
+provider without its key is no provider, never another one.
 
 A chosen provider is sent memories to classify the links between them and to
-weigh how surprising a new one is. It never writes in the agent's place: it
-rewords no memory, names no lesson and moves no belief.
+weigh how surprising a new one is. `mnemos identity diff` also sends it up to
+twelve findings (a claim from SOUL.md beside what the memory keeps returning
+to) to annotate, unless `--no-enrich` is given. A provider never writes in the
+agent's place: it rewords no memory, names no lesson and moves no belief.
 
 Meaning search embeds on this machine, with a local model. Google's Gemini
 embeddings are the one other choice, and Mnemos uses them only when the person
@@ -61,13 +75,25 @@ or a `.env` Mnemos reads) or `embeddings.provider` in its config, with a
 is sent the words of every memory and question it embeds. `mnemos doctor` says
 which one meaning uses, and why.
 
+## The Cue's Judge
+
+The cue can ask a judge which of the memories it proposes bear on a message:
+Jev, typesafe.ai's model, at `api.typesafe.ai`. It is off by default, and on
+only with `"cue_judge": "jev"` in `~/.mnemos/config.json` or
+`MNEMOS_CUE_JUDGE=jev`, and its key in `~/.config/jev/api_key` (or the file
+`MNEMOS_JEV_KEY_FILE` names). Switched on, each message sends Jev the message
+(up to 1,000 characters; a longer one goes as its start and its end) and at
+most six memory lines of up to 200 characters each, with no id, date or scope.
+Its scores only choose which lines the cue shows: they never change a memory,
+a link or a belief, and none of its words are kept.
+
 ## Quiet Hours
 
 The quiet hours are the agent's time between sessions: up to an hour a day of
 its own, and half an hour for the day's work, skipped on a day with none.
 Mnemos's setup asks about them once, with yes as the default, and leaves them
 off when there is no one at a terminal to ask. An app that runs Mnemos for
-you, like Ghost, may keep them on.
+you may keep them on.
 
 **How.** Each hour runs your own Claude Code on its own (`claude -p`), on your
 Claude plan. It loads none of your own Claude Code settings or hooks: only the
@@ -97,8 +123,8 @@ its own, 30 minutes and 200,000 for the day's work, unless `life.minutes` and
 `mnemos life --hour mine --dry-run` prints an hour's prompt and command, and
 runs nothing.
 
-**To turn them off:** `mnemos daemon uninstall --hours --write`, or in Ghost,
-Settings › Memory.
+**To turn them off:** `mnemos daemon uninstall --hours --write`, or the app's
+own setting when an app runs Mnemos for you.
 
 ## Stored Words and Trust
 
@@ -111,7 +137,8 @@ memory holds, and to show it:
   signed. A colleague's note (another kind of model) says whose it is; an
   unsigned one says it's unsigned.
 - The person's words, from `mnemos remember` at a terminal, show once as
-  theirs ("Riley wrote this into my memory: …"), in quotes.
+  theirs ("The person wrote this into my memory: …", with their name when
+  Mnemos has one), in quotes.
 - Words a tool wrote (the retired transcript indexer's, and what the Hermes
   provider wrote by itself before 0.4.1) never reach the agent's identity,
   beliefs or lessons, and recall marks them "from a tool, not yours". The
@@ -152,8 +179,10 @@ Mnemos favors audited correction over hard deletion:
 - continuity notes can be revised or superseded
 - audit trails remain available to advanced/admin tools
 
-Future user-facing forget flows should make the difference between archive,
-supersede, and hard deletion explicit.
+`mnemos forget`, run by the person, archives a memory and its note, never
+deletes them: recall never brings it back, and the agent's next wake says that
+the person let a memory go, and when, never its words. No Mnemos command or
+tool hard-deletes a memory; the store is a file in `~/.mnemos`.
 
 ## Release Review Checklist
 

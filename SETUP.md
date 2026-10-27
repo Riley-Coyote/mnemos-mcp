@@ -12,17 +12,24 @@ run alongside whatever you already use for that.
 
 ## 1. Install
 
+From PyPI:
+
+```bash
+pipx install "mnemos-continuity[mcp,embeddings]"
+mnemos embeddings download
+```
+
 From a local checkout:
 
 ```bash
-pip install -e ".[mcp]"
+pip install -e ".[mcp,embeddings]"
+mnemos embeddings download
 ```
 
-When published:
-
-```bash
-pipx install "mnemos-continuity[mcp]"
-```
+Mnemos needs Python 3.10 or newer. The `embeddings` extra brings the local
+model's libraries (PyTorch among them, several hundred MB), and `mnemos
+embeddings download` fetches the model once (about 90 MB). Without them Mnemos
+still works, but recall matches words only and no new belief is proposed.
 
 The distribution package is `mnemos-continuity`. The Python import package and CLI
 command are still `mnemos`.
@@ -40,13 +47,14 @@ there on every run. Setup warns when it finds this.
 mnemos doctor
 ```
 
-Doctor will:
+Doctor only looks: it creates nothing and changes nothing. It:
 
-1. Resolve agent/person/project scope.
-2. Create local SQLite storage if needed.
-3. Run local deterministic maintenance.
-4. Print the simple MCP tool list.
-5. Show whether a dedicated model provider is configured.
+1. Resolves agent/person/project scope, and says whether its store exists.
+2. Says whether upkeep and the quiet hours are scheduled, and where meaning
+   search runs.
+3. Prints the simple MCP tool list.
+4. Once there is a store, shows whether a dedicated model provider is
+   configured.
 
 No OpenRouter key is required for baseline continuity.
 
@@ -142,6 +150,9 @@ mnemos hooks install --no-prompt --write    # the cue
 mnemos daemon uninstall --write             # upkeep, and the quiet hours with it
 mnemos daemon uninstall --hours --write     # only the quiet hours
 ```
+
+Turning the cue off runs setup again without it, so it schedules upkeep unless
+you add `--no-upkeep`, and asks about quiet hours again if they're off.
 
 To set up without scheduling upkeep at all: `mnemos hooks install --no-upkeep --write`.
 
@@ -299,7 +310,7 @@ mnemos bootstrap --agent-name Nova --workspace ~/nova --user-name Alex
 ### OpenClaw (optional)
 
 Background memory maintenance does **not** require OpenClaw — use `mnemos
-daemon install` (section 5), which schedules it with launchd, systemd, or
+daemon install` (section 6), which schedules it with launchd, systemd, or
 crontab.
 
 OpenClaw adds a different class of job: agent-mediated work that needs a model
@@ -358,12 +369,12 @@ Give each agent a scope:
 
 ```bash
 MNEMOS_AGENT_ID=nova mnemos serve
-MNEMOS_AGENT_ID=vektor mnemos serve
+MNEMOS_AGENT_ID=sage mnemos serve
 ```
 
 or separate DBs:
 
 ```bash
 mnemos serve --agent-id nova --db-path ~/.mnemos/nova.db
-mnemos serve --agent-id vektor --db-path ~/.mnemos/vektor.db
+mnemos serve --agent-id sage --db-path ~/.mnemos/sage.db
 ```
