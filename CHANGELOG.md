@@ -2,6 +2,50 @@
 
 ## 0.4.1 (unreleased)
 
+### Out of the repository: forge, and the old project page
+
+Three things in the repository weren't Mnemos: `forge/`, a skill for creating
+OpenClaw agents and dispatching coding agents to terminal panes; the old
+project page `index.html`, made in April and served by nothing now;
+and `synapse-panel.png`, which only that page showed. They're gone from the
+tree, and stay in its history. Nothing in the package, the tests or the
+release checks used them, and the source distribution is smaller by them.
+
+### The docs say what the code does
+
+The README, `SETUP.md` and `docs/privacy-security.md` were checked against the
+code claim by claim, before Mnemos goes public. What changed:
+
+- `mnemos_context` runs no maintenance: the README said it ran some, and the
+  privacy doc said it logged it. Doctor creates and changes nothing: `SETUP.md`
+  said it made the store and ran maintenance.
+- The privacy doc lists every tool that writes (it named five of the ten), and
+  `mnemos forget`, which it called future work.
+- What can leave the machine is named whole: the cue's judge (Jev, off unless
+  switched on, which sends a message and at most six memory lines to
+  api.typesafe.ai), the `claude-cli` provider, and what `identity diff` sends a
+  chosen provider.
+- Turning the cue off runs setup again, so it schedules upkeep unless
+  `--no-upkeep` is given and asks about quiet hours again if they're off; the
+  docs now say so.
+- Installing: Python 3.10 or newer, the embeddings' size, and that the hooks
+  call `mnemos` by its full path, so it belongs somewhere it will stay.
+  `SETUP.md` installs the `embeddings` extra as the README does.
+- The platforms are stated: the quiet hours and scheduled upkeep need macOS or
+  Linux.
+- `mnemos log` can be kept beside the chat, in a harness's own browser.
+- Examples no longer name the people and apps Mnemos was built with.
+
+No code changed.
+
+### The capture tool's example names no one
+
+`mnemos_capture` tells every agent what an impact is with an example, and the
+example named the person Mnemos was built with: "Riley corrected me twice on
+the same thing". An agent working for anyone else read a stranger's name in
+its own tools. It now reads "They corrected me twice on the same thing".
+Nothing else in what a client is shown changed.
+
 ### An agent that signs its memories wakes on Windows
 
 On Windows, from its second session on, an agent that signs its memories got
