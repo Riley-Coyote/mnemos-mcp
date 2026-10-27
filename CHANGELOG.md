@@ -2,6 +2,15 @@
 
 ## 0.4.1 (unreleased)
 
+### Out of the repository: forge, and the old project page
+
+Three things in the repository weren't Mnemos: `forge/`, a skill for creating
+OpenClaw agents and dispatching coding agents to terminal panes; the old
+project page `index.html`, last rewritten for 0.4 and served by nothing now;
+and `synapse-panel.png`, which only that page showed. They're gone from the
+tree, and stay in its history. Nothing in the package, the tests or the
+release checks used them, and the source distribution is smaller by them.
+
 ### The docs say what the code does
 
 The README, `SETUP.md` and `docs/privacy-security.md` were checked against the

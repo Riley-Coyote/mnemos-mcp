@@ -298,8 +298,8 @@ administering memory: explicit remember and ingest, functional memory and
 hypomnema management, beliefs, shared memory, inspect, forget, and explicit
 consolidation. It's less tested than simple mode, and says so when it starts.
 
-Forge and full agent workspaces are advanced integrations, not part of the
-baseline setup.
+Full agent workspaces are an advanced integration, not part of the baseline
+setup.
 
 To bootstrap a full workspace:
 
