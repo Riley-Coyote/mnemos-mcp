@@ -44,6 +44,9 @@ from typing import Any
 
 from .config.loader import load_config
 from .package_version import mnemos_version
+from .setup import state as _state
+from .setup.state import claude_code_settings_path as _claude_code_settings_path
+from .setup.state import is_mnemos_hook as _is_mnemos_hook
 
 
 # Advanced mode is optional: simple mode, unchanged, plus its own tools. It
@@ -1333,6 +1336,8 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
     except (OSError, RuntimeError) as exc:
         print(f"Failed to activate background maintenance: {exc}", file=sys.stderr)
         return 1
+    if hours and not no_claude:
+        _state.record_hours_choice(agent_id, "yes")
 
     print(f"\nScheduled {len(entries)} job(s). Background maintenance is active.")
     if retired:
@@ -1488,6 +1493,8 @@ def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False)
     if not only_hours:
         found += scheduler.retired_installed(blueprint, crontab)
 
+    if only_hours and write:
+        _state.record_hours_choice(agent_id, "no")
     if not found:
         if only_hours:
             print("The quiet hours aren't scheduled.")
@@ -1570,7 +1577,7 @@ def _background_setup(args: argparse.Namespace, *, ask_hours: bool) -> int:
         else:
             _say_upkeep(blueprint)
     if ask_hours:
-        failed = _quiet_hours_setup(blueprint) or failed
+        failed = _quiet_hours_setup(blueprint, _cli_scope(args)) or failed
     return 1 if failed else 0
 
 
@@ -1606,13 +1613,17 @@ def _say_upkeep(blueprint: dict) -> None:
     print("  Turn it off: mnemos daemon uninstall --write")
 
 
-def _quiet_hours_setup(blueprint: dict) -> bool:
+def _quiet_hours_setup(blueprint: dict, scope) -> bool:
     """Setup's one question about the quiet hours, yes by default, and what
-    the answer does. Without a terminal nothing is asked or scheduled, and the
-    way to turn them on is printed; without a claude command they can't be
-    scheduled, and that is said. Returns whether scheduling them failed."""
+    the answer does; the answer is kept (``state.record_hours_choice``), so
+    the first session doesn't ask again. Without a terminal nothing is asked
+    or scheduled: the question goes to whoever ran setup (an agent, mostly),
+    with the command for each answer, and unanswered the agent asks in its
+    first session. Without a claude command they can't be scheduled, and that
+    is said. Returns whether scheduling them failed."""
     from .setup import scheduler
 
+    agent_id = blueprint["agent_id"]
     crontab = _read_crontab_safe() if blueprint["backend"] == "crontab" else ""
     if scheduler.installed(blueprint, blueprint["hours"], crontab):
         print(f"Quiet hours: on. Turn them off: {_HOURS_OFF}")
@@ -1621,15 +1632,32 @@ def _quiet_hours_setup(blueprint: dict) -> bool:
         print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {_HOURS_ON}")
         return False
     if not _can_ask():
-        print(f"Quiet hours: off. They give the agent {QUIET_HOURS}.")
-        print(f"  To turn them on: {_HOURS_ON}")
+        if _state.hours_choice(agent_id) == "no":
+            print(f"Quiet hours: off, as chosen. To turn them on: {_HOURS_ON}")
+            return False
+        print(f"Quiet hours: no one has been asked yet. They give the agent {QUIET_HOURS}.")
+        print(
+            "  If you're an agent setting Mnemos up for someone, tell them now, in plain "
+            "words; yes is the default: they're on unless they say no. Then run the "
+            "one that matches:"
+        )
+        for answer, command in (("yes", "install"), ("no", "uninstall")):
+            line = _state.command_line(
+                scope.agent_id, scope.db_path, "daemon", command, "--hours", "--write",
+                mnemos=_mnemos_command(),
+            )
+            print(f"    {answer}: {line}")
+        print("  If no one answers here, the agent asks in its first session in Claude Code.")
         return False
     try:
         answer = input(QUIET_HOURS_QUESTION).strip().lower()
     except (EOFError, KeyboardInterrupt):
+        # Leaving the question isn't an answer: nothing is kept.
         print()
-        answer = "no"
+        print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
+        return False
     if answer and not answer.startswith("y"):
+        _state.record_hours_choice(agent_id, "no")
         print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
         return False
     try:
@@ -1637,6 +1665,7 @@ def _quiet_hours_setup(blueprint: dict) -> bool:
     except (OSError, RuntimeError) as exc:
         print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
         return True
+    _state.record_hours_choice(agent_id, "yes")
     mine, ours = (entry["job"].daily_at for entry in blueprint["hours"])
     print(
         f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
@@ -1680,15 +1709,6 @@ def _systemctl(*args: str) -> None:
         raise RuntimeError(result.stderr.strip() or f"systemctl {' '.join(args)} failed")
 
 
-def _claude_code_settings_path() -> Path:
-    """Claude Code's settings file: ``$CLAUDE_CONFIG_DIR/settings.json`` when
-    that variable is set and not empty, else ``~/.claude/settings.json``."""
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "")
-    if config_dir:
-        return Path(config_dir).expanduser() / "settings.json"
-    return Path.home() / ".claude" / "settings.json"
-
-
 def _codex_hooks_path() -> Path:
     return Path.home() / ".codex" / "hooks.json"
 
@@ -1697,30 +1717,6 @@ def _codex_hooks_path() -> Path:
 # itself well before this (``cue.HOOK_SECONDS``); a prompt waits on its hooks,
 # so this only bounds a hook that could not stop itself.
 PROMPT_HOOK_TIMEOUT = 2
-
-
-def _is_mnemos_hook(candidate: Any, subcommand: str) -> bool:
-    """Whether a hooks entry is one of Mnemos's own: a command that runs
-    `mnemos hook <subcommand>`. Anyone else's hooks never are."""
-    if not isinstance(candidate, dict):
-        return False
-    for configured_hook in candidate.get("hooks", []):
-        if not isinstance(configured_hook, dict):
-            continue
-        command = configured_hook.get("command", "")
-        if not isinstance(command, str):
-            continue
-        try:
-            parts = shlex.split(command)
-        except ValueError:
-            continue
-        if (
-            len(parts) >= 3
-            and Path(parts[0]).stem.lower().startswith("mnemos")
-            and parts[1:3] == ["hook", subcommand]
-        ):
-            return True
-    return False
 
 
 def _cmd_hooks(args: argparse.Namespace) -> int:
@@ -3849,6 +3845,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         # readiness fields and stop.
         if not runtime.db_path.exists():
             print("DB exists:    no")
+            _print_wake_status(runtime)
             _print_background_status(runtime.scope)
             _print_meaning_status()
             print(f"Simple tools: {', '.join(SIMPLE_TOOL_NAMES)}")
@@ -3867,6 +3864,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
         _print_code_status(runtime)
         _print_identity_status(runtime)
         print(f"Model:        {'dedicated provider configured' if runtime.has_dedicated_model else 'local baseline only'}")
+        _print_wake_status(runtime)
         _print_background_status(runtime.scope)
         _print_meaning_status()
         _print_semantic_status(runtime, watched)
@@ -4131,6 +4129,26 @@ def _print_legacy_status(runtime) -> None:
         print(f"  ATTENTION:  {format_legacy_summary(counts)}")
 
 
+def _print_wake_status(runtime) -> None:
+    """Say whether Claude Code wakes this memory at the start of each session,
+    when Claude Code is on this machine, and how to set it up when it doesn't."""
+    try:
+        settings = _claude_code_settings_path()
+        if not (settings.parent.exists() or shutil.which("claude")):
+            return
+        hooked = _state.wake_hook(str(runtime.db_path))
+        if hooked:
+            print(f"Wake:         automatic in Claude Code (its session-start hook, in {hooked})")
+            return
+        setup = _state.command_line(
+            runtime.scope.agent_id, str(runtime.db_path), "hooks", "install", "claude-code",
+            "--write", mnemos=_mnemos_command(),
+        )
+        print(f"Wake:         not automatic in Claude Code; to set it up: {setup}")
+    except Exception:
+        print("Wake:         unknown")
+
+
 def _print_background_status(scope) -> None:
     """Tell the user whether memory does anything between sessions: the
     upkeep, and the quiet hours.
@@ -4151,18 +4169,7 @@ def _print_background_status(scope) -> None:
         crontab = scheduler.read_crontab() if backend == "crontab" else ""
 
         def scheduled(job) -> bool:
-            if backend == "launchd":
-                return (
-                    scheduler.launchd_plist_path(scope.agent_id, job).exists()
-                    and scheduler.launchd_job_active(scope.agent_id, job)
-                )
-            if backend == "systemd":
-                return (
-                    (scheduler.systemd_unit_dir()
-                     / scheduler.systemd_unit_names(scope.agent_id, job)[1]).exists()
-                    and scheduler.systemd_timer_active(scope.agent_id, job)
-                )
-            return scheduler.cron_has(crontab, scope.agent_id, job.name)
+            return _state.scheduled(scope.agent_id, job, backend, crontab)
 
         installed = sum(1 for job in jobs if scheduled(job))
         if installed:
@@ -4350,27 +4357,9 @@ def _mcp_available() -> bool:
 
 
 def _mnemos_command() -> str:
-    """Absolute path to *this* Mnemos installation's CLI.
-
-    A bare PATH lookup can resolve to a different installation than the one
-    the user just ran — a Homebrew copy shadowing a pipx or venv one. The
-    generated hook and client configs would then invoke the wrong Mnemos,
-    against a different environment and a different store, or none at all.
-    Prefer the running script, then this interpreter's own bin directory.
-    """
-    argv0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
-    if argv0:
-        candidate = Path(argv0).resolve()
-        if candidate.is_file() and candidate.stem == "mnemos":
-            return str(candidate)
-
-    # Running as `python -m mnemos.cli`: the console script installed
-    # alongside this interpreter is still the right installation.
-    sibling = Path(sys.executable).parent / "mnemos"
-    if sibling.is_file():
-        return str(sibling)
-
-    return shutil.which("mnemos") or "mnemos"
+    """Absolute path to *this* Mnemos installation's CLI
+    (``state.mnemos_command``)."""
+    return _state.mnemos_command()
 
 
 def _mcp_server_snippet(

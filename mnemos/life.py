@@ -30,6 +30,7 @@ import sys
 import threading
 
 from .core.engram import _gen_ulid
+from .setup.state import hours_dir
 from .simple_scope import resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
@@ -89,10 +90,6 @@ BOOTSTRAP = {
 
 def studio_dir(agent_id) -> Path:
     return Path.home() / ".mnemos" / "studio" / agent_id
-
-
-def hours_dir(agent_id) -> Path:
-    return Path.home() / ".mnemos" / "hours" / agent_id
 
 
 def _line(text) -> str:

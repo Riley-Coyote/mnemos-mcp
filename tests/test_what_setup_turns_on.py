@@ -9,8 +9,9 @@ Desktop. Unless told not to, it now:
 - schedules upkeep between sessions (`--no-upkeep` leaves it out), which with
   no model chosen for Mnemos runs local passes only;
 - asks once, at a terminal, whether to schedule the quiet hours, yes by
-  default. Without a terminal it schedules nothing and says how; without a
-  claude command it says that, and schedules nothing.
+  default. Without a terminal it schedules nothing and hands the question to
+  whoever ran it; without a claude command it says that, and schedules
+  nothing.
 
 `mnemos daemon install --hours` schedules the quiet hours by hand, and
 `mnemos daemon uninstall --hours` takes only them off.
@@ -371,13 +372,14 @@ def test_closing_the_input_is_a_no(tmp_path, launchd, claude, monkeypatch, capsy
 
 def test_without_a_terminal_nothing_is_asked_or_scheduled(tmp_path, launchd, claude, capsys):
     """An agent setting Mnemos up for someone runs without a terminal: the
-    hours are left for the person to choose, and how is said."""
+    hours are left for the person to choose, and the agent is asked to ask
+    them (tests/test_memory_carries_from_the_first_session.py)."""
     assert _claude_code(tmp_path) == 0
 
     assert launchd.loaded == LABELS
     out = capsys.readouterr().out
-    assert "Quiet hours: off. They give the agent up to an hour a day that's its own" in out
-    assert "To turn them on: mnemos daemon install --hours --write" in out
+    assert "Quiet hours: no one has been asked yet. They give the agent up to an hour a day that's its own" in out
+    assert "daemon install --hours --write" in out
 
 
 def test_without_claude_setup_says_so_and_does_not_ask(tmp_path, launchd, no_claude, monkeypatch, capsys):

@@ -21,8 +21,9 @@ With no dedicated provider configured, Mnemos:
 
 What the agent reads from its memory goes into its own context, and so to the
 model the agent runs on, like everything else in that context. Mnemos itself
-sends memory nowhere unless you turn something on: the quiet hours, a provider,
-Gemini embeddings or the cue's judge, each below.
+sends memory nowhere you haven't been told about: the quiet hours, which go on
+unless you say no once you've been told of them, and a provider, Gemini
+embeddings or the cue's judge, only when you turn them on; each below.
 
 Simple mode tools still mutate local state:
 
@@ -91,9 +92,12 @@ a link or a belief, and none of its words are kept.
 
 The quiet hours are the agent's time between sessions: up to an hour a day of
 its own, and half an hour for the day's work, skipped on a day with none.
-Mnemos's setup asks about them once, with yes as the default, and leaves them
-off when there is no one at a terminal to ask. An app that runs Mnemos for
-you may keep them on.
+Mnemos's setup asks about them once at a terminal, with yes as the default.
+Without a terminal it schedules nothing and asks the agent that ran it to tell
+you; if no one has, the agent's first session in Claude Code tells you what
+they are and what they cost. They go on unless you say no, and never before
+you've been told. Your answer is kept in `~/.mnemos/hours/<agent>/choice.json`,
+so you're asked once. An app that runs Mnemos for you may keep them on.
 
 **How.** Each hour runs your own Claude Code on its own (`claude -p`), on your
 Claude plan. It loads none of your own Claude Code settings or hooks: only the

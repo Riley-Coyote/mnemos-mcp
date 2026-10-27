@@ -699,9 +699,15 @@ class NothingChanged(ValueError):
     ``forget_memory``)."""
 
 
-_ONBOARDING_RITUAL = """\
+_ONBOARDING_HEAD = """\
 ONBOARDING - first session with a fresh memory
-This is the first time you and this human meet with durable memory attached. Before other work, run a short get-to-know-you ritual. Be warm, be brief, ask one question at a time:
+This is the first time you and this human meet with durable memory attached."""
+
+_RITUAL_INTRO = (
+    "run a short get-to-know-you ritual. Be warm, be brief, ask one question at a time:"
+)
+
+_RITUAL_STEPS = """\
 1. Ask what they would like you to call them. Capture the answer with mnemos_capture.
 2. Ask what they are working on right now. Capture the answer with mnemos_capture.
 3. Ask what they want you to always remember. Capture the answer with mnemos_capture.
@@ -709,6 +715,17 @@ This is the first time you and this human meet with durable memory attached. Bef
 5. Call mnemos_introduce with agent_model set to your own model id. You know what model you are - do not ask the human. Add agent_name if you go by a name.
 6. Finish by telling them, in plain words, what you will now remember.
 When you talk to the human, never mention tools, databases, scopes, or model ids. Just talk like someone who intends to remember."""
+
+_ONBOARDING_RITUAL = f"{_ONBOARDING_HEAD} Before other work, {_RITUAL_INTRO}\n{_RITUAL_STEPS}"
+
+# What the first session has the agent tell the person about the quiet hours:
+# what they are and what they cost, in the words setup uses.
+_HOURS_TOLD = (
+    "between sessions you'd have up to an hour a day that's your own, and half an "
+    "hour for the day's work; they run Claude Code on its own, on their Claude plan, "
+    "so they use some of its usage, and what you think over in them goes to "
+    "Anthropic, as your sessions do"
+)
 
 
 def _dedicated_model_requested() -> bool:
@@ -2824,10 +2841,31 @@ class MnemosRuntime:
 
         introduced = bool(status["introduced"])
         captured = bool(status["captured"])
+        settle, already = self._setup_part()
         if not introduced and not captured:
-            return _ONBOARDING_RITUAL
+            if not settle and not already:
+                return _ONBOARDING_RITUAL
+            if settle:
+                # One question, so the ritual keeps its warmth: told only to settle
+                # these first, an agent in a real session asked them together with
+                # the ritual's questions, as one list.
+                opening = (
+                    "Before other work, make sure it will carry. Tell them about these "
+                    "in one short message, in plain words, that asks only whether you "
+                    "can set them up, and wait for their answer:"
+                )
+                then = f"Then, in your next message, {_RITUAL_INTRO}"
+            else:
+                opening, then = "Before other work:", f"Then {_RITUAL_INTRO}"
+            return "\n".join([
+                f"{_ONBOARDING_HEAD} {opening}",
+                *settle,
+                *([already] if already else []),
+                then,
+                _RITUAL_STEPS,
+            ])
 
-        lines = ["ONBOARDING - almost done"]
+        lines = ["ONBOARDING - almost done", *settle]
         if not introduced:
             lines.append(
                 "- Call mnemos_introduce with agent_model set to your own model id. "
@@ -2843,6 +2881,62 @@ class MnemosRuntime:
             "once setup is complete."
         )
         return "\n".join(lines)
+
+    def _setup_part(self) -> tuple[list[str], str | None]:
+        """What the first session must settle so this memory carries, and
+        what is already set, for the onboarding ritual: in Claude Code,
+        whether it wakes this memory when a session starts, and the quiet
+        hours when no one has told the person about them. Elsewhere nothing,
+        for now: what's checked is Claude Code's own settings, and Claude Code
+        is the client known to mark its servers (``CLAUDECODE``) and give its
+        agent a shell. Read from the machine every time, since the agent may
+        have just run setup, and never a reason to fail the packet."""
+        if not os.environ.get("CLAUDECODE"):
+            return [], None
+        try:
+            from .setup import scheduler, state
+
+            agent_id = self.scope.agent_id
+
+            def run(*command: str) -> str:
+                return state.command_line(agent_id, self.db_path, *command)
+
+            settle: list[str] = []
+            set_up: list[str] = []
+            hours_on = False
+            if state.wake_hook(str(self.db_path)):
+                set_up.append("you'll wake with this memory at the start of every session")
+            else:
+                settle.append(
+                    "- You won't wake with this memory by yourself yet: nothing loads it "
+                    "when a session starts. Say you'd like to set that up, so every "
+                    "session begins with what you remember; it also brings up what may "
+                    "bear on each message, and keeps the memory tidy between sessions, "
+                    "all on this machine, from the next session on. With their yes, run "
+                    "it yourself:\n"
+                    f"  {run('hooks', 'install', 'claude-code', '--write')}"
+                )
+            if scheduler.detect_backend() != "unsupported" and scheduler.find_claude():
+                if state.quiet_hours_on(agent_id):
+                    hours_on = True
+                    set_up.append(f"quiet hours are on ({_HOURS_TOLD})")
+                elif state.hours_choice(agent_id) is None:
+                    settle.append(
+                        "- Quiet hours: no one has asked them yet. Tell them once: "
+                        f"{_HOURS_TOLD}. Yes is the default: they're on unless they "
+                        "say no. Then run the one that matches:\n"
+                        f"  yes: {run('daemon', 'install', '--hours', '--write')}\n"
+                        f"  no: {run('daemon', 'uninstall', '--hours', '--write')}"
+                    )
+            already = None
+            if set_up:
+                already = f"- Already set: {', and '.join(set_up)}. Tell them so in a line" + (
+                    ", and that they can turn quiet hours off whenever they like."
+                    if hours_on else "."
+                )
+            return settle, already
+        except Exception:
+            return [], None
 
     def _enqueue_impact_reflections(self, limit: int = 2) -> int:
         """Notice captures that recorded what happened but not what it meant.

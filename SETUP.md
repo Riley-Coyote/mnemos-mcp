@@ -128,6 +128,12 @@ Memory is then injected before the agent's first turn. Preview it first with
 The hook fails silent by design: empty, unreadable, or missing memory
 contributes nothing and the session starts normally.
 
+If you added only the server, or an agent set Mnemos up for you, the agent's
+first session in Claude Code checks what is really on this machine: when
+nothing loads its memory at session start, or no one has told you about quiet
+hours, it says so plainly, asks once, and runs setup itself with your yes.
+`mnemos doctor` shows the same (`Wake:`).
+
 That one command turns on everything setup turns on for Claude Code:
 
 - **The wake:** memory before the first turn, and again after compaction.
@@ -135,13 +141,14 @@ That one command turns on everything setup turns on for Claude Code:
   on it, or nothing. Messages Claude Code writes itself, such as a background
   task's notice, bring nothing.
 - **Upkeep between sessions,** scheduled with your system's scheduler (step 6).
-- **Quiet hours, if you say yes.** It asks once, and yes is the default: up
-  to an hour a day that's the agent's own, and half an hour for the day's
+- **Quiet hours, unless you say no.** It asks once, and yes is the default:
+  up to an hour a day that's the agent's own, and half an hour for the day's
   work. They run your own Claude Code on its own, on your Claude plan, so what
   the agent thinks over in them goes to Anthropic
   ([what, and how](docs/privacy-security.md#quiet-hours)). Run without a
-  terminal, or with no `claude` command, it leaves them off and prints how to
-  turn them on.
+  terminal, it schedules nothing and asks the agent that ran it to tell you,
+  with the command for each answer; if no one has, the agent tells you in its
+  first session. With no `claude` command they stay off.
 
 To turn each off:
 
@@ -270,8 +277,9 @@ day's work (19:00, skipped on a day with no work). Each runs your own Claude
 Code on its own, with the agent's memory, on your Claude plan, so what the
 agent thinks over in it goes to Anthropic: its words for the hour, short
 excerpts of its recent memory, its wake, and whatever it reads or recalls
-([more](docs/privacy-security.md#quiet-hours)). Setup asks about them once;
-to schedule them yourself, or change their times:
+([more](docs/privacy-security.md#quiet-hours)). Setup asks about them once,
+or has your agent tell you, and they go on unless you say no; to schedule them
+yourself, or change their times:
 
 ```bash
 mnemos daemon install --hours --write

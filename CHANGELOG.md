@@ -2,6 +2,36 @@
 
 ## 0.4.1 (unreleased)
 
+### The first session makes sure memory carries
+
+Set up by an agent, or with only the server added, Mnemos could end up with
+memory that doesn't load by itself, and with quiet hours no one had told the
+person about: setup asked about them only at a terminal, and an agent's shell
+isn't one. Now the first session in Claude Code starts by settling both, from
+what is really on the machine. When nothing loads this memory at session
+start, the agent says so in a sentence and, with a yes, runs setup itself
+(`mnemos hooks install claude-code --write`, naming this memory). When no one
+has told the person about the quiet hours, it tells them what they are and what
+they cost: time on their Claude plan, and what the agent thinks over in them
+goes to Anthropic. They go on unless the person says no, and never before
+they've been told. It asks one question for both, then gets to know them as
+before, one question at a time. What is already set, it says in a line. Outside
+Claude Code the first session is as it was.
+
+Setup keeps the person's answer about the quiet hours, given at the terminal or
+through `mnemos daemon install --hours --write` and `mnemos daemon uninstall
+--hours --write` (in `~/.mnemos/hours/<agent>/choice.json`), so the first
+session doesn't ask what setup already did. Run without a terminal, setup no
+longer just leaves them off: it asks the agent that ran it to tell the person,
+with the command for each answer. And `mnemos doctor` says whether Claude Code
+wakes this memory (`Wake:`), with the command that sets it up when it doesn't;
+a hook for another agent's memory doesn't count.
+
+Checked in real Claude Code sessions on a new memory, with setup's commands
+fenced so nothing on the machine changed: the agent explained both plainly,
+asked once, ran the two commands for this memory, and then asked what to call
+the person.
+
 ### Out of the repository: forge, and the old project page
 
 Three things in the repository weren't Mnemos: `forge/`, a skill for creating

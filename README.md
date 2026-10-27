@@ -10,8 +10,8 @@ decided together, what it got wrong last time — before you say anything.
 That is the whole product. Everything else in here serves it.
 
 Between your conversations it keeps living a little. It keeps a journal and
-can leave you a note, and if you say yes at setup it has an hour a day that's
-its own and half an hour for the day's work. Only the agent writes its journal
+can leave you a note, and unless you say no it has an hour a day that's its
+own and half an hour for the day's work. Only the agent writes its journal
 and its notes, and no model writes in its place: its beliefs move only by its
 own verdict. To watch its days, run `mnemos log`, a small page on your own
 machine.
@@ -31,6 +31,10 @@ extra brings the local model's libraries (PyTorch among them, several hundred
 MB), and `mnemos embeddings download` fetches the model once (about 90 MB).
 
 Then start Claude Code: it wakes with its memory, and the memory tools are there.
+Its first session starts by making sure the memory carries. If something isn't
+set up yet (its wake, when only the server was added, or quiet hours no one has
+told you about), it says so plainly and sets it up itself with your yes. Then it
+gets to know you.
 
 What setup turns on, and how to turn each thing off:
 
@@ -45,16 +49,16 @@ What setup turns on, and how to turn each thing off:
   and related ones are linked, and a deeper pass runs each night at 03:00.
   With no model chosen for Mnemos, all of it runs on your machine. Off:
   `mnemos daemon uninstall --write`, or leave it out with `--no-upkeep`.
-- **Quiet hours, if you say yes.** Setup asks once, and yes is the default:
-  up to an hour a day that's the agent's own, and half an hour for the day's
-  work. They run your own Claude Code on its own, on your Claude plan, so
-  what the agent thinks over in them goes to Anthropic: its words for the
-  hour, short excerpts of its recent memory, its wake, and whatever it reads
-  or recalls ([what, and how](docs/privacy-security.md#quiet-hours)). Setup
-  run without a terminal (by an agent, say), or with no `claude` command,
-  leaves them off and says how to turn them on:
-  `mnemos daemon install --hours --write`. Off:
-  `mnemos daemon uninstall --hours --write`.
+- **Quiet hours, unless you say no.** Up to an hour a day that's the agent's
+  own, and half an hour for the day's work. They run your own Claude Code on
+  its own, on your Claude plan, so what the agent thinks over in them goes to
+  Anthropic: its words for the hour, short excerpts of its recent memory, its
+  wake, and whatever it reads or recalls
+  ([what, and how](docs/privacy-security.md#quiet-hours)). Nothing turns them
+  on before you've been told: setup asks once at a terminal, yes by default;
+  run by an agent, it has the agent tell you, and if no one has, your agent
+  does in its first session. They go on unless you say no. With no `claude`
+  command they stay off. Off: `mnemos daemon uninstall --hours --write`.
 
 For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
 the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
@@ -74,10 +78,11 @@ belief is ever proposed. To add it later, run
 `mnemos embeddings download` once to fetch the model.
 
 Eleven tools. Local SQLite. No account, no API key, no service of its own.
-Nothing leaves your machine unless you turn it on yourself: a model provider,
-Gemini embeddings, the cue's judge, or the quiet hours, which think over the
-memory through your own Claude Code, so what the agent reads in its hour goes
-to Anthropic ([each one, and how to turn it off](docs/privacy-security.md)).
+Nothing leaves your machine that you haven't been told about: a model provider,
+Gemini embeddings and the cue's judge only if you turn them on, and the quiet
+hours unless you say no, which think over the memory through your own Claude
+Code, so what the agent reads in its hour goes to Anthropic
+([each one, and how to turn it off](docs/privacy-security.md)).
 
 Mnemos runs on macOS and Linux. On Windows the memory and its tools work, and
 upkeep runs while a session is open; the quiet hours and scheduled upkeep need
@@ -114,7 +119,7 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Hermes agent with another memory provider | Hermes Sidecar Mode | `mnemos hermes quickstart --agent-safe` |
 | Hermes agent using Mnemos as its provider | Hermes Provider Mode | `mnemos hermes quickstart --provider` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
-| The agent's quiet hours, on your Claude plan | Scheduled by setup when you say yes; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
+| The agent's quiet hours, on your Claude plan | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
 
 Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
 
@@ -613,8 +618,10 @@ most of it (`MNEMOS_HOUR_MODEL` chooses another). Nothing is asked of the agent 
 hour looks at the day's work, and skips a day with none.
 
 Setup asks once, at the terminal, and yes is the default. Run without a
-terminal (by an agent setting Mnemos up for you), or where no `claude` command
-is found, it leaves them off and says how to turn them on:
+terminal (by an agent setting Mnemos up for you), it schedules nothing and asks
+the agent to tell you, with the command for each answer; if no one has, the
+agent tells you in its first session in Claude Code. They go on unless you say
+no. Where no `claude` command is found, they stay off. By hand:
 
 ```bash
 mnemos daemon install --hours --write          # the agent's hour at 08:00, ours at 19:00
