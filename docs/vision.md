@@ -166,7 +166,7 @@ model a question: *if this memory were yours to live in, what would you want it 
 Five answers came out of that conversation, and they are the spine of the system.
 
 **1 · Traces, not records.** A memory should carry not only what happened but what it
-changed. `"Riley corrected me twice on the same thing"` is what happened. `"I should
+changed. `"They corrected me twice on the same thing"` is what happened. `"I should
 check the live page before claiming a fix works"` is what it meant. The second sentence
 is the one worth keeping, and it is the one that survives when the details fade.
 
@@ -506,7 +506,7 @@ crosses a real restart, the wake's opening ends with one more sentence — once,
 in the agent's own voice, quoting the first thing it kept:
 
 ```
-I still have what I kept before: "Riley prefers to be called Riley. Works at night, peak 2-4am.".
+I still have what I kept before: "Riley plans every trip around the ferry timetable.".
 ```
 
 No instruction tells it to celebrate. It simply wakes knowing it remembers, through the
@@ -564,7 +564,7 @@ keyless store:
 
 | Shift | Signal | Result |
 |---|---|---|
-| 1 · traces, not records | non-templated impact coverage | **89%** |
+| 1 · traces, not records | non-templated impact coverage | **92%** |
 | 2 · forgetting that teaches | `distilled_into` edges | **6** |
 | 3 · surprise as growth | prediction error on a novel capture | **0.6** |
 | 4 · resonance, not search | relation kinds / `supports` share | **2 kinds / 0%** |
@@ -580,7 +580,7 @@ real store every answer was "not related". A memory that turns out wrong is fixe
 `mnemos_correct`. There is nothing a provider is *required* for. A configured model
 only accelerates the work when no agent turn is available.
 
-**350 tests**, on Python 3.10 through 3.13.
+**More than 1,800 tests**, on Python 3.10 through 3.13.
 
 ### The discipline behind those numbers
 

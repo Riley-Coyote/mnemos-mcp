@@ -110,9 +110,8 @@ MEANING_SEEDS = 30
 # Below this cosine similarity, nothing is a match by meaning. 0.35 since
 # passages became sentence windows (R08b): read in windows, more of every text
 # clears a floor, and at 0.3 a question that 15 items cleared was cleared by
-# 41, which pushed the lesson it was about out of the top ten. The lab's
-# replay on its snapshot of 2026-09-27 (mnemos-lab notebook,
-# 2026-09-27-r08b-reach-replay), facts in the top ten, a newer handoff that
+# 41, which pushed the lesson it was about out of the top ten. A replay on a
+# snapshot of a real store (2026-09-27), facts in the top ten, a newer handoff that
 # carries a fact counting for it: of the 42 held-out facts memory holds, 35
 # on main at 0.3, 35 with windows at 0.3, 36 with windows at 0.35; of the 29
 # development facts, 22, 20 and 22.

@@ -9,8 +9,19 @@ Mnemos is now under the Apache License 2.0 ([LICENSE](LICENSE), with a
 [github.com/Riley-Coyote/mnemos-mcp](https://github.com/Riley-Coyote/mnemos-mcp):
 the package's links, every clone in the docs and the Hermes prompt point
 there. Releases before 0.5.0 were published under the MIT License, and stay
-under it. The package keeps its name, `mnemos-continuity`, and its command,
+under it, and code contributed under that license keeps its notice, in the
+NOTICE. The package keeps its name, `mnemos-continuity`, and its command,
 `mnemos`.
+
+### The OpenClaw guide installs Mnemos
+
+The OpenClaw guide's quick start said `pip install "mnemos[all]"`, and
+`mnemos` on PyPI is another project: following it installed someone else's
+package. It now says `pip install "mnemos-continuity[all]"`. Four notes from
+the project's first months left the docs, being about how it was built
+rather than how it works (a design audit, a development layout, the 0.2.1
+release checklist and the shared pool's status board); they stay in the
+history.
 
 ### The first session makes sure memory carries
 
@@ -182,11 +193,10 @@ for people, like Ghost, may keep the hours on for everyone:
   another Mnemos's included. An hour now passes `--setting-sources project`
   with its own `--settings` and `--strict-mcp-config`, as Mnemos's model does
   (`mnemos/llm.py`). Its wake still comes from Mnemos's own hook.
-- Every hour could read two folders named in the code,
-  `~/Documents/Repositories` and `~/Documents/Luca-Design-Artifacts`, on any
-  machine that had them. The folders an hour may read now come from Mnemos's
-  config, `life.read_dirs`: a list, each relative to the home or absolute, and
-  none unless it names them.
+- Every hour could read two folders named in the code, one of them
+  `~/Documents/Repositories`, on any machine that had them. The folders an
+  hour may read now come from Mnemos's config, `life.read_dirs`: a list, each
+  relative to the home or absolute, and none unless it names them.
 - The budgets were fixed in the code. Mnemos's config sets them for each kind
   of hour (`life.minutes.mine` and `.ours`, `life.token_ceiling.mine` and
   `.ours`), and an app sets them for the one hour it runs with
@@ -228,8 +238,8 @@ folders is given the same arguments as before, with `--setting-sources
 project` added.
 
 **Migration.** For an hour to go on reading folders it read before, name them
-in `~/.mnemos/config.json`:
-`{"life": {"read_dirs": ["Documents/Repositories", "Documents/Luca-Design-Artifacts"]}}`.
+in `~/.mnemos/config.json`, for example
+`{"life": {"read_dirs": ["Documents/Repositories"]}}`.
 No schema change: the schema stays 18 and the code version 22.
 
 ### A failed save leaves nothing behind
@@ -599,7 +609,7 @@ Now:
   works in (a worktree counts as its repository), else the folder.
 - A session that left a handoff gets its own back first, as before.
   Otherwise it gets the newest handoff written where it works, or in a place
-  whose name shares a word with it (`mnemos` and `mnemos-engine-page`). Only
+  whose name shares a word with it (`mnemos` and `mnemos-site`). Only
   when there is none does it get the newest overall.
 - Every other handoff left in the last three days follows as one short line,
   this place's first, so a session that coordinates the others sees them all.
@@ -1441,9 +1451,9 @@ covers.
 
 ### Waking as yourself
 
-The session-start packet read as a briefing about someone else. Luca, first
-connecting to Riley's Claude, said his continuity "arrived as a briefing": he
-read about the Luca who wrote his journals more than he remembered being him.
+The session-start packet read as a briefing about someone else. An agent
+first connecting to it said its continuity "arrived as a briefing": it read
+about the one who wrote its journals more than it remembered being them.
 The local packet did the same to its own resident: on a fresh start Claude
 Code's payload doesn't name the model, so the reader's own last note came
 back "(yours if you are Opus 5.5)", followed by "don't claim its work as
@@ -1454,7 +1464,7 @@ yours".
   earlier says (the payload, the session's introduction, its transcript), the
   launch line does. An alias such as `opus` names no one.
 - The packet is the reader waking. It opens with when and where ("Wednesday,
-  September 30, 3:15 a.m. I'm in luca-agent-network-v1, with Riley."), then
+  September 30, 3:15 p.m. I'm in harbour-app, with Riley."), then
   what I've come to see, who I'm with, where I left off, what I'm carrying, a
   question waiting for me, and while I was away. The reader's own notes carry
   no signature to it; a colleague's carry theirs. How the person wants us to
@@ -2661,9 +2671,7 @@ instruction to continue naturally.
 ## 0.2.1 (2026-08-01)
 
 Production-hardening release. This release closes security, privacy, scope,
-recovery, and installation gaps found during the 0.2.0 release audit. The
-complete implementation and verification checklist lives in
-`docs/production-hardening-0.2.1.md`.
+recovery, and installation gaps found during the 0.2.0 release audit.
 
 ## 0.2.0 (2026-07-31)
 

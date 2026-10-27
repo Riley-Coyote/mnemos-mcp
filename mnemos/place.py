@@ -82,7 +82,7 @@ def place_words(workdir: str) -> set[str]:
 def nearness(here: str, there: str) -> int:
     """How near place ``there`` is to ``here``, both as ``place_of`` gives
     them: ``SAME_PLACE``, ``RELATED_PLACE`` when their names share a
-    distinctive word (``mnemos`` and ``mnemos-engine-page``), else
+    distinctive word (``mnemos`` and ``mnemos-site``), else
     ``ELSEWHERE``. An unknown place is elsewhere."""
     if not here or not there:
         return ELSEWHERE

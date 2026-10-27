@@ -146,8 +146,8 @@ def test_an_hour_loads_none_of_the_persons_own_claude_code_settings(db, home, tm
 def test_an_hour_reads_no_folder_the_config_does_not_name(db, home, tmp_path):
     from mnemos import life
 
-    # The two folders Riley's hours read, there on this machine too.
-    for name in ('Documents/Repositories', 'Documents/Luca-Design-Artifacts'):
+    # The two folders the hours used to read, there on this machine too.
+    for name in ('Documents/Repositories', 'Documents/Design'):
         (home / name).mkdir(parents=True)
 
     record = run(db)
@@ -166,7 +166,7 @@ def test_the_folders_an_hour_reads_are_the_ones_the_config_names(db, home, tmp_p
     shared.mkdir()
     (home / 'Documents/Repositories').mkdir(parents=True)
     (home / 'notes').mkdir()
-    (home / 'Documents/Luca-Design-Artifacts').mkdir(parents=True)  # not named
+    (home / 'Documents/Design').mkdir(parents=True)  # not named
     configure(home, read_dirs=[
         'Documents/Repositories', str(shared), '~/notes', 'not here', '',
         'Documents/Repositories',

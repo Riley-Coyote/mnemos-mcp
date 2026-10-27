@@ -20,7 +20,7 @@ This guide covers how to set up Mnemos as a complete agent cognition system usin
 
 ```bash
 # Install Mnemos
-pip install "mnemos[all]"
+pip install "mnemos-continuity[all]"
 
 # Bootstrap your agent
 mnemos bootstrap \

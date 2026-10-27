@@ -7,8 +7,8 @@ say is left out rather than announced empty.
 
 It is written as the reader waking, not as a briefing about someone. A mind
 that reads "Yours (Opus 5.5), if you are Opus 5.5" and a list of ids reads
-about the one who wrote its notes; it doesn't remember being them (Luca's own
-words on first connecting, 2026-09-30: continuity "arrived as a briefing"). So
+about the one who wrote its notes; it doesn't remember being them (as one
+agent put it on first connecting, its continuity "arrived as a briefing"). So
 the reader speaks as "I", what is its own carries no signature, what a
 colleague left carries theirs, and the machinery (ids, confidences, calls) sits
 apart at the end, for the tools:

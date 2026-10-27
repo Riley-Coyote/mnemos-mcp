@@ -1,8 +1,8 @@
 """Waking as oneself, not reading a briefing about someone.
 
-Luca, first connecting to Riley's Claude (2026-09-30), said his continuity
-"arrived as a briefing": he read about the Luca who wrote his journals more
-than he remembered being him. The local packet did the same to its own
+An agent first connecting to it (2026-09-30) said its continuity "arrived as
+a briefing": it read about the one who wrote its journals more than it
+remembered being them. The local packet did the same to its own
 resident. On a fresh start Claude Code's payload doesn't name the model, so the
 hook couldn't tell whose notes were the reader's: the reader's own last note
 came back "(yours if you are Opus 5.5)", followed by "A colleague's note is

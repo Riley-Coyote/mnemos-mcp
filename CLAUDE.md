@@ -50,14 +50,8 @@ an agent actually calls.
 
 `main` is what users install. It stays green.
 
-All work happens on a branch and lands through a pull request. Agents run the
-entire pipeline — nothing here requires anyone to open GitHub.
-
-**The checks run on this machine, not on GitHub.** Since 2026-10-17 GitHub
-Actions no longer starts jobs for this repository. `scripts/local_ci.sh` is
-the gate. It runs every step of
-`.github/workflows/release-hardening.yml` against a clean copy of one commit,
-in a clean environment, and writes a summary for the pull request.
+All work happens on a branch and lands through a pull request. Agents can run
+the entire pipeline — nothing here requires anyone to open GitHub.
 
 ```bash
 git fetch origin
@@ -65,28 +59,22 @@ git switch -c <type>/<slug> origin/main
 # work, atomic commits
 git push -u origin <type>/<slug>
 gh pr create --title "..." --body "..."
-scripts/local_ci.sh                     # the gate: ~15 min, run it in the background
-gh pr comment --body-file <the summary.md path it prints>
-gh pr merge --squash --delete-branch
-git -C ~/Documents/Repositories/mnemos pull --ff-only
 ```
 
-The last line matters. On Riley's Mac, `~/Documents/Repositories/mnemos` is
-the checkout every session imports Mnemos from (an editable install), so a
-merge is not live until that checkout is fast-forwarded. It stays on `main`
-with no local changes; if `--ff-only` refuses, stop and say why rather than
-forcing it. Sessions already running keep the code they started with.
+**The checks.** `.github/workflows/release-hardening.yml` runs on every pull
+request: the suite on Python 3.10–3.13, the suite with meaning search, the
+dependency and code security scans, and the black box on Linux, macOS and
+Windows. CodeQL runs beside it. `scripts/local_ci.sh` runs the same steps on
+your own machine (macOS), against a clean copy of one commit, in a clean
+environment, and writes a summary to post on the pull request. It takes about
+15 minutes, and it can't run the black box on Linux or Windows, or CodeQL; its
+summary says so.
 
 Rules:
 
 - Never commit or push directly to `main`.
-- Never merge unless `scripts/local_ci.sh` passed on the branch's final commit
-  and its summary is on the pull request. Fix a failing step; never waive it.
-  If a step cannot run (no network for pip-audit, say), say so on the pull
-  request and ask Riley before merging.
-- That commit must contain the current `origin/main`, which the gate's first
-  step checks. If `main` moves before the merge, merge it into the branch and
-  run the gate again.
+- A pull request merges only when the checks pass on its final commit, and
+  that commit contains the current `main`. Fix a failing step; never waive it.
 - One PR is one unit of work, so squash by default. Use `--merge` only when a
   branch carries several genuinely independent fixes worth keeping separately
   revertable.
@@ -96,23 +84,11 @@ Rules:
 - Breaking changes go in the CHANGELOG with the migration in the same entry.
 - A check changed in the workflow changes in `scripts/local_ci.sh` too, and
   the other way round.
+- When a change touches code that differs by platform (paths, process flags,
+  file locking), say on the pull request which platforms it was run on.
 
-What the gate cannot cover here: the black box on Linux and on Windows, and
-CodeQL. The summary says so every time. When a change touches code that
-differs by platform (paths, process flags, file locking), say on the pull
-request which platforms it was not run on.
-
-GitHub no longer enforces any of this. Branch protection is not applied: #159
-merged with every check failing. The rules above are the protection now, and
-they bind an agent with admin credentials exactly as the old enforcement did,
-because that agent is the realistic risk. The workflows stay in
-`.github/workflows` as the record of the same checks. GitHub still triggers
-them on every push and each fails at once without running, at no cost; those
-red marks mean nothing, and the summary on the pull request is the record.
-
-Publishing to PyPI goes through `release.yml`, which runs on a version tag in
-GitHub Actions, so it cannot run either. Do not push a release tag expecting
-it to publish; ask Riley how to publish.
+`release.yml` publishes to PyPI from a version tag. Only the maintainer tags a
+release.
 
 ---
 

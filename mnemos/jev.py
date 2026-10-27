@@ -63,9 +63,8 @@ MESSAGE_TAIL = MESSAGE_CHARS - MESSAGE_HEAD - len(MESSAGE_MARK)  # 297
 # Jev's time, end to end, in seconds.
 TIMEOUT = 0.4
 
-# The lab's wording (mnemos-lab, notebook/jev-cue-gate/jev_cue_test.py), which
-# the offline check of 2026-09-29 was scored with: the message, then one
-# question per memory line.
+# The wording the offline check of 2026-09-29 was scored with: the message,
+# then one question per memory line.
 QUESTION = (
     "Does memory_{n} bear directly on the message, so that recalling it would "
     "change or sharpen a good reply?"

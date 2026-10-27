@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -365,8 +366,13 @@ def test_sidecar_mode_preserves_existing_external_provider_and_adds_mcp(tmp_path
     assert not (tmp_path / "plugins" / "mnemos" / "__init__.py").exists()
 
 
+# A Hermes checkout on this machine, if there is one: read when the module loads,
+# before each test is given a home of its own (conftest.py).
+LOCAL_HERMES = Path(os.environ.get("HERMES_CHECKOUT") or Path.home() / "Hermes")
+
+
 def test_installed_shim_is_discoverable_by_local_hermes(tmp_path, monkeypatch):
-    hermes_root = Path("/Users/rileycoyote/Hermes")
+    hermes_root = LOCAL_HERMES
     if not hermes_root.exists():
         pytest.skip("local Hermes checkout is not available")
 

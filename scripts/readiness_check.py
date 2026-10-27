@@ -176,7 +176,7 @@ def c2_mind_state(workdir: Path) -> dict:
          "changes how I ship a release"),
         ("Riley prefers short answers in plain words, with no preamble.",
          "changes how I write to him"),
-        ("Riley works best at night; his peak is between two and four.",
+        ("Riley works best on the early ferry; his peak is the six o'clock crossing.",
          "changes when I expect deep work"),
         ("Verify by running the real thing, never by reading the code.",
          "the discipline under everything I do here"),
@@ -303,10 +303,10 @@ def c4_agent_judgment(workdir: Path) -> dict:
 
     # A surprising capture that shares its words with what was held.
     for i in range(6):
-        rt.capture(content=f"The vektor renderer needs another optimization pass, item {i}",
+        rt.capture(content=f"The harbour map renderer needs another optimization pass, item {i}",
                    signed_as=AGENT)
     eng = rt._encoder.encode(
-        content="Vektor's renderer is finished and needs no further optimization",
+        content="The harbour map renderer is finished and needs no further optimization",
         agent_id="mind", author_kind="agent", author_model=AGENT,
     )
     eng.encoding_context.surprise_level = 0.7
@@ -421,8 +421,8 @@ def c5_nothing_leaves(workdir: Path) -> None:
     try:
         rt = MnemosRuntime(db_path=str(workdir / "privacy.db"), agent_id="mind",
                            person_id="tester", project_scope="check")
-        for words in ("Riley keeps his health details private; never repeat them.",
-                      "Riley said his health details stay private, even from notes."):
+        for words in ("Riley keeps his diary private; never repeat it.",
+                      "Riley said his diary stays private, even from notes."):
             rt.capture(words, signed_as=AGENT)
         rt.maintain()
         rt.close()
@@ -440,7 +440,9 @@ def c5_nothing_leaves(workdir: Path) -> None:
 def main() -> int:
     print("Mnemos readiness check — against the built wheel and a keyless store")
     print("=" * 70)
-    with tempfile.TemporaryDirectory() as td:
+    # A capture's upkeep runs in its own process and can still be writing
+    # here when the checks end, so a leftover file doesn't fail the run.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as td:
         workdir = Path(td)
         home = workdir / "home"
         (home / ".mnemos").mkdir(parents=True)

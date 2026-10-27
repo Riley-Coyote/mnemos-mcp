@@ -437,11 +437,11 @@ class TestWhereTheSessionStarts:
         db_path = tmp_path / "shared.db"
         repos = tmp_path / "Repositories"
         mnemos = _repo(repos, "mnemos")
-        truemark = _repo(repos, "TrueMark")
+        lantern = _repo(repos, "Lantern")
         desk = _folder(tmp_path / "CLAUDE", "the-second-desk")
         lab = _thread("Mnemos lab, the testing thread")
         _handoff_from(SESSIONS[0], lab, db_path, tmp_path, cwd=mnemos)
-        _handoff_from(SESSIONS[1], _thread("TrueMark, the phone scroll"), db_path, tmp_path, cwd=truemark)
+        _handoff_from(SESSIONS[1], _thread("Lantern, the phone scroll"), db_path, tmp_path, cwd=lantern)
         _handoff_from(SESSIONS[2], _thread("Lead session, the second desk"), db_path, tmp_path, cwd=desk)
 
         # A new session in a worktree of the mnemos repository.
@@ -450,15 +450,15 @@ class TestWhereTheSessionStarts:
         assert re.search(r"### where i was\n[^\n]*:\nMnemos lab, the testing thread", packet), packet
         assert lab in packet
         assert "- me, " in packet.split("Lead session, the second desk", 1)[0]
-        assert packet.index("Mnemos lab") < packet.index("Lead session") < packet.index("TrueMark")
+        assert packet.index("Mnemos lab") < packet.index("Lead session") < packet.index("Lantern")
 
     def test_a_related_folder_counts_when_no_note_was_written_in_this_one(self, tmp_path):
-        # The lab thread was written in mnemos-engine-page; the session that
+        # The lab thread was written in mnemos-site; the session that
         # picks it up works in the mnemos repository.
         db_path = tmp_path / "shared.db"
         lab = _thread("Mnemos lab, the testing thread")
         _handoff_from(SESSIONS[0], lab, db_path, tmp_path,
-                      cwd=_folder(tmp_path / "Repositories", "mnemos-engine-page"))
+                      cwd=_folder(tmp_path / "Repositories", "mnemos-site"))
         _handoff_from(SESSIONS[1], _thread("Lead session, the second desk"), db_path, tmp_path,
                       cwd=_folder(tmp_path / "CLAUDE", "the-second-desk"))
 
@@ -471,28 +471,28 @@ class TestWhereTheSessionStarts:
         mnemos = _repo(tmp_path, "mnemos")
         _handoff_from(SESSIONS[0], _thread("Mnemos race fix"), db_path, tmp_path, cwd=mnemos)
         _handoff_from(SESSIONS[1], _thread("Mnemos handoff fix"), db_path, tmp_path, cwd=mnemos)
-        _handoff_from(SESSIONS[2], _thread("TrueMark, the phone scroll"), db_path, tmp_path,
-                      cwd=_repo(tmp_path, "TrueMark"))
+        _handoff_from(SESSIONS[2], _thread("Lantern, the phone scroll"), db_path, tmp_path,
+                      cwd=_repo(tmp_path, "Lantern"))
 
         packet = _hook(db_path, tmp_path, _start(FRESH, cwd=mnemos))
         assert re.search(r"### where i was\n[^\n]*:\nMnemos handoff fix", packet), packet
-        assert packet.index("- me, ") < packet.index("Mnemos race fix") < packet.index("TrueMark")
+        assert packet.index("- me, ") < packet.index("Mnemos race fix") < packet.index("Lantern")
 
     def test_with_no_thread_from_its_folder_a_session_gets_the_newest_whole(self, tmp_path):
         db_path = tmp_path / "shared.db"
-        older = _thread("TrueMark, the phone scroll")
+        older = _thread("Lantern, the phone scroll")
         newer = _thread("Prompt Ghost, the notch dashboard")
-        _handoff_from(SESSIONS[0], older, db_path, tmp_path, cwd=_repo(tmp_path, "TrueMark"))
-        _handoff_from(SESSIONS[1], newer, db_path, tmp_path, cwd=_repo(tmp_path, "prompt-ghost"))
+        _handoff_from(SESSIONS[0], older, db_path, tmp_path, cwd=_repo(tmp_path, "Lantern"))
+        _handoff_from(SESSIONS[1], newer, db_path, tmp_path, cwd=_repo(tmp_path, "kite-maker"))
 
         packet = _hook(db_path, tmp_path, _start(FRESH, cwd=_folder(tmp_path, "elsewhere")))
         assert newer in packet
         assert older not in packet
-        assert re.search(r"^- me, [^:]*: TrueMark, the phone scroll\.", packet, re.M), packet
+        assert re.search(r"^- me, [^:]*: Lantern, the phone scroll\.", packet, re.M), packet
 
     def test_a_resumed_session_gets_its_own_note_wherever_it_starts(self, tmp_path):
         db_path = tmp_path / "shared.db"
-        here = _repo(tmp_path, "sanctuary")
+        here = _repo(tmp_path, "orchard")
         _handoff_from(LIGHTS, LIGHTS_NOTE, db_path, tmp_path, cwd=_repo(tmp_path, "lights"))
         _handoff_from(STEWARD, STEWARD_NOTE, db_path, tmp_path, cwd=here)
 
@@ -545,7 +545,7 @@ class TestWhereTheSessionStarts:
         db_path = tmp_path / "shared.db"
         self._lived_in(db_path)
         desk = _folder(tmp_path / "CLAUDE", "the-second-desk")
-        projects = ["TrueMark", "prompt-ghost", "mnemos", "sanctuary", "anima", "vessel", "sigil"]
+        projects = ["Lantern", "kite-maker", "mnemos", "orchard", "glasshouse", "almanac", "compass"]
         headlines = {}
         for index, name in enumerate(projects):
             if index == 3:

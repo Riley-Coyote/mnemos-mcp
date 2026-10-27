@@ -926,4 +926,5 @@ python -m py_compile mnemos/simple_runtime.py mnemos/simple_mcp.py mnemos/mcp_se
 ## License
 
 Apache-2.0: see [LICENSE](LICENSE) and [NOTICE](NOTICE). Releases before 0.5.0
-were published under the MIT License, and stay under it.
+were published under the MIT License, and stay under it; code contributed
+under it keeps its notice, in the NOTICE.

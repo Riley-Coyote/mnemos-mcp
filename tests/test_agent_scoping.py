@@ -1,7 +1,7 @@
 """Agent scope integrity: consolidation must never touch another agent's memory.
 
 Regression tests for the hardcoded-default-scope bug class:
-- connection_discovery and belief_review defaulted to agent_id="luca"
+- connection_discovery and belief_review defaulted to one hardcoded agent_id
 - softening queried engrams with the store's default scope regardless of agent
 - the daemon's blank-identity fallback made reflection derive the wrong scope
 

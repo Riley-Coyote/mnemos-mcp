@@ -33,7 +33,7 @@ ARGS = ["--agent-id", "nova", "--person-id", "riley", "--project-scope", "demo"]
 WORDS = {
     "details": (
         "The design direction for the observatory page is monochrome and near black. "
-        "Riley dislikes warm brown tones, so the ferrous amber palette is out."
+        "Riley wants no colour in it, so the ferrous amber palette is out."
     ),
     "impression": (
         "Lighthouse logs record the weather at dawn and dusk. "

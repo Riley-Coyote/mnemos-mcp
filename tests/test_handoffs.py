@@ -105,7 +105,7 @@ def test_handoffs_are_isolated_by_agent_person_and_project(tmp_path):
     scopes = [
         {"agent_id": "nova", "person_id": "riley", "project_scope": "one"},
         {"agent_id": "nova", "person_id": "alex", "project_scope": "one"},
-        {"agent_id": "luca", "person_id": "riley", "project_scope": "one"},
+        {"agent_id": "sage", "person_id": "riley", "project_scope": "one"},
         {"agent_id": "nova", "person_id": "riley", "project_scope": "two"},
     ]
     store = EngramStore(db_path)

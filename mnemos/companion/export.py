@@ -30,9 +30,8 @@ None of those has to exist. A store not yet made is said plainly, and a
 machine with no hours, no studio or no schedule gives empty lists, which the
 page reads as "no quiet hours yet" and "hours not scheduled".
 
-Ported from the log's own exporter (alive/tools/life.py in
-mnemos-engine-page), which wrote these documents to files every 45 seconds;
-here they are made on request and never leave memory.
+Ported from the log's first exporter, which wrote these documents to files
+every 45 seconds; here they are made on request and never leave memory.
 """
 
 from __future__ import annotations
