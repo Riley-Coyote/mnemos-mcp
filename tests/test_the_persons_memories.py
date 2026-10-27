@@ -181,6 +181,26 @@ def test_state_limit_and_offset_page_it_oldest_first_and_count_the_whole_scope(t
     assert pages[0] + pages[1] == oldest
 
 
+def test_the_page_reads_the_tests_schedule_on_linux_too(tmp_path, monkeypatch, os_scheduler):
+    """The log's page reads the schedulers its own way. On Linux it read the
+    real crontab in every test that built it, and the scheduler guard failed
+    them there: the first run on GitHub, 2026-10-27. Here the page believes
+    it is on Linux, with a crontab installed, and reads the tests' one."""
+    from mnemos.companion import export
+
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    _kept(rt, "Ledger line: the east pier needs measuring.")
+    rt.close()
+    os_scheduler.crontab = "0 3 * * * /usr/bin/true\n"
+    monkeypatch.setattr(export.sys, "platform", "linux")
+    monkeypatch.setattr(export.shutil, "which", lambda name: f"/usr/bin/{name}")
+
+    life, _ = Exporter.for_scope(db_path=str(db), **SCOPE).export()
+
+    assert life["schedule"] == []  # read, and it runs nothing of this memory's
+
+
 def test_the_log_and_the_command_read_the_same_rows(tmp_path, capsys):
     db = tmp_path / "memory.db"
     rt = _runtime(db)

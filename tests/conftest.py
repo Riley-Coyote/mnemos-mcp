@@ -161,6 +161,17 @@ def os_scheduler(monkeypatch):
     monkeypatch.setattr("mnemos.setup.scheduler.write_crontab", fake.write_crontab)
     monkeypatch.setattr("mnemos.setup.scheduler.launchd_job_active", fake.launchd_job_active)
     monkeypatch.setattr("mnemos.setup.scheduler.systemd_timer_active", fake.systemd_timer_active)
+    # The log's page reads the same schedulers its own way, with time limits
+    # of its own (mnemos.companion.export); on Linux, every test that built it
+    # read the real crontab until these went to the fake too.
+    from mnemos.companion import export
+
+    fake.real.update({name: getattr(export, name) for name in (
+        "_crontab", "_launchd_loaded", "_systemd_active",
+    )})
+    monkeypatch.setattr(export, "_crontab", fake.read_crontab)
+    monkeypatch.setattr(export, "_launchd_loaded", lambda label: label in fake.loaded)
+    monkeypatch.setattr(export, "_systemd_active", lambda timer: timer in fake.enabled)
     # Anything that still starts a scheduler's own command fails the test
     # rather than reaching the machine.
     import subprocess
