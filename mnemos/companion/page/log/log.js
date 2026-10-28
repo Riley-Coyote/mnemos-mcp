@@ -1,14 +1,15 @@
 /* The log. Reads ../data/life.json (small, every 20 seconds) and ../data/memories.json (when the memory changes), both
  * made read-only on request by `mnemos log` for whichever mind it was started with. Nothing here writes anywhere. */
 
-import { Room, parseRoute } from '../shared/room.js';
-import { esc, at, ago, clock, dayName, plural, question, firstLine, temperature, tempWord, KIND, ASK, ASK_ORDER, person, sameModel, modelName } from '../shared/words.js';
+import { Room, parseRoute, placeOf } from '../shared/room.js';
+import { esc, at, ago, clock, dayName, plural, temperature, tempWord, KIND, sameModel, modelName } from '../shared/words.js';
 
 const $ = (id) => document.getElementById(id);
 const nav = document.querySelector('.nav');
 const EVERY = 20_000;
 const STALE_AFTER = 3 * 60_000;              // every read is fresh; three minutes without one means `mnemos log` stopped
-const TABS = ['log', 'memories', 'beliefs', 'questions', 'journal', 'notes', 'hours'];
+const TABS = ['you', 'log', 'memories'];        // the three places: for you, its life, its memory
+const ROUTES = ['you', 'notes', 'log', 'journal', 'hours', 'memories', 'beliefs', 'questions', 'desk'];   // every view, for links
 
 let life = null, mems = [], byId = new Map(), version = null, room = null;
 
@@ -49,42 +50,20 @@ function head() {
   const el = $('verify'); el.innerHTML = v.join(''); el.classList.toggle('stale', stale);
 }
 
-/* ---------- the margin: its state beside its story ---------- */
+/* ---------- the margin: its state beside its life ---------- */
 
-const notesFor = () => life.notes.filter((n) => n.author === 'agent');
-const practiceNotes = () => life.hours.filter((h) => h.practice && h.notes.length);
-const carrying = () => {
-  const l = life.handoffs[0];
-  if (!l) return null;
-  // its notes often open with a signature line ("Left by …, date, session …"); show what comes after it
-  const lines = l.text.split('\n').filter((x) => x.trim());
-  return { ...l, lead: lines.length > 1 && /^left by /i.test(lines[0]) ? lines.slice(1).join('\n') : l.text };
-};
 const madeLately = () => life.studio.filter((f) => f.picture).slice(0, 3);
 const when = (iso) => { const d = at(iso); return `${dayName(d)}, ${clock(d)}`; };
 
+/* the margin, beside its life: what it believes, and what it made lately. What it says to you is For you; its
+   memory's questions and its notes to itself are in its memory, at its desk. */
 function marginHTML() {
-  const who = life.identity, Q = life.questions, notes = notesFor(), practice = practiceNotes();
   const head = (label, link) => `<div class="m-h"><span class="label">${label}</span>${link || ''}</div>`;
   const go = (tab, label) => `<button class="textlink" type="button" data-goto="${tab}">${label}</button>`;
   const panel = (attrs, inner) => `<section class="panel" ${attrs}>${inner}</section>`;
   const parts = [];
-  parts.push(panel('data-for="notes"', head(who.person ? `For ${esc(who.person)}` : 'For you', notes.length ? go('notes', `All ${notes.length} →`) : '')
-    + (notes.length ? notes.slice(0, 2).map((n, i) => `<div class="m-item"><div class="text note${i ? '' : ' voice'}">${esc(n.text)}</div><div class="by">${when(n.at)} · ${n.read ? 'read' : 'not yet read'}</div></div>`).join('')
-      : `<p class="m-empty">None yet: it leaves one only when it would say it if ${esc(person(who))} walked in.${practice.length ? ` ${practice.length === 1 ? 'One from practice is' : `${practice.length} from practice are`} in the log.` : ''}</p>`)));
   if (life.beliefs.length) parts.push(panel('data-for="beliefs"', head('Beliefs', go('beliefs', `All ${life.beliefs.length} →`))
     + life.beliefs.map((b) => `<div class="m-item"><div class="text two">${esc(b.text)}</div><div class="strength"><span class="held thin" aria-hidden="true"><i style="width:${Math.round(b.confidence * 100)}%"></i></span><span>held at ${Math.round(b.confidence * 100)}%</span></div></div>`).join('')));
-  if (Q.open || Q.answered.length) {
-    const kinds = Object.entries(Q.byKind).sort((a, b) => (ASK_ORDER[a[0]] ?? 9) - (ASK_ORDER[b[0]] ?? 9));
-    const latest = Q.answered[0];
-    parts.push(panel('data-for="questions"', head('Its memory asks', go('questions', `All ${Q.open.toLocaleString('en-US')} →`))
-      + `<div class="m-counts">${kinds.map(([k, n]) => `<button class="m-count" type="button" data-qkind="${k}" aria-label="${n} questions: ${(ASK[k] || [k])[0]}"><span>${(ASK[k] || [k])[0]}</span><b>${n.toLocaleString('en-US')}</b></button>`).join('')}</div>`
-      + (latest ? `<div class="m-item"><div class="q">Its latest answer · ${when(latest.at)}</div><div class="ask">${esc(question(latest.prompt))}</div><div class="a">${esc(latest.answer)}</div></div>` : '')));
-  }
-  const c = carrying();
-  if (c) parts.push(panel('', head('Carrying forward')
-    + `<div class="m-item"><div class="q">The note it left itself · ${when(c.at)}</div><div class="lead" style="margin-top:4px">${esc(c.lead)}</div>
-      <details data-key="carrying"><summary>Read it</summary><div class="plain">${esc(c.text)}</div></details></div>`));
   const made = madeLately();
   if (made.length) parts.push(panel('', head('Made lately')
     + `<div class="m-thumbs">${made.map((f) => `<button class="thumb" type="button" data-pic="${esc(f.picture)}" data-cap="${esc(f.path)}" aria-label="Open ${esc(f.path)}"><img src="${esc(f.picture)}" alt="" loading="lazy"></button>`).join('')}</div>
@@ -92,24 +71,21 @@ function marginHTML() {
   return parts.join('');
 }
 
+/* narrow, beside a chat: the margin as a short summary at the top of its life */
 function glanceHTML() {
-  const who = life.identity, Q = life.questions, notes = notesFor(), unread = notes.filter((n) => !n.read).length;
   const line = (attrs, a, b) => `<button class="g" type="button" ${attrs}><span>${a}</span><span>${b}</span></button>`;
-  const rows = [line('data-goto="notes"', who.person ? `For ${esc(who.person)}` : 'For you', notes.length ? (unread ? `${unread} not yet read` : plural(notes.length, 'note')) : 'no notes yet')];
+  const rows = [];
   if (life.beliefs.length) {
     const held = life.beliefs.map((b) => Math.round(b.confidence * 100)), lo = Math.min(...held), hi = Math.max(...held);
     rows.push(line('data-goto="beliefs"', 'Beliefs', `${life.beliefs.length}, ${held.length === 1 ? 'held' : lo === hi ? 'each held' : 'held'} at ${lo === hi ? `${lo}%` : `${lo} to ${hi}%`}`));
   }
-  if (Q.open) rows.push(line('data-goto="questions"', 'What its memory asks', `${Q.open.toLocaleString('en-US')} open`));
   const made = madeLately()[0];
   if (made) rows.push(line(`data-pic="${esc(made.picture)}" data-cap="${esc(made.path)}"`, 'Made lately', esc(made.path.split('/').pop())));
   return rows.join('');
 }
 
 function margin() {
-  const m = $('margin'), keep = m.querySelector('details[open]') ? true : false;
-  m.innerHTML = marginHTML();
-  if (keep) m.querySelector('details[data-key="carrying"]')?.setAttribute('open', '');
+  $('margin').innerHTML = marginHTML();
   $('glance').innerHTML = glanceHTML();
   fit();
 }
@@ -132,7 +108,8 @@ function missing() {
 /* ---------- the track: its marker glides to the open tab; the content trades places as it goes ---------- */
 
 const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
-function placeMarker(key, glide) {
+function placeMarker(view, glide) {
+  const key = placeOf(view);                   // the marker sits on the place a view belongs to
   const track = $('track'), btn = $('tabs').querySelector(`[data-tab="${key}"]`), marker = $('marker');
   if (!btn) return;
   marker.classList.toggle('still', !glide || reduce);
@@ -146,10 +123,11 @@ const arrived = () => { if (then) { const f = then; then = null; requestAnimatio
 function transition(apply, from, to) {
   const body = $('body');
   if (reduce) { apply(); arrived(); return; }
-  const dir = from === to ? 0 : Math.sign(TABS.indexOf(to) - TABS.indexOf(from));
+  const order = (v) => ROUTES.indexOf(v === 'notes' ? 'you' : v);
+  const dir = from === to ? 0 : Math.sign(order(to) - order(from));
   document.documentElement.style.setProperty('--dir', String(dir));
-  if (from !== to) {
-    for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === to));
+  if (placeOf(from) !== placeOf(to)) {
+    for (const b of $('tabs').querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === placeOf(to)));
     placeMarker(to, true);
   }
   clearTimeout(leaving);                       // a second click mid-way simply becomes the destination
@@ -192,7 +170,14 @@ function start() {
     tabsEl: $('tabs'), bodyEl: $('body'), tabs: TABS, sticky: false,
     ctx: () => ({ who: life.identity, life, mems, byId }),
     hooks: {
-      route: (hash) => { history.replaceState(null, '', hash); document.body.dataset.tab = room.s.tab; placeMarker(room.s.tab, true); },
+      route: (hash) => { history.replaceState(null, '', hash); mark(); placeMarker(room.s.tab, true); },
+      // what you write on the page: a reply or a note, sent to `mnemos log` (and on to the memory) as yours
+      send: async (request) => {
+        const r = await fetch('../act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) });
+        const answer = await r.json().catch(() => ({ error: 'It couldn’t be sent just now.' }));
+        if (answer.result) await look();
+        return answer;
+      },
       transition,
       picture: (src, cap) => { $('full-img').src = src; $('full-img').alt = cap; $('full-cap').textContent = cap; $('full').showModal(); },
       hour: (id) => {
@@ -201,9 +186,9 @@ function start() {
       },
     },
   });
-  const r = parseRoute(location.hash, TABS);
-  room.s.tab = r?.tab || 'log'; room.s.memory = r?.memory && byId.has(r.memory) ? r.memory : null;
-  document.body.dataset.tab = room.s.tab;
+  const r = parseRoute(location.hash, ROUTES);
+  room.s.tab = r?.tab === 'notes' ? 'you' : r?.tab || 'you'; room.s.memory = r?.memory && byId.has(r.memory) ? r.memory : null;
+  mark();
   room.render();
   margin();
   placeMarker(room.s.tab, false);
@@ -211,9 +196,12 @@ function start() {
   addEventListener('resize', () => placeMarker(room.s.tab, false));
 }
 
+// the page knows which place it's in: the margin sits beside its life only
+function mark() { document.body.dataset.tab = room.s.tab; document.body.dataset.place = placeOf(room.s.tab); }
+
 addEventListener('hashchange', () => {
-  const r = parseRoute(location.hash, TABS);
-  if (room && r) room.go({ tab: r.tab || room.s.tab, memory: r.memory || null });
+  const r = parseRoute(location.hash, ROUTES);
+  if (room && r) room.go({ tab: r.tab === 'notes' ? 'you' : r.tab || room.s.tab, memory: r.memory || null });
 });
 addEventListener('keydown', (e) => {
   if (e.key === '/' && !/INPUT|TEXTAREA/.test(document.activeElement?.tagName || '') && room) {

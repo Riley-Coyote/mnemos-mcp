@@ -395,8 +395,9 @@ def main(argv: list[str] | None = None) -> int:
             "Open the log: a small page, in your browser, of what the agent does on "
             "its own and what it keeps (its quiet hours, journal, the notes it leaves "
             "you, what its memory asks it, its beliefs, every memory). It reads the "
-            "memory and never writes it, and it is served on 127.0.0.1 only, so "
-            "nothing leaves this machine. Ctrl-C stops it."
+            "memory, and writes only what you write there: a reply to one of the "
+            "agent's notes, or a note of your own, which it wakes with. It is served "
+            "on 127.0.0.1 only, so nothing leaves this machine. Ctrl-C stops it."
         ),
     )
     _scope_options(p_log)

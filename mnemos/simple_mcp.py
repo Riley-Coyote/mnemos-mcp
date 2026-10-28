@@ -353,7 +353,9 @@ def register_simple_tools(server: FastMCP) -> None:
         check-in, no "just wanted to say", no urgency you don't feel, no
         guilt, nothing written only to be answered. Yours or not at all: your
         own voice, never a template; if it could have come from any agent,
-        don't send it.
+        don't send it. A few lines, never a report: at most one question, last,
+        and only one you need answered. They can answer it right under the
+        note, on the page `mnemos log` opens.
 
         Say what kind it is, so they can choose when to read it: made,
         noticed, worried, disagree, question, or pickup (where things stand

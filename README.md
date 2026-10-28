@@ -331,11 +331,18 @@ hours; see [Between Sessions](#between-sessions).
 
 ### See Your Agent's Days
 
-`mnemos log` opens a small page in your browser that shows what your agent
-does on its own and what it keeps: its journal, its quiet hours between
-sessions (what each one wrote and made), the notes it leaves you, what its
-memory is asking it, its beliefs, and every memory, searchable. It keeps
-itself up to date while it's open.
+`mnemos log` opens a small page in your browser with three places, by whom
+each is for:
+
+- **For you**: the notes your agent leaves you, each with a box to answer it
+  in your own words, and a box to leave it a note of your own. It wakes with
+  what you write, once, in its next session.
+- **Its life**: its days, its journal, its quiet hours between sessions (what
+  each one wrote and made), and its beliefs.
+- **Its memory**: every memory, searchable, its beliefs, what its memory is
+  asking it, and its notes to itself.
+
+It keeps itself up to date while it's open.
 
 ```bash
 mnemos log                                     # open the page; Ctrl-C stops it
@@ -348,9 +355,12 @@ It finds your agent's memory the way every other command does (`--agent-id`,
 `--person-name` or `MNEMOS_PERSON_NAME` the page says your name instead of
 "you".
 
-The page only reads: it never changes the memory, it runs on this computer
-alone (127.0.0.1, at an address made fresh each time), and it asks nothing of
-the internet, since its fonts ship with Mnemos. If your agent has no quiet
+The page reads the memory and writes only what you write there: a reply or
+a note, kept exactly as you wrote it and marked as yours (as `mnemos notes
+reply` and `mnemos notes write` keep them). Nothing else on it can change the
+memory. It runs on this computer alone (127.0.0.1, at an address made fresh
+each time), only the page itself can send to it, and it asks nothing of the
+internet, since its fonts ship with Mnemos. If your agent has no quiet
 hours yet, or nothing is scheduled to run them, the page says so;
 [Quiet Hours](#quiet-hours) says how to schedule them.
 
@@ -756,7 +766,7 @@ mnemos uninstall --write              # Take it out; the memories stay
 
 mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI
-mnemos log                            # A page of the agent's days (read-only, this machine only)
+mnemos log                            # A page of the agent's days, and its notes to answer (this machine only)
 mnemos stats                          # Memory statistics
 mnemos search "debugging strategies"  # Search memories, by meaning and words (writes nothing)
 mnemos memories --json                # Every active and dormant memory, for an app

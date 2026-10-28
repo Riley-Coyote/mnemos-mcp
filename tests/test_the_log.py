@@ -1,5 +1,5 @@
-"""`mnemos log`: a small page to watch an agent's days, read-only, on this
-machine only.
+"""`mnemos log`: a small page to watch an agent's days, on this machine only. It
+reads the memory, and writes only the person's own words left on it.
 
 What these tests hold:
 
@@ -15,6 +15,8 @@ What these tests hold:
    studio.
 6. The page asks nothing of the network, and ships inside the package with its
    fonts' licenses.
+7. What it writes: a reply or a note in the person's own words, from the page
+   itself only, and nothing else.
 
 No test reaches a real network, a real scheduler or a real ~/.mnemos.
 """
@@ -515,3 +517,86 @@ def test_every_font_ships_with_its_license():
         assert "SIL Open Font License" in license_text or "SIL OPEN FONT LICENSE" in license_text, family
     for family in ("Inter", "Inter Tight", "Silkscreen"):
         assert f'font-family:"{family}"' in css
+
+
+# ---------- 7. It writes one thing: the person's own words ----------
+# A reply to one of the agent's notes, or a note of their own, is kept as theirs, and the agent wakes with it
+# (`mnemos notes` writes the same). Only the page itself can send one, and nothing else can be written through it.
+
+def post(server, body, *, origin="page", kind="application/json", path=None, host=None):
+    connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
+    data = body if isinstance(body, bytes) else json.dumps(body).encode("utf-8")
+    headers = {"Host": host or f"127.0.0.1:{server.port}", "Content-Type": kind}
+    if origin == "page":
+        headers["Origin"] = f"http://127.0.0.1:{server.port}"
+    elif origin:
+        headers["Origin"] = origin
+    try:
+        connection.request("POST", path or f"/{server.token}/act", body=data, headers=headers)
+        response = connection.getresponse()
+        return response.status, json.loads(response.read() or b"null")
+    finally:
+        connection.close()
+
+
+def agents_note(server):
+    life = json.loads(server.documents()[0])
+    [note] = [n for n in life["notes"] if n["author"] == "agent"]
+    return note
+
+
+def test_a_reply_from_the_page_is_kept_as_the_persons_and_shows_at_once(mind):
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        note = agents_note(server)
+        status, answer = post(server, {"command": "reply", "note_id": note["id"], "text": "Yes, keep it that way."})
+        assert status == 200, answer
+        assert answer["result"]["text"] == "Yes, keep it that way."
+        assert answer["result"]["author"] == "person"
+        assert answer["result"]["in_reply_to"] == note["id"]
+
+        life = json.loads(server.documents()[0])        # read again, not the copy from before the reply
+        [reply] = [n for n in life["notes"] if n["author"] == "person"]
+        assert (reply["text"], reply["replyTo"]) == ("Yes, keep it that way.", note["id"])
+        assert agents_note(server)["read"]              # answering a note is reading it
+
+
+def test_a_note_of_the_persons_own_is_kept_too(mind):
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        status, answer = post(server, {"command": "note", "text": "Take tomorrow slowly."})
+        assert status == 200, answer
+        assert (answer["result"]["author"], answer["result"]["text"]) == ("person", "Take tomorrow slowly.")
+
+
+def test_nothing_but_the_page_itself_can_write(mind):
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        note = agents_note(server)
+        reply = {"command": "reply", "note_id": note["id"], "text": "From somewhere else."}
+        for origin in ("", "https://example.com", "http://127.0.0.1:1", "null"):
+            assert post(server, reply, origin=origin)[0] == 403, origin
+        assert post(server, reply, host="example.com")[0] == 403                          # another site's name
+        assert post(server, reply, path="/not-the-token/act")[0] == 404                  # not this run's page
+        assert post(server, reply, kind="text/plain")[0] == 415                          # a plain form can't send it
+        assert post(server, b"x" * (33 * 1024))[0] == 413
+        assert post(server, b"not json")[0] == 400
+        life = json.loads(server.documents()[0])
+        assert [n for n in life["notes"] if n["author"] == "person"] == []
+        assert not agents_note(server)["read"]
+
+
+def test_the_page_can_write_nothing_but_a_reply_or_a_note(mind):
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        memories = json.loads(server.documents()[1])["memories"]
+        target = memories[0]["id"]
+        for request in ({"command": "forget", "memory_id": target}, {"command": "correct", "memory_id": target, "text": "x"},
+                        {"command": "search", "query": "ferry"}, {"command": "memories"}, {"text": "no command"}):
+            status, answer = post(server, request)
+            assert status == 400 and "nothing else" in answer["error"], request
+        assert [m["id"] for m in json.loads(server.documents()[1])["memories"]] == [m["id"] for m in memories]
+
+
+def test_a_reply_says_why_when_it_cant_be_kept(mind):
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        status, answer = post(server, {"command": "reply", "note_id": "no-such-note", "text": "Hello?"})
+        assert status == 400 and answer["error"].startswith("Nothing saved"), answer
+        status, answer = post(server, {"command": "note", "text": "   "})
+        assert status == 400 and answer["error"], answer

@@ -203,6 +203,46 @@
 .ev summary:focus-visible{outline:none;color:var(--ink-1);border-bottom-color:var(--focus)}
 .ev details .text.plain{max-width:68ch;margin-top:var(--s3);padding:14px 16px;border-radius:var(--r-s);background:var(--card);font:400 var(--t-small)/1.6 var(--sans);color:var(--ink-2)}
 .ev .rows{margin-top:var(--s3)}
+/* the views of a place: a quiet row beneath the places */
+.subnav{display:flex;flex-wrap:wrap;gap:var(--s1) var(--s5);margin:var(--s3) 0 var(--s4)}
+.subnav .n{color:var(--ink-4);font-variant-numeric:tabular-nums}
+
+/* for you: conversations, each its own object, oldest word first; what you write sits under the word it answers */
+.thread{padding:var(--s5);border-radius:var(--r);background:linear-gradient(180deg,var(--wash),transparent 45%),var(--card);box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
+.thread + .thread{margin-top:var(--s3)}
+.turn .meta{align-items:center}
+.turn .meta .k{color:var(--ink-2)}
+.turn .text{margin-top:var(--s2);max-width:66ch;font:400 var(--t-read)/1.65 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
+.turn.later{margin-top:var(--s5);padding-left:var(--s4)}            /* a reply sits a step in, under what it answers */
+.unread{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--signal)}   /* blue: something for you to do */
+.reply-open{all:unset;cursor:pointer;display:inline-block;margin-top:var(--s4);color:var(--ink-3);font-size:var(--t-small);
+  border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.reply-open:hover{color:var(--ink-1)}
+.reply-open:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.compose{margin-top:var(--s4)}
+.compose.new{margin:var(--s4) 0 var(--s5)}
+.field{display:block;width:100%;min-height:72px;resize:vertical;padding:12px 14px;border-radius:var(--r-s);border:1px solid transparent;
+  background:var(--card-in);color:var(--ink-1);font:400 var(--t-read)/1.55 var(--sans);transition:border-color var(--quick)}
+.compose.new .field{background:var(--card);box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
+.field::placeholder{color:var(--ink-4)}
+.field:focus{outline:none;border-color:var(--focus)}
+.acts{display:flex;align-items:center;justify-content:flex-end;gap:var(--s4);margin-top:var(--s2)}
+.acts .hint{margin-right:auto;color:var(--ink-4);font-size:var(--t-micro)}
+.acts .hint.flag{color:var(--ink-1)}
+.cancel{all:unset;cursor:pointer;color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick)}
+.cancel:hover{color:var(--ink-1)}
+.cancel:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+/* Send: the one thing this place is for, a capsule in the ink's own colour */
+.send{all:unset;cursor:pointer;padding:8px 18px;border-radius:999px;background:var(--ink-1);color:var(--floor);font:500 var(--t-small)/1.2 var(--sans);
+  transition:opacity var(--quick),transform var(--quick)}
+.send:hover{opacity:.88}
+.send:active{transform:scale(.97)}
+.send:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
+.send[disabled]{cursor:default;opacity:.3;transform:none}
+.hour-note{all:unset;cursor:pointer;display:inline-block;margin-top:var(--s4);color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
+.hour-note:hover{color:var(--ink-1)}
+.hour-note:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+
 /* its notes to itself: working notes, one line each, opened in place */
 .lefts{list-style:none;display:grid;gap:2px}
 .lefts summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:56px minmax(0,1fr);gap:var(--s3);align-items:baseline;padding:3px 0;
@@ -226,7 +266,8 @@
   .ev + .ev::before{left:0}
   .ev.hour .t{padding-top:0}
   .ev.hour .b{padding:var(--s4)}
-  .belief,.jentry{padding:var(--s4)}
+  .belief,.jentry,.thread{padding:var(--s4)}
+  .turn.later{padding-left:var(--s3)}
   .thumb{width:72px;height:72px}
 }
-@media (prefers-reduced-motion:reduce){.tab,.chip,.rowb,.kindb,.thumb,.thumb img,.fold,.back,.textlink,.search{transition:none}}
+@media (prefers-reduced-motion:reduce){.tab,.chip,.rowb,.kindb,.thumb,.thumb img,.fold,.back,.textlink,.search,.send,.cancel,.reply-open,.field{transition:none}}

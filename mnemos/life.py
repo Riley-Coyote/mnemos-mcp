@@ -81,7 +81,8 @@ BOOTSTRAP = {
     ),
     "ours": (
         "This hour is for the day's work. What happened since the last one is below. "
-        "You may leave the person a note about it, or nothing.\n\n"
+        "You may leave the person a note about it, or nothing: a few lines, with at most "
+        "one question, which they can answer right under it.\n\n"
         "If you'd like to wake to your own words next time, write them in "
         "words/our-hour.md in this folder."
     ),

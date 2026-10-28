@@ -10,7 +10,14 @@ It listens on 127.0.0.1 only, on a port the system picks, under a path made
 fresh each run, and answers only requests addressed to 127.0.0.1 or
 localhost, so neither another person on this machine nor a website in the
 browser can read the memory through it. Nothing it serves leaves this
-machine, and it writes nothing anywhere.
+machine.
+
+It writes one thing: the person's own words, left on the page. A reply to
+one of the agent's notes, or a note of their own, goes through the commands
+`mnemos notes reply` and `mnemos notes write` use (``interface.person``),
+kept exactly as given and marked as theirs, and the agent wakes with it.
+Only the page itself can send one: a request must come from the page's own
+address, as JSON, to the run's own path, and anything else is refused.
 """
 
 from __future__ import annotations
@@ -36,6 +43,9 @@ from .export import MOST_BYTES, Exporter
 logger = logging.getLogger(__name__)
 
 CACHE_SECONDS = 5.0
+# What the page may write: only the person's own words.
+ACTS = ("reply", "note")
+MOST_ACT_BYTES = 32 * 1024
 TYPES = {
     ".html": "text/html; charset=utf-8",
     ".js": "text/javascript; charset=utf-8",
@@ -107,6 +117,26 @@ class LogServer(ThreadingHTTPServer):
     def url(self) -> str:
         return f"http://127.0.0.1:{self.port}/{self.token}/log/"
 
+    def origins(self) -> set[str]:
+        """The page's own address, as a browser names it on a request it sends."""
+        return {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}
+
+    def act(self, request: dict) -> dict:
+        """Write the person's own words: a reply or a note, as `mnemos notes`
+        writes them, answered as ``mnemos interface`` answers (``{"result": the
+        note}`` or ``{"error": one plain sentence}``). The page's documents are
+        read again on its next look, so what was written shows at once."""
+        from ..interface.person import Interface  # the writing runtime, only when someone writes
+
+        scope = self.exporter.scope
+        interface = Interface(db_path=scope.db_path, agent_id=scope.agent_id,
+                              person_id=scope.person_id, project_scope=scope.project_scope)
+        answer = interface.answer(json.dumps(request))
+        answer.pop("id", None)
+        with self._lock:
+            self._documents = None
+        return answer
+
     def addressed_here(self, host: str) -> bool:
         """Whether a request names this server by the loopback address or
         localhost, as the page always does; anything else (another site whose
@@ -138,6 +168,34 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self) -> None:
         self._answer(body=False)
+
+    def do_POST(self) -> None:
+        """The person's own words, from the page: a reply or a note, nothing else."""
+        server = self.server
+        if not server.addressed_here(self.headers.get("Host", "")):
+            return self._json(HTTPStatus.FORBIDDEN, {"error": "The log answers only on 127.0.0.1."})
+        if urlsplit(self.path).path != f"/{server.token}/act":
+            return self._json(HTTPStatus.NOT_FOUND, {"error": "Not here."})
+        # A browser names the page a request comes from, and a site elsewhere can't send JSON here
+        # without asking first, which this never answers: so only the log's own page writes.
+        if self.headers.get("Origin", "") not in server.origins():
+            return self._json(HTTPStatus.FORBIDDEN, {"error": "Only the log's own page can write here."})
+        if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
+            return self._json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "A request is JSON."})
+        try:
+            length = int(self.headers.get("Content-Length", ""))
+        except ValueError:
+            return self._json(HTTPStatus.LENGTH_REQUIRED, {"error": "A request says how long it is."})
+        if length > MOST_ACT_BYTES:
+            return self._json(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, {"error": "That's longer than a note can be here."})
+        try:
+            request = json.loads(self.rfile.read(length) or b"null")
+        except ValueError:
+            request = None
+        if not isinstance(request, dict) or request.get("command") not in ACTS:
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": "The page can leave a reply or a note, and nothing else."})
+        answer = server.act(request)
+        return self._json(HTTPStatus.OK if "result" in answer else HTTPStatus.BAD_REQUEST, answer)
 
     def log_message(self, format: str, *args: object) -> None:
         # One line per request on stderr would bury the address; keep them for debugging.
@@ -198,6 +256,10 @@ class _Handler(BaseHTTPRequestHandler):
         return self._send(HTTPStatus.OK, content, kind, body,
                           cache="no-cache", **{"Content-Security-Policy": PICTURE_POLICY})
 
+    def _json(self, status: HTTPStatus, value: dict) -> None:
+        self._send(status, json.dumps(value, ensure_ascii=False).encode("utf-8"),
+                   "application/json; charset=utf-8", True)
+
     def _redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.FOUND)
         self.send_header("Location", location)
@@ -244,7 +306,8 @@ def serve(*, db_path: str | None = None, agent_id: str | None = None, person_id:
         print(f"There's no memory at {who['store']} for {who['agentId']} yet; the page says so. "
               "If your agent keeps its memory under another name, start the log with --agent-id.",
               file=out, flush=True)
-    print("Read-only, on this machine only. Ctrl-C stops it.", file=out, flush=True)
+    print("On this machine only. It writes nothing but the replies and notes you leave. Ctrl-C stops it.",
+          file=out, flush=True)
     if open_browser:
         try:
             webbrowser.open(server.url)
