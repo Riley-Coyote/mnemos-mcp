@@ -74,9 +74,11 @@ def runtime_on(tmp_path, monkeypatch):
         simple_mcp, "_runtime_kwargs", {"db_path": str(tmp_path / "memory.db"), **SCOPE}
     )
     monkeypatch.setattr(mcp_server, "_config", None)
+    monkeypatch.setattr(simple_mcp, "_page", None)
     yield
     if simple_mcp._runtime is not None:
         simple_mcp._runtime.close()
+    simple_mcp._close_page()
 
 
 class _Answerer:
@@ -180,6 +182,7 @@ def test_no_simple_tool_waits_on_advanced_setup(runtime_on):
         "mnemos_reflect": {"target_id": "engram_NOTREAL", "text": "Nothing to add."},
         "mnemos_introduce": {"agent_model": MODEL},
         "mnemos_health": {},
+        "mnemos_page": {},
     }
     assert set(calls) == set(SIMPLE_TOOL_NAMES)
 

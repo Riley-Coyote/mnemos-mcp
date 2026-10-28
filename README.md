@@ -121,7 +121,7 @@ document ingestion, Mnemos is not that and is not trying to be.
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
 | The agent's quiet hours, on your Claude plan | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
 
-Start with **Simple MCP Mode**. It is the product: eleven tools, and the default.
+Start with **Simple MCP Mode**. It is the product: twelve tools, and the default.
 
 Advanced MCP Mode (`mnemos serve --mode advanced`) is optional: simple mode,
 unchanged, plus tools for inspecting and administering memory. It's less tested
@@ -178,7 +178,7 @@ Simple mode is the default and safest path for most agents.
 mnemos serve
 ```
 
-Simple mode exposes eleven user-facing tools:
+Simple mode exposes twelve user-facing tools:
 
 | Tool | Purpose |
 |---|---|
@@ -193,6 +193,7 @@ Simple mode exposes eleven user-facing tools:
 | `mnemos_health` | Human-relayable health card: store location and size, counts, delivery state, last handoff, maintenance, and onboarding. |
 | `mnemos_journal` | The agent's own journal, in its own words: written when something is there, read back when called with no text. Stored exactly as written and signed; nothing else writes, summarizes or decays it. |
 | `mnemos_note` | Leave the human a note they read when they choose, under a short charter: a ceiling, not a quota; the room test; never engagement. Their reply, in their own words, comes back once in the next packet. |
+| `mnemos_page` | Open the agent's page for the human, on this machine only: its notes to them, each with a place to answer, and its days and memory (the page `mnemos log` opens). It serves from the agent's own MCP server until the session ends, so an agent with no terminal can open it too. |
 
 Agents do not need to pass tags, memory kinds, confidence, source types, or
 agent IDs. Mnemos resolves scope once from CLI flags, environment, config, and
@@ -342,7 +343,12 @@ each is for:
 - **Its memory**: every memory, searchable, its beliefs, what its memory is
   asking it, and its notes to itself.
 
-It keeps itself up to date while it's open.
+It keeps itself up to date while it's open. Your agent can open it for you:
+ask it. It does that with `mnemos_page`, which serves the same page from the
+agent's own MCP server until the session ends, so it works where the agent has
+no terminal too, and it gives you the link or opens it in its own browser
+pane. When a note of the agent's is waiting for you, its next session wakes
+knowing, once, so it can mention it if it fits.
 
 ```bash
 mnemos log                                     # open the page; Ctrl-C stops it
@@ -355,10 +361,11 @@ It finds your agent's memory the way every other command does (`--agent-id`,
 `--person-name` or `MNEMOS_PERSON_NAME` the page says your name instead of
 "you".
 
-The page reads the memory and writes only what you write there: a reply or
+The page reads the memory and writes only what you write there, a reply or
 a note, kept exactly as you wrote it and marked as yours (as `mnemos notes
-reply` and `mnemos notes write` keep them). Nothing else on it can change the
-memory. It runs on this computer alone (127.0.0.1, at an address made fresh
+reply` and `mnemos notes write` keep them), and which of the agent's notes
+you've read: one counts as read once it has stayed on your screen a moment.
+Nothing else on it can change the memory. It runs on this computer alone (127.0.0.1, at an address made fresh
 each time), only the page itself can send to it, and it asks nothing of the
 internet, since its fonts ship with Mnemos. If your agent has no quiet
 hours yet, or nothing is scheduled to run them, the page says so;
@@ -412,7 +419,10 @@ mnemos interface                          # all of these for an app, one JSON li
   the shape changed. Only your own commands write as you: no tool the agent
   calls can, and in an agent's own shell (`CLAUDECODE` or `AI_AGENT` set)
   `notes write` and `notes reply` refuse and save nothing, rather than write
-  as the agent the way `remember`, `correct` and `forget` do.
+  as the agent the way `remember`, `correct` and `forget` do. Reading the
+  notes at a terminal marks the agent's read, and the page marks one once it
+  has been on your screen; in an agent's own shell `mnemos notes` marks
+  nothing, since the agent reading them isn't you.
 - **`mnemos interface`** is one process an app keeps open. Each line it reads
   is a request, `{"id": 1, "command": "search", "query": "the ferry"}`, for
   `memories` (`state`, `limit`, `offset`), `search` (`query`, `max_results`),

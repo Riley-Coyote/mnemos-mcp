@@ -23,7 +23,7 @@ Commands:
     mnemos notes [--unread]      Read the agent's notes to you
     mnemos notes reply ID TEXT   Reply to one of them, in your own words
     mnemos notes write TEXT      Leave the agent a note of your own
-    mnemos log [--no-open]       A page to watch the agent's days (read-only, this machine only)
+    mnemos log [--no-open]       A page of the agent's days, and its notes to answer (this machine only)
     mnemos hermes install        Install Mnemos for Hermes Agent
     mnemos hermes quickstart     Safely install Mnemos for Hermes Agent
 """
@@ -395,9 +395,10 @@ def main(argv: list[str] | None = None) -> int:
             "Open the log: a small page, in your browser, of what the agent does on "
             "its own and what it keeps (its quiet hours, journal, the notes it leaves "
             "you, what its memory asks it, its beliefs, every memory). It reads the "
-            "memory, and writes only what you write there: a reply to one of the "
-            "agent's notes, or a note of your own, which it wakes with. It is served "
-            "on 127.0.0.1 only, so nothing leaves this machine. Ctrl-C stops it."
+            "memory, and writes only what you write there, a reply to one of the "
+            "agent's notes or a note of your own, which it wakes with, and which of its "
+            "notes you've read. It is served on 127.0.0.1 only, so nothing leaves this "
+            "machine. Ctrl-C stops it."
         ),
     )
     _scope_options(p_log)
@@ -2772,6 +2773,7 @@ def _cmd_journal(args: argparse.Namespace) -> int:
 def _cmd_notes(args: argparse.Namespace) -> int:
     """The notes the agent left you, your replies and your own notes: list
     them, reply, or write one."""
+    from .authorship import run_by_agent
     from .simple_runtime import current_hour
 
     if getattr(args, "notes_command", None) == "reply":
@@ -2795,9 +2797,11 @@ def _cmd_notes(args: argparse.Namespace) -> int:
             print()
         _print_note(note)
     # Reading them is what makes them read; a pass of the agent's own hours has
-    # no one in the room to have read anything.
+    # no one in the room to have read anything, and an agent's own shell is the
+    # agent reading its notes, not the person: marked read there, they left the
+    # person's unread before the person ever saw them.
     unread_ids = [note["id"] for note in notes if note["author"] == "agent" and not note["read_at"]]
-    if unread_ids and not current_hour():
+    if unread_ids and not current_hour() and not run_by_agent():
         # Bookkeeping: they were shown, and a lock held by another process
         # must not make the listing look as though it failed.
         try:

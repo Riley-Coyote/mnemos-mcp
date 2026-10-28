@@ -1272,6 +1272,28 @@ def test_nothing_in_an_hour_marks_a_note_read(tmp_path, capsys, monkeypatch):
     assert _rows(db, "SELECT read_at IS NOT NULL AS read FROM notes") == [{"read": 1}]
 
 
+@pytest.mark.parametrize("marker", ["CLAUDECODE", "AI_AGENT"])
+def test_an_agent_reading_its_notes_in_its_own_shell_leaves_them_unread(tmp_path, capsys, monkeypatch, marker):
+    """The agent reading its own notes isn't the person reading them: marked
+    read there, a note the agent looked at showed to the person as read before
+    they had ever seen it."""
+    db = tmp_path / "memory.db"
+    rt = _runtime(db)
+    try:
+        _said(rt.note("A note the person hasn't seen.", "noticed", signed_as=OPUS), "Note ID: ")
+    finally:
+        rt.close()
+    monkeypatch.setenv(marker, "1")
+
+    assert main(["notes", "--db-path", str(db), *SCOPE_ARGS]) == 0
+    assert "A note the person hasn't seen." in capsys.readouterr().out
+    assert _rows(db, "SELECT read_at FROM notes") == [{"read_at": None}]
+
+    monkeypatch.delenv(marker)
+    assert main(["notes", "--db-path", str(db), *SCOPE_ARGS]) == 0
+    assert _rows(db, "SELECT read_at IS NOT NULL AS read FROM notes") == [{"read": 1}]
+
+
 def test_a_v15_store_is_read_by_the_new_commands_without_being_migrated_or_changed(tmp_path, capsys):
     """Reading never writes, and never migrates: a store this code has not
     opened for writing yet has no journal, and `doctor`, which opens the store

@@ -231,6 +231,49 @@ def test_replies_now_wake_under_while_i_was_away(runtime):
     assert "Yes, on Thursday." not in second, second
 
 
+def test_a_note_the_person_hasnt_read_is_said_once(runtime):
+    """A note waits where they read it, and the next wake says it's there,
+    once, so I can mention it if it fits: how many, from when, how the newest
+    begins, and, among the ids and calls, how to open my page for them."""
+    runtime.capture("Riley keeps the harbour survey in the studio.", signed_as=OPUS)
+    runtime.note("The harbour survey is done.\nThe maps are in the studio.", "made", signed_as=OPUS)
+
+    first = _packet(runtime, mark_surfaced=True)["prompt"]
+    assert _section(first, "while i was away") == (
+        "- Riley hasn't yet read my note from just now. If it fits, I can mention it once; my page shows it, "
+        'with a place to answer. It begins: "The harbour survey is done."'), first
+    assert "- to open my page for Riley: mnemos_page()" in first, first
+    second = _packet(runtime, mark_surfaced=True)["prompt"]
+    assert "hasn't yet read" not in second and "mnemos_page" not in second, second
+
+    runtime.note("A second thought about the survey.", "noticed", signed_as=OPUS)
+    runtime.note("And a third.", "noticed", signed_as=OPUS)
+    third = _packet(runtime, mark_surfaced=True)["prompt"]
+    assert ("- Riley hasn't yet read 2 of my notes, the latest from just now. If it fits, I can mention them "
+            'once; my page shows them, with a place to answer. The latest begins: "And a third."') in third, third
+
+
+def test_a_waiting_note_is_said_only_where_someone_may_hear_of_it(runtime, monkeypatch):
+    """Not in one of my own hours, which no one is in; not to a guest, whose
+    notes they aren't; not in a light wake; and not once it's read. Until it's
+    said, it waits to be."""
+    runtime.capture("Riley keeps the harbour survey in the studio.", signed_as=OPUS)
+    note = runtime.note("Do you want the survey redone?", "question", signed_as=OPUS)
+    note_id = re.search(r"Note ID: (\S+)", note).group(1)
+
+    monkeypatch.setenv("MNEMOS_HOUR_ID", "hour-2026-10-28-mine")
+    assert "hasn't yet read" not in _packet(runtime, mark_surfaced=True)["prompt"]
+    monkeypatch.delenv("MNEMOS_HOUR_ID")
+    guest = _packet(runtime, reader_model="gpt-5.5", mark_surfaced=True)["prompt"]
+    assert "hasn't yet read" not in guest, guest
+    light = _packet(runtime, mark_surfaced=True, wake="light")["prompt"]
+    assert "hasn't yet read" not in light, light
+    assert "Riley hasn't yet read my note" in _packet(runtime)["prompt"]
+
+    runtime.mark_notes_read([note_id])
+    assert "hasn't yet read" not in _packet(runtime, mark_surfaced=True)["prompt"]
+
+
 # ── C2 · The noticer keeps what it found ──
 
 

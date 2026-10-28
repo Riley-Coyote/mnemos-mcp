@@ -110,7 +110,7 @@ dimensions, a typed graph, beliefs that revise, consolidation, decay, affective
 modulation, identity computed from what a mind keeps returning to. That is a full
 engine, and it is the subject of section V.
 
-What ships as an MCP is one layer of it: **continuity**, exposed through eleven tools so
+What ships as an MCP is one layer of it: **continuity**, exposed through twelve tools so
 that any agent in any client can have it, free, locally, today. The engine in its
 entirety runs in **Polyphonic**, the desktop application — where it also turns outward,
 carrying a chorus of minds on one continuous shared context.
@@ -415,7 +415,7 @@ substrate, and it is what makes the continuity unrevokable by us.
 
 ### The interface, and why it is narrow when the engine is not
 
-The agent sees **eleven tools**:
+The agent sees **twelve tools**:
 
 | Tool | What it is for |
 |---|---|
@@ -430,8 +430,9 @@ The agent sees **eleven tools**:
 | `mnemos_health` | A human-relayable health card: where memory lives, how much there is, whether it is working. |
 | `mnemos_journal` | Your own journal: write in it when something is there. Nothing else writes it. |
 | `mnemos_note` | Leave the human a note, only when you'd say it if they walked in now. |
+| `mnemos_page` | Open your page for the human: your notes, each with a place to answer, and your days and memory. |
 
-Eleven tools is the *interface*, and it is worth being precise about the difference,
+Twelve tools is the *interface*, and it is worth being precise about the difference,
 because a narrow surface over a deep engine is the whole design.
 
 Note what an agent is never asked to do. It passes no tags, no memory kinds, no

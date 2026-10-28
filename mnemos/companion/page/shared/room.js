@@ -4,7 +4,8 @@
  *
  *   new Room({ tabsEl, bodyEl, tabs, sticky, ctx, hooks })
  *     ctx()   → { who, life, mems, byId, heat?(id) }   who: the export's identity
- *     hooks   → { hover(id|null), open(id|null), route(hash), mindLink?(id), picture?(src, caption), hour?(id) }
+ *     hooks   → { hover(id|null), open(id|null), route(hash), mindLink?(id), picture?(src, caption), hour?(id),
+ *                 send?(request), read?(ids) }
  */
 
 import { esc, at, clock, dayKey, dayName, longDay, shortDay, plural, putTo, question, firstLine, opening, titleOf, signedBy, person,
@@ -19,6 +20,7 @@ const VIEW = { log: 'Its days', journal: 'Journal', hours: 'Hours', memories: 'M
   desk: 'Notes to itself' };
 export const placeOf = (tab) => (tab === 'notes' ? 'you' : Object.keys(PLACES).find((p) => PLACES[p].includes(tab)) || 'you');
 const PAGE = 60;
+const SEEN_AFTER = 1200;                  // a note of its own is read once it has stayed on your screen this long
 
 export class Room {
   constructor({ tabsEl, bodyEl, tabs, sticky = false, ctx, hooks = {} }) {
@@ -30,6 +32,12 @@ export class Room {
     this.opened = new Set();                // the reply boxes you opened
     this.notices = new Map();               // why something couldn't be sent, by box
     this.sending = null;
+    this.seen = new Set();                  // its notes you've read here, said once to the memory
+    this.fresh = new Set();                 // of those, the ones that keep their dot until you leave For you
+    this.readTimers = new Map();
+    this.reading = null;
+    this.toMark = new Set();
+    this.present = false;                   // someone has touched the page: moved, scrolled, typed
     this.bind();
   }
 
@@ -47,6 +55,7 @@ export class Room {
     const apply = () => {
       this.s.tab = tab; this.s.memory = memory;
       if (!keepPage) this.s.shown = PAGE;
+      if (placeOf(tab) !== 'you') this.fresh.clear();
       this.render(changed);
       this.hooks.open?.(memory);
       this.hooks.route?.(this.hash());
@@ -78,6 +87,7 @@ export class Room {
     if (typing && search) { search.focus({ preventScroll: true }); search.setSelectionRange(...typing); }
     const more = this.bodyEl.querySelector('.more-rows');
     if (more) new IntersectionObserver(([e], o) => { if (e.isIntersecting) { o.disconnect(); this.s.shown += 80; this.render(); } }, { root: this.sticky ? this.bodyEl : null, rootMargin: '400px' }).observe(more);
+    this.watchReading();
   }
   scroller() { return this.sticky ? this.bodyEl : document.scrollingElement; }
   toTop() {
@@ -121,10 +131,12 @@ export class Room {
   threadHTML(list) {
     const { who } = this.ctx();
     const by = (n) => (n.author === 'agent' ? esc(who.name) : who.person ? esc(who.person) : 'You');
-    const head = (n) => `<div class="meta">${n.author === 'agent' && !n.read ? '<span class="unread" role="img" aria-label="not yet read"></span>' : ''}<span class="k">${by(n)}</span>`
+    const dot = (n) => n.author === 'agent' && (!n.read || this.fresh.has(n.id));
+    const head = (n) => `<div class="meta">${dot(n) ? '<span class="unread" role="img" aria-label="new"></span>' : ''}<span class="k">${by(n)}</span>`
       + `<span>${dayName(at(n.at))}, ${clock(at(n.at))}</span>${n.kind === 'pickup' ? '<span>after our hour</span>' : ''}`
       + `${n.author === 'person' ? `<span>${n.delivered ? 'it has woken with this' : 'it hasn’t woken since'}</span>` : ''}</div>`;
-    const turn = (n, i) => `<div class="turn${i ? ' later' : ''}${n.author === 'person' ? ' yours' : ''}">${head(n)}${this.own(n.id, n.text, 'text note', 600)}</div>`;
+    const watched = (n) => (n.author === 'agent' && !n.read && !this.seen.has(n.id) ? ` data-unread="${esc(n.id)}"` : '');
+    const turn = (n, i) => `<div class="turn${i ? ' later' : ''}${n.author === 'person' ? ' yours' : ''}"${watched(n)}>${head(n)}${this.own(n.id, n.text, 'text note', 600)}</div>`;
     const answer = [...list].reverse().find((n) => n.author === 'agent');   // a reply answers its newest word here
     return `<article class="thread">${list.map(turn).join('')}${answer ? this.box(answer.id, 'Reply', '') : ''}</article>`;
   }
@@ -368,6 +380,43 @@ export class Room {
         <div class="q">${esc(trailSentence(h))}</div>${h.journal.length ? `<div class="ex">${esc(firstLine(h.journal[h.journal.length - 1].text, 200))}</div>` : ''}</button></li>`; }).join('')}</ul>`;
   }
 
+  /* ---------- reading ---------- */
+
+  /* A note of its own counts as read once most of it (or most of your screen) has shown it for a moment, on a page in
+     front of someone who has touched it. Nothing short of that counts: a page open in a tab no one looks at, or one an
+     agent reads for itself, marks nothing, since a note marked read unseen is a note lost. Each is said once; its dot
+     stays until you leave For you, so you can see what was new. */
+  watchReading() {
+    this.reading?.disconnect();
+    for (const t of this.readTimers.values()) clearTimeout(t);
+    this.readTimers.clear();
+    if (!this.hooks.read || !this.present || document.visibilityState !== 'visible') return;
+    const notes = this.bodyEl.querySelectorAll('[data-unread]');
+    if (!notes.length) return;
+    const root = this.sticky ? this.bodyEl : null;
+    this.reading = new IntersectionObserver((entries) => {
+      const view = root ? root.clientHeight : innerHeight;
+      for (const e of entries) {
+        const id = e.target.dataset.unread;
+        const showing = e.isIntersecting && e.intersectionRect.height >= Math.min(e.boundingClientRect.height, view) * 0.6;
+        if (showing && !this.readTimers.has(id)) this.readTimers.set(id, setTimeout(() => this.markSeen(id), SEEN_AFTER));
+        if (!showing && this.readTimers.has(id)) { clearTimeout(this.readTimers.get(id)); this.readTimers.delete(id); }
+      }
+    }, { root, threshold: [0, 0.2, 0.4, 0.6, 0.8, 1] });
+    notes.forEach((n) => this.reading.observe(n));
+  }
+  markSeen(id) {
+    this.readTimers.delete(id);
+    if (!this.present || document.visibilityState !== 'visible' || this.seen.has(id)) return;
+    this.seen.add(id); this.fresh.add(id); this.toMark.add(id);
+    clearTimeout(this.marking);
+    this.marking = setTimeout(() => {
+      const ids = [...this.toMark]; this.toMark.clear();
+      // not said? then it's still unread, and the next look tries again
+      this.hooks.read(ids).catch(() => ids.forEach((i) => this.seen.delete(i)));
+    }, 300);
+  }
+
   /* ---------- events ---------- */
 
   bind() {
@@ -422,6 +471,10 @@ export class Room {
     body.addEventListener('pointerover', touch);
     body.addEventListener('focusin', touch);
     body.addEventListener('pointerleave', () => this.hooks.hover?.(null));
+    // what showed while the page was behind another wasn't read; it's watched again when you come back
+    document.addEventListener('visibilitychange', () => this.watchReading());
+    const here = () => { if (!this.present) { this.present = true; this.watchReading(); } };
+    for (const type of ['pointermove', 'pointerdown', 'keydown', 'wheel', 'touchstart']) addEventListener(type, here, { passive: true, once: true });
   }
   restoreOpen() { for (const d of this.bodyEl.querySelectorAll('details[data-key]')) if (this.whole.has(d.dataset.key)) d.open = true; }
 }

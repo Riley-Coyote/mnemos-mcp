@@ -178,6 +178,12 @@ function start() {
         if (answer.result) await look();
         return answer;
       },
+      // its notes you've read here, so it knows you have
+      read: async (ids) => {
+        const r = await fetch('../act', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ command: 'read', note_ids: ids }) });
+        if (!r.ok) throw new Error('not marked');
+        await look();
+      },
       transition,
       picture: (src, cap) => { $('full-img').src = src; $('full-img').alt = cap; $('full-cap').textContent = cap; $('full').showModal(); },
       hour: (id) => {

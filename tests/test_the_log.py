@@ -1,5 +1,6 @@
 """`mnemos log`: a small page to watch an agent's days, on this machine only. It
-reads the memory, and writes only the person's own words left on it.
+reads the memory, and writes only the person's own words left on it, and which
+of the agent's notes they read there.
 
 What these tests hold:
 
@@ -15,8 +16,10 @@ What these tests hold:
    studio.
 6. The page asks nothing of the network, and ships inside the package with its
    fonts' licenses.
-7. What it writes: a reply or a note in the person's own words, from the page
-   itself only, and nothing else.
+7. What it writes: a reply or a note in the person's own words, and that a
+   note was read, from the page itself only, and nothing else.
+8. An agent opens it for the person in one call (``mnemos_page``): the same
+   page all session, for the server's own memory, with nothing on stdout.
 
 No test reaches a real network, a real scheduler or a real ~/.mnemos.
 """
@@ -519,9 +522,10 @@ def test_every_font_ships_with_its_license():
         assert f'font-family:"{family}"' in css
 
 
-# ---------- 7. It writes one thing: the person's own words ----------
+# ---------- 7. It writes the person's own words, and what they read ----------
 # A reply to one of the agent's notes, or a note of their own, is kept as theirs, and the agent wakes with it
-# (`mnemos notes` writes the same). Only the page itself can send one, and nothing else can be written through it.
+# (`mnemos notes` writes the same); a note of the agent's they read there is marked read. Only the page itself can
+# send either, and nothing else can be written through it.
 
 def post(server, body, *, origin="page", kind="application/json", path=None, host=None):
     connection = http.client.HTTPConnection("127.0.0.1", server.port, timeout=10)
@@ -571,8 +575,10 @@ def test_nothing_but_the_page_itself_can_write(mind):
     with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
         note = agents_note(server)
         reply = {"command": "reply", "note_id": note["id"], "text": "From somewhere else."}
+        read = {"command": "read", "note_ids": [note["id"]]}
         for origin in ("", "https://example.com", "http://127.0.0.1:1", "null"):
             assert post(server, reply, origin=origin)[0] == 403, origin
+            assert post(server, read, origin=origin)[0] == 403, origin
         assert post(server, reply, host="example.com")[0] == 403                          # another site's name
         assert post(server, reply, path="/not-the-token/act")[0] == 404                  # not this run's page
         assert post(server, reply, kind="text/plain")[0] == 415                          # a plain form can't send it
@@ -583,7 +589,7 @@ def test_nothing_but_the_page_itself_can_write(mind):
         assert not agents_note(server)["read"]
 
 
-def test_the_page_can_write_nothing_but_a_reply_or_a_note(mind):
+def test_the_page_can_write_nothing_but_a_reply_a_note_or_what_was_read(mind):
     with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
         memories = json.loads(server.documents()[1])["memories"]
         target = memories[0]["id"]
@@ -600,3 +606,71 @@ def test_a_reply_says_why_when_it_cant_be_kept(mind):
         assert status == 400 and answer["error"].startswith("Nothing saved"), answer
         status, answer = post(server, {"command": "note", "text": "   "})
         assert status == 400 and answer["error"], answer
+
+
+def test_a_note_read_on_the_page_is_marked_read_once(mind):
+    """The page says which of its notes the person has read, once they've had
+    it on their screen a moment, as `mnemos notes` marks what it shows. Only
+    the agent's notes are marked, each once."""
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        note = agents_note(server)
+        assert not note["read"]
+        status, answer = post(server, {"command": "read", "note_ids": [note["id"]]})
+        assert (status, answer["result"]) == (200, [note["id"]]), answer
+        assert agents_note(server)["read"]                              # read again, at once
+        first = agents_note(server)["read"]
+        status, answer = post(server, {"command": "read", "note_ids": [note["id"]]})
+        assert (status, answer["result"]) == (200, []), answer         # it keeps the time it was first read
+        assert agents_note(server)["read"] == first
+
+        status, answer = post(server, {"command": "note", "text": "My own note."})
+        mine = answer["result"]["id"]
+        assert post(server, {"command": "read", "note_ids": [mine, "no-such-note"]}) == (200, {"result": []})
+        for bad in ({"command": "read"}, {"command": "read", "note_ids": []}, {"command": "read", "note_ids": "x"},
+                    {"command": "read", "note_ids": [3]}, {"command": "read", "note_ids": ["x"] * 201}):
+            status, answer = post(server, bad)
+            assert status == 400 and answer["error"], bad
+
+
+# ---------- 8. An agent opens it for the person ----------
+# `mnemos_page` starts the same page from the agent's own MCP server, for that server's memory, so an agent with no
+# shell can open it too. Its stdout is the protocol, so it must never write a word there.
+
+def test_an_agent_opens_its_page_in_one_call(mind, capsys):
+    from mnemos import simple_mcp
+
+    simple_mcp.configure_runtime(db_path=str(store_path()), agent_id=AGENT)
+    try:
+        page = simple_mcp.simple_mcp._tool_manager.get_tool("mnemos_page").fn
+        first, again = page(), page()
+        assert capsys.readouterr().out == ""
+        address = first.splitlines()[0]
+        assert address == again.splitlines()[0]                       # one page for the session
+        assert re.fullmatch(r"Your page is open: http://127\.0\.0\.1:\d+/[\w-]+/log/", address), address
+        assert "Nothing is kept here yet" not in first
+        url = address.removeprefix("Your page is open: ")
+        port, token = re.match(r"http://127\.0\.0\.1:(\d+)/([\w-]+)/", url).groups()
+        connection = http.client.HTTPConnection("127.0.0.1", int(port), timeout=10)
+        try:
+            connection.request("GET", f"/{token}/data/life.json", headers={"Host": f"127.0.0.1:{port}"})
+            life = json.loads(connection.getresponse().read())
+        finally:
+            connection.close()
+        assert [n["text"] for n in life["notes"]] == ["The page renders without the network now."]
+    finally:
+        simple_mcp.configure_runtime()                                 # another memory: the page stops
+    with pytest.raises(OSError):
+        http.client.HTTPConnection("127.0.0.1", int(port), timeout=2).request("GET", "/")
+
+
+def test_an_agents_page_says_when_there_is_nothing_yet(capsys):
+    from mnemos import simple_mcp
+
+    simple_mcp.configure_runtime(db_path=str(store_path()), agent_id="newcomer")
+    try:
+        answer = simple_mcp.simple_mcp._tool_manager.get_tool("mnemos_page").fn()
+    finally:
+        simple_mcp.configure_runtime()
+    assert answer.startswith("Your page is open: ") and "Nothing is kept here yet" in answer, answer
+    assert not store_path().exists()                                   # opening it made no store
+    assert capsys.readouterr().out == ""

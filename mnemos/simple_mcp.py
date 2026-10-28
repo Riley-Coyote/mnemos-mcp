@@ -7,6 +7,7 @@ agent-friendly tool set. Advanced/admin tools remain in ``mnemos.mcp_server``.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import signal
 import sys
@@ -88,6 +89,10 @@ _runtime_lock = threading.RLock()
 # This server's cue answerer, once started: the health card reads its judge's
 # counts (WP-R16b).
 _cue_answerer: Any = None
+# This server's page for the person (``mnemos_page``), once opened: the page
+# `mnemos log` serves, for this server's memory, until the server stops.
+_page: Any = None
+_page_lock = threading.Lock()
 
 
 def _annotations(
@@ -120,12 +125,60 @@ def configure_runtime(
         if _runtime is not None:
             _runtime.close()
         _runtime = None
+        _close_page()  # it showed the memory these replace
         _runtime_kwargs = {
             "db_path": db_path,
             "agent_id": agent_id,
             "person_id": person_id,
             "project_scope": project_scope,
         }
+
+
+def _open_page() -> str:
+    """What ``mnemos_page`` answers: the address of this server's page for the
+    person, started the first time on 127.0.0.1 in a thread of its own, then
+    the same page until the server stops; or one plain sentence saying why it
+    couldn't start. Never a word on stdout, which carries the protocol."""
+    global _page
+    from .companion.export import Exporter
+    from .companion.server import LogServer
+
+    with _page_lock:
+        page = _page
+        if page is None:
+            try:
+                page = LogServer(Exporter.for_scope(**_runtime_kwargs))
+            except OSError as exc:
+                return f"The page couldn't start: {exc}"
+        try:
+            # What the page will show, read now: one that can't be read isn't opened.
+            missing = bool(json.loads(page.documents()[0]).get("missing"))
+        except Exception as exc:
+            if page is not _page:
+                page.server_close()
+            return f"The page couldn't read this memory just now: {type(exc).__name__}: {exc}"
+        if page is not _page:
+            threading.Thread(target=page.serve_forever, name="mnemos-page", daemon=True).start()
+            _page = page
+    lines = [
+        f"Your page is open: {page.url}",
+        "Open it for them: in your own browser pane if you have one, with the system's open "
+        "command if you have a shell, or give them the link. It runs on this machine only, "
+        "until this session ends.",
+    ]
+    if missing:
+        lines.append("Nothing is kept here yet, so the page says so.")
+    return "\n".join(lines)
+
+
+def _close_page() -> None:
+    """Stop this server's page, if it has one."""
+    global _page
+    with _page_lock:
+        page, _page = _page, None
+    if page is not None:
+        page.shutdown()
+        page.server_close()
 
 
 def _get_runtime() -> MnemosRuntime:
@@ -355,7 +408,7 @@ def register_simple_tools(server: FastMCP) -> None:
         own voice, never a template; if it could have come from any agent,
         don't send it. A few lines, never a report: at most one question, last,
         and only one you need answered. They can answer it right under the
-        note, on the page `mnemos log` opens.
+        note, on your page (mnemos_page opens it for them).
 
         Say what kind it is, so they can choose when to read it: made,
         noticed, worried, disagree, question, or pickup (where things stand
@@ -380,6 +433,34 @@ def register_simple_tools(server: FastMCP) -> None:
             signed_as=_text("signed_as", signed_as, MAX_ID_CHARS),
             in_reply_to=_text("in_reply_to", in_reply_to, MAX_ID_CHARS),
         ))
+
+    @server.tool(
+        annotations=_annotations(
+            title="Open your page for the human",
+            # It writes nothing itself, but the page it opens keeps what the
+            # person writes there.
+            read_only=False,
+            destructive=False,
+            idempotent=True,
+        )
+    )
+    def mnemos_page() -> str:
+        """Open your page for the human you're with, and get its address.
+
+        It shows them your memory, on this machine only: your notes to them,
+        each with a place to answer it, and a place to leave you a note of
+        their own; your days, journal and quiet hours; every memory, your
+        beliefs and what your memory is asking you. What they write there
+        reaches you once, when you next wake. Only they write there.
+
+        Offer it when they'd like to see what you remember or answer your
+        notes, or when a note of yours waits for them. Then open it for them:
+        in your own browser pane if you have one, with the system's open
+        command if you have a shell, or give them the link. It stays open
+        until this session ends; calling again gives the same address.
+        """
+
+        return _output(_open_page())
 
     @server.tool(
         annotations=_annotations(

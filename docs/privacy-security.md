@@ -193,7 +193,7 @@ tool hard-deletes a memory; the store is a file in `~/.mnemos`.
 Before a release:
 
 - verify simple mode works with no provider keys
-- verify simple mode exposes only eleven tools
+- verify simple mode exposes only twelve tools
 - verify advanced mode serves every simple tool unchanged, plus its own tools
 - verify `mnemos doctor` does not leak secrets
 - verify package artifacts include templates and simple-mode modules

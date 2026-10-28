@@ -100,6 +100,7 @@ SIMPLE_TOOL_NAMES = (
     "mnemos_health",
     "mnemos_journal",
     "mnemos_note",
+    "mnemos_page",
 )
 
 HOST_MUTATION_PROTOCOL_VERSION = 1
@@ -713,7 +714,7 @@ _RITUAL_STEPS = """\
 3. Ask what they want you to always remember. Capture the answer with mnemos_capture.
 4. Ask them for one small, true fact about themselves or their world - something they would smile to hear you recall later. Capture it with mnemos_capture. It becomes part of their first proof that your memory is real.
 5. Call mnemos_introduce with agent_model set to your own model id. You know what model you are - do not ask the human. Add agent_name if you go by a name.
-6. Finish by telling them, in plain words, what you will now remember.
+6. Finish by telling them, in plain words, what you will now remember, and that they can see all of it, and answer your notes, on a page you'll open for them whenever they ask.
 When you talk to the human, never mention tools, databases, scopes, or model ids. Just talk like someone who intends to remember."""
 
 _ONBOARDING_RITUAL = f"{_ONBOARDING_HEAD} Before other work, {_RITUAL_INTRO}\n{_RITUAL_STEPS}"
@@ -2877,8 +2878,9 @@ class MnemosRuntime:
                 "capture it with mnemos_capture."
             )
         lines.append(
-            "Then tell the human what you will remember. This reminder disappears "
-            "once setup is complete."
+            "Then tell the human what you will remember, and that they can see all of "
+            "it on a page you'll open for them whenever they ask. This reminder "
+            "disappears once setup is complete."
         )
         return "\n".join(lines)
 

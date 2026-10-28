@@ -12,12 +12,17 @@ localhost, so neither another person on this machine nor a website in the
 browser can read the memory through it. Nothing it serves leaves this
 machine.
 
-It writes one thing: the person's own words, left on the page. A reply to
-one of the agent's notes, or a note of their own, goes through the commands
-`mnemos notes reply` and `mnemos notes write` use (``interface.person``),
-kept exactly as given and marked as theirs, and the agent wakes with it.
-Only the page itself can send one: a request must come from the page's own
-address, as JSON, to the run's own path, and anything else is refused.
+It writes the person's own words, left on the page, and that they read a
+note there. A reply to one of the agent's notes, or a note of their own, goes
+through the commands `mnemos notes reply` and `mnemos notes write` use
+(``interface.person``), kept exactly as given and marked as theirs, and the
+agent wakes with it. A note of the agent's they read on the page is marked
+read here, as `mnemos notes` marks what it shows. Only the page itself can send
+either: a request must come from the page's own address, as JSON, to the
+run's own path, and anything else is refused.
+
+``mnemos log`` serves it until Ctrl-C; an agent's ``mnemos_page`` serves the
+same, from its MCP server, until that server stops.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ import logging
 import os
 import secrets
 import socketserver
+import sqlite3
 import sys
 import threading
 import time
@@ -43,8 +49,9 @@ from .export import MOST_BYTES, Exporter
 logger = logging.getLogger(__name__)
 
 CACHE_SECONDS = 5.0
-# What the page may write: only the person's own words.
-ACTS = ("reply", "note")
+# What the page may write: only the person's own words, and which notes they read.
+ACTS = ("reply", "note", "read")
+MOST_READ = 200
 MOST_ACT_BYTES = 32 * 1024
 TYPES = {
     ".html": "text/html; charset=utf-8",
@@ -122,12 +129,15 @@ class LogServer(ThreadingHTTPServer):
         return {f"http://127.0.0.1:{self.port}", f"http://localhost:{self.port}"}
 
     def act(self, request: dict) -> dict:
-        """Write the person's own words: a reply or a note, as `mnemos notes`
-        writes them, answered as ``mnemos interface`` answers (``{"result": the
-        note}`` or ``{"error": one plain sentence}``). The page's documents are
-        read again on its next look, so what was written shows at once."""
+        """Write the person's own words, a reply or a note, as `mnemos notes`
+        writes them, or that they read notes of the agent's, answered as
+        ``mnemos interface`` answers (``{"result": ...}`` or ``{"error": one
+        plain sentence}``). The page's documents are read again on its next
+        look, so what was written shows at once."""
         from ..interface.person import Interface  # the writing runtime, only when someone writes
 
+        if request.get("command") == "read":
+            return self._read(request.get("note_ids"))
         scope = self.exporter.scope
         interface = Interface(db_path=scope.db_path, agent_id=scope.agent_id,
                               person_id=scope.person_id, project_scope=scope.project_scope)
@@ -136,6 +146,31 @@ class LogServer(ThreadingHTTPServer):
         with self._lock:
             self._documents = None
         return answer
+
+    def _read(self, ids: object) -> dict:
+        """Mark these notes of the agent's read, each once (one already read
+        keeps its time), as `mnemos notes` marks the notes it shows: ``{"result":
+        the ids this marked}``. Ids that aren't the agent's notes here mark
+        nothing, and no store is ever made."""
+        from ..simple_runtime import MnemosRuntime
+
+        if (not isinstance(ids, list) or not ids or len(ids) > MOST_READ
+                or not all(isinstance(i, str) and i.strip() for i in ids)):
+            return {"error": f'"note_ids" is a list of the notes read, at most {MOST_READ}.'}
+        if not self.exporter.db.is_file():
+            return {"result": []}
+        scope = self.exporter.scope
+        writer = MnemosRuntime(db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
+                               project_scope=scope.project_scope, use_dedicated_model=False, marks_lived=False)
+        try:
+            marked = writer.mark_notes_read([i.strip() for i in ids])
+        except sqlite3.Error:
+            return {"error": "It couldn't be marked read just now."}
+        finally:
+            writer.close()
+        with self._lock:
+            self._documents = None
+        return {"result": marked}
 
     def addressed_here(self, host: str) -> bool:
         """Whether a request names this server by the loopback address or
@@ -170,7 +205,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._answer(body=False)
 
     def do_POST(self) -> None:
-        """The person's own words, from the page: a reply or a note, nothing else."""
+        """From the page: the person's reply or note, or the notes they read, and nothing else."""
         server = self.server
         if not server.addressed_here(self.headers.get("Host", "")):
             return self._json(HTTPStatus.FORBIDDEN, {"error": "The log answers only on 127.0.0.1."})
@@ -193,7 +228,7 @@ class _Handler(BaseHTTPRequestHandler):
         except ValueError:
             request = None
         if not isinstance(request, dict) or request.get("command") not in ACTS:
-            return self._json(HTTPStatus.BAD_REQUEST, {"error": "The page can leave a reply or a note, and nothing else."})
+            return self._json(HTTPStatus.BAD_REQUEST, {"error": "The page can leave a reply or a note, or say a note was read, and nothing else."})
         answer = server.act(request)
         return self._json(HTTPStatus.OK if "result" in answer else HTTPStatus.BAD_REQUEST, answer)
 
@@ -306,7 +341,8 @@ def serve(*, db_path: str | None = None, agent_id: str | None = None, person_id:
         print(f"There's no memory at {who['store']} for {who['agentId']} yet; the page says so. "
               "If your agent keeps its memory under another name, start the log with --agent-id.",
               file=out, flush=True)
-    print("On this machine only. It writes nothing but the replies and notes you leave. Ctrl-C stops it.",
+    print("On this machine only. It keeps nothing but the replies and notes you leave, and which notes you've read. "
+          "Ctrl-C stops it.",
           file=out, flush=True)
     if open_browser:
         try:

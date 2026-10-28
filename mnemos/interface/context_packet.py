@@ -66,6 +66,7 @@ cut and takes no room from the rest, notes are cut at a sentence boundary, and
 from __future__ import annotations
 
 import json
+import os
 import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -170,6 +171,10 @@ _JOURNAL_LINE_CHARS = 240
 REPLIES_SHOWN = 3
 _REPLY_CHARS = 700
 _REPLIED_NOTE_CHARS = 100
+# My notes the person hasn't read yet: said once, as how many, with the newest's
+# first line; at most this many are read to count them.
+WAITING_NOTES_READ = 200
+_WAITING_NOTE_CHARS = 160
 
 # What has been changing in the reader: its newest impact lines, this many.
 CHANGING_SHOWN = 5
@@ -304,6 +309,12 @@ def build_context_packet(
         woke = woke.astimezone()
     journal = None if wake == "light" else _latest_journal(store, scope, woke)
     replies = [] if wake == "light" else _waiting_replies(store, scope)
+    # Said only where someone may be there to hear of them: never in one of my
+    # own hours (``MNEMOS_HOUR_ID``), and never to a guest, whose notes they aren't.
+    waiting_notes = (
+        [] if wake == "light" or voice not in (SELF, UNKNOWN) or os.environ.get("MNEMOS_HOUR_ID", "").strip()
+        else _waiting_notes(store, scope)
+    )
     person_words = [] if wake == "light" else _person_words(store, scope, woke)
     person_letgo = [] if wake == "light" else _person_letgo(store, scope)
     kept_before = (
@@ -347,6 +358,7 @@ def build_context_packet(
         "maintenance_reports": [],
         "journal": journal,
         "replies": replies,
+        "waiting_notes": waiting_notes,
         "person_words": person_words,
         "person_letgo": person_letgo,
         "first_restart": kept_before,
@@ -369,7 +381,7 @@ def build_context_packet(
         _record_delivery(
             store, scope, shown, deliver_replies=not older_than_store,
             person_words=person_words, person_letgo=person_letgo,
-            first_restart_shown=said_kept_before,
+            waiting_notes=waiting_notes, first_restart_shown=said_kept_before,
         )
     if kept:
         # Recall for a cue is a use, and only what the reader was shown is
@@ -780,11 +792,12 @@ def _compose(
         "handoffs": [], "standing": [], "notes": [], "questions": [], "report": None,
         "journal": None, "replies": [], "hour": None, "person_words": [],
         "person_letgo": [], "changing": [], "returning": [], "beliefs": [],
+        "waiting_notes": [],
     }
     # What the closing section lists for the tools, in the order shown.
     tools: dict[str, Any] = {
         "standing": [], "more": 0, "cut": [], "beliefs": [], "calls": [], "replies": [],
-        "person_notes": [],
+        "person_notes": [], "page": False,
     }
     # Being comes before news. Someone waking doesn't first recall last
     # night's events; they are simply themselves, with the people they know,
@@ -1067,6 +1080,43 @@ def _reply_lines(
     return lines
 
 
+def _waiting_lines(
+    packet: dict[str, Any], shown: dict[str, Any], tools: dict[str, Any],
+) -> list[str]:
+    """My notes the person hasn't read yet, said once: how many, from when,
+    what I may do about them, and how the newest begins. One line, never left
+    out for room (``_drop_order``): notes left out would be marked said unsaid.
+    "My" only when the reader wrote every one of them (``_whose_note``)."""
+    waiting = packet.get("waiting_notes") or []
+    if not waiting:
+        return []
+    person = packet.get("person_name") or "the person I'm with"
+    person = person[:1].upper() + person[1:]
+    reader = packet.get("reader_model") or ""
+    newest = waiting[0]
+    first, _ = cut_at_sentence(_first_line(newest.get("text") or ""), _WAITING_NOTE_CHARS)
+    age = _age_text(newest.get("created_at"))
+    if len(waiting) == 1:
+        line = (
+            f"- {person} hasn't yet read {_whose_note(newest.get('model_id'), reader)} note from {age}. "
+            "If it fits, I can mention it once; my page shows it, with a place to answer."
+        )
+        begins = "It begins"
+    else:
+        mine = all(_whose_note(note.get("model_id"), reader) == "my" for note in waiting)
+        line = (
+            f"- {person} hasn't yet read {len(waiting)} {'of my notes' if mine else 'notes'}, "
+            f"the latest from {age}. If it fits, I can mention them once; my page shows them, "
+            "with a place to answer."
+        )
+        begins = "The latest begins"
+    if first:
+        line += f' {begins}: "{first}"'
+    shown["waiting_notes"] = [note["id"] for note in waiting]
+    tools["page"] = True
+    return [line]
+
+
 def _whose_note(note_model: object, reader_model: str) -> str:
     """"my", "Fable 5's" or "a": whose note a reply answers, to this reader."""
     author, reader = clean_model_id(note_model), clean_model_id(reader_model)
@@ -1336,8 +1386,8 @@ def _format_away(
     """While I was away: my own quiet hour, when one ended since the last
     packet, then what the person wrote into my memory (a correction of
     theirs said as one), then the memories the person let go, by day, then
-    the person's replies to my notes. Upkeep's report isn't here: its words
-    aren't mine."""
+    the person's replies to my notes, then my notes they haven't read yet.
+    Upkeep's report isn't here: its words aren't mine."""
     lines = []
     which = _hour_shows(packet, dropped)
     if which:
@@ -1363,6 +1413,7 @@ def _format_away(
         lines.append(_letgo_line(name, letgo, packet.get("woke_at")))
         shown["person_letgo"] = list(letgo)
     lines.extend(_reply_lines(packet, shown, tools))
+    lines.extend(_waiting_lines(packet, shown, tools))
     if not lines:
         return ""
     heading = "### while i was away" if packet.get("voice") == SELF else "### lately, in this memory"
@@ -1400,6 +1451,8 @@ def _format_tools(packet: dict[str, Any], tools: dict[str, Any]) -> str:
             f"- {whose} to me, in order: {', '.join(tools['person_notes'])}; to answer one: "
             'mnemos_note(text="…", kind="…", in_reply_to="<its id>")'
         )
+    if tools.get("page"):
+        lines.append(f"- to open my page for {packet.get('person_name') or 'them'}: mnemos_page()")
     if tools["cut"]:
         calls = ", ".join(f'mnemos_recall("{entry_id}")' for entry_id in tools["cut"])
         lines.append(f"- what was cut short, whole, in order: {calls}")
@@ -1476,6 +1529,7 @@ def _record_delivery(
     deliver_replies: bool = True,
     person_words: list[dict[str, Any]] | None = None,
     person_letgo: list[str] | None = None,
+    waiting_notes: list[dict[str, Any]] | None = None,
     first_restart_shown: bool = False,
 ) -> None:
     """Count what was actually shown: a handoff as delivered, a question as
@@ -1483,8 +1537,9 @@ def _record_delivery(
     hour as shown (meta ``last_hour_shown``), so it shows once, what the
     person wrote as shown up to the newest shown (meta
     ``person_words_shown_at``), what the person let go as said up to the
-    newest said (meta ``person_letgo_shown_at``), and the first restart as
-    said (meta ``verified_at``), so each shows once.
+    newest said (meta ``person_letgo_shown_at``), my notes the person hasn't
+    read as said up to the newest said (meta ``notes_waiting_said_at``), and
+    the first restart as said (meta ``verified_at``), so each shows once.
 
     A reply is marked only when it was shown, and never by code older than the
     store (``deliver_replies`` False): what delivered means is a rule newer
@@ -1516,6 +1571,10 @@ def _record_delivery(
     let_go = [moment for moment in person_letgo or [] if moment in told]
     if let_go:
         store.set_meta(f"{prefix}:person_letgo_shown_at", max(let_go))
+    said = set(shown.get("waiting_notes") or [])
+    moments = [note["created_at"] for note in waiting_notes or [] if note["id"] in said]
+    if deliver_replies and moments:
+        store.set_meta(f"{prefix}:notes_waiting_said_at", max(moments))
     if first_restart_shown:
         store.set_meta(f"{prefix}:verified_at", datetime.now(timezone.utc).isoformat())
 
@@ -1554,6 +1613,27 @@ def _waiting_replies(store: "EngramStore", scope: dict[str, str]) -> list[dict[s
         return store.undelivered_replies(**scope, limit=REPLIES_SHOWN)
     except Exception:
         return []
+
+
+def _waiting_notes(store: "EngramStore", scope: dict[str, str]) -> list[dict[str, Any]]:
+    """My notes the person hasn't read and no wake has said yet: the agent's
+    notes in scope with no ``read_at`` and no reply of theirs (answering a note
+    is reading it), written after meta ``notes_waiting_said_at`` (every one,
+    when none has been said), newest first, among the newest
+    ``WAITING_NOTES_READ`` notes. Reads; saying them is ``_record_delivery``'s.
+    A packet never fails because of them."""
+    try:
+        prefix = f"simple:{scope['agent_id']}:{scope['person_id']}:{scope['project_scope']}"
+        since = store.get_meta(f"{prefix}:notes_waiting_said_at", None) or ""
+        notes = store.list_notes(**scope, limit=WAITING_NOTES_READ)
+    except Exception:
+        return []
+    answered = {note["in_reply_to"] for note in notes if note["author"] == "person" and note["in_reply_to"]}
+    return [
+        note for note in notes
+        if note["author"] == "agent" and not note["read_at"] and note["id"] not in answered
+        and (note["created_at"] or "") > since
+    ]
 
 
 def _person_words(

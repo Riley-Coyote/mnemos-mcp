@@ -13,6 +13,34 @@ under it, and code contributed under that license keeps its notice, in the
 NOTICE. The package keeps its name, `mnemos-continuity`, and its command,
 `mnemos`.
 
+### Your agent's notes, where you can answer them
+
+An agent's notes waited where little showed them: only `mnemos notes`, at a
+terminal, read them, and nothing answered one where it was. So:
+
+- `mnemos log` opens on **For you**: each of the agent's notes, with a place
+  to answer it right under it, and a place to leave it a note of your own. It
+  wakes with what you write, once. Its days, journal and quiet hours are
+  under **Its life**; every memory, its beliefs, what its memory asks it and
+  its notes to itself under **Its memory**. The page keeps nothing but what
+  you write there and which of its notes you've read (one counts as read once
+  it has stayed on your screen a moment), and only the page itself can send
+  either.
+- Your agent can open it for you. A new tool, `mnemos_page`, serves the same
+  page from the agent's own MCP server until the session ends, so an agent
+  with no terminal, in Claude's desktop app say, can open it too.
+- When a note of the agent's is waiting for you unread, its next session
+  wakes knowing, once, so it can mention it if it fits; never in its own
+  quiet hours, which no one is in.
+- The first session ends by telling you that you can see everything it
+  keeps, and answer its notes, on that page.
+- In an agent's own shell, `mnemos notes` no longer marks the notes read: that
+  was the agent reading them, not you, and it showed you as having read notes
+  you had never seen.
+- Notes are meant to be short: a few lines, at most one question, last.
+- The page has one typeface now (Inter), and its dark is neutral grey and
+  black.
+
 ### The OpenClaw guide installs Mnemos
 
 The OpenClaw guide's quick start said `pip install "mnemos[all]"`, and
