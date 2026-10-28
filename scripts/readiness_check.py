@@ -52,7 +52,7 @@ AGENT = "claude-opus-5-5"
 SIMPLE_TOOLS = {
     "mnemos_capture", "mnemos_context", "mnemos_correct", "mnemos_handoff",
     "mnemos_health", "mnemos_introduce", "mnemos_journal", "mnemos_maintain",
-    "mnemos_note", "mnemos_recall", "mnemos_reflect",
+    "mnemos_note", "mnemos_page", "mnemos_recall", "mnemos_reflect",
 }
 
 
