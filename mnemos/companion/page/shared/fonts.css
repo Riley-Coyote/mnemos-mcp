@@ -1,8 +1,7 @@
 /* The log's typefaces, bundled so the page looks the same everywhere and asks nothing of the network. Each is under
    the SIL Open Font License 1.1, with its license beside it in ../fonts.
    Inter 4.001 and Inter Tight 3.004: variable weight, Latin and Latin Extended, as @fontsource-variable 5.3.0 ships
-   them. Cormorant Garamond 4.001 Regular, kept to Latin and Latin Extended, and its Light Italic (Latin), for the mind's
-   own words, once on the page. Silkscreen 1.001, for the house mark.
+   them. Silkscreen 1.001, for the house mark.
    Text outside these falls back to the system's own faces, as it did with the hosted fonts. */
 @font-face{font-family:"Inter";font-style:normal;font-display:swap;font-weight:100 900;
   src:url(../fonts/inter-latin-wght-normal.woff2) format("woff2");
@@ -16,9 +15,5 @@
 @font-face{font-family:"Inter Tight";font-style:normal;font-display:swap;font-weight:100 900;
   src:url(../fonts/inter-tight-latin-ext-wght-normal.woff2) format("woff2");
   unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF}
-@font-face{font-family:"Cormorant Garamond";font-style:normal;font-display:swap;font-weight:400;
-  src:url(../fonts/cormorant-garamond-latin-400-normal.woff2) format("woff2")}
-@font-face{font-family:"Cormorant Garamond";font-style:italic;font-display:swap;font-weight:300;
-  src:url(../fonts/cormorant-garamond-300-italic.woff2) format("woff2")}
 @font-face{font-family:"Silkscreen";font-style:normal;font-display:swap;font-weight:400;
   src:url(../fonts/silkscreen-400-normal.woff2) format("woff2")}
