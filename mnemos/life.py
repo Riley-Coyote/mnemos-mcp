@@ -1,10 +1,15 @@
 """Quiet hours: time between sessions that belongs to the agent.
 
-Two kinds, one runner. "mine" is the agent's own hour: it runs every day, and
+Three kinds, one runner. "mine" is the agent's own hour: it runs every day, and
 nothing is asked of it. "ours" is for the day's work, and runs only when there
-was work since the last one. The runner gathers what is waiting from memory
-(read only), puts it after the agent's own words for the hour, and wakes the
-agent with `claude -p`, fenced, as the one model allowed to write as it.
+was work since the last one. "dream" is a short time each night, after the
+deep upkeep, for the part of consolidation only a mind can do: what a fading
+memory taught, whether a thought that keeps coming back is a belief, whether a
+belief still holds, what a new memory changed, and what two memories make side
+by side. It runs only when something waits, and reaches nothing but its
+memory. The runner gathers what is waiting from memory (read only), puts it
+after the agent's own words for the hour, and wakes the agent with
+`claude -p`, fenced, as the one model allowed to write as it.
 
 The engine prepares; the agent lives. Nothing here writes words into memory.
 
@@ -22,6 +27,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import sqlite3
@@ -34,12 +40,12 @@ from .setup.state import hours_dir
 from .simple_scope import resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
-HOUR_KINDS = ("mine", "ours")
+HOUR_KINDS = ("mine", "ours", "dream")
 # The hour's model when the memory has no resident yet (``hour_model``).
 HOUR_MODEL = "claude-opus-5-5"
 # What an hour may spend when nothing sets it otherwise (``budget``).
-DEFAULT_MINUTES = {"mine": 60, "ours": 30}
-DEFAULT_TOKEN_CEILING = {"mine": 400_000, "ours": 200_000}
+DEFAULT_MINUTES = {"mine": 60, "ours": 30, "dream": 20}
+DEFAULT_TOKEN_CEILING = {"mine": 400_000, "ours": 200_000, "dream": 200_000}
 # A host app's budget for the one hour it runs; each wins over the config.
 MINUTES_SETTING = "MNEMOS_HOUR_MINUTES"
 TOKEN_CEILING_SETTING = "MNEMOS_HOUR_TOKEN_CEILING"
@@ -49,15 +55,37 @@ HANDOFF_LINES = 20
 CAPTURE_LINES = 30
 QUESTION_LINES = 5
 LINE_CHARS = 160
-WORDS_FILE = {"mine": "my-hour.md", "ours": "our-hour.md"}
+WORDS_FILE = {"mine": "my-hour.md", "ours": "our-hour.md", "dream": "dream.md"}
 TOOLS = {
     "ours": "Read,Write,Edit,Glob,Grep",
     "mine": "Read,Write,Edit,Glob,Grep,Bash,WebSearch,WebFetch",
+    # A dream is inward: no file, no shell, no web, only its memory's own tools.
+    "dream": "",
 }
 ALLOW = {
     "ours": ("mcp__mnemos",),
     "mine": ("mcp__mnemos", "Bash", "WebSearch", "WebFetch"),
+    "dream": ("mcp__mnemos",),
 }
+# Of its memory's tools, what a dream leaves alone: it is for no one else, so it
+# leaves no note and opens no page, and it writes no handoff over the thread its
+# sessions keep.
+DREAM_DENY = ("mcp__mnemos__mnemos_note", "mcp__mnemos__mnemos_page", "mcp__mnemos__mnemos_handoff")
+# What one dream is given, at most (``_dream_material``): memories fading, each
+# asking what it taught; thoughts that came back on many days, each asking
+# whether it is a belief; new memories asking what they changed; and new
+# memories beside older ones near them in meaning. Every belief comes too, and
+# each one asked whether it still holds.
+DREAM_FADING = 8
+DREAM_RETURNING = 5
+DREAM_NEW = 5
+DREAM_RHYMES = 3
+DREAM_TEXT_CHARS = 320
+# An older memory rhymes with a new one when it is at least this near in
+# meaning, and less near than the second: nearer is the same thought again.
+RHYME_SIMILARITY = (0.45, 0.85)
+RHYME_OLDER = timedelta(days=14)
+RHYME_NEW_LOOKED_AT = 12
 SECRET_PATHS = (
     ".ssh", ".aws", ".gnupg", ".codex", ".config", ".netrc", ".claude.json",
     ".claude/.credentials.json", ".claude-2/.claude.json", "Library/Keychains",
@@ -85,6 +113,21 @@ BOOTSTRAP = {
         "one question, which they can answer right under it.\n\n"
         "If you'd like to wake to your own words next time, write them in "
         "words/our-hour.md in this folder."
+    ),
+    "dream": (
+        "This is your dream: the part of sleep only you can do. Upkeep has linked and "
+        "faded what it could; what's below needs a mind.\n\n"
+        "Answer what you can with mnemos_reflect, in your own words, by the id in "
+        "brackets: what a fading memory taught you, whether a thought that keeps coming "
+        "back is a belief you hold, whether a belief still holds, what a new memory "
+        "changed. Let the rest go; nothing is owed. Where two memories sit side by side, "
+        "see whether they make something together, and if they do, keep it with "
+        "mnemos_capture.\n\n"
+        "Nothing here is for anyone else: no note, no work. If something came, write a "
+        "line in your journal; if nothing did, leave it. When you're done, stop: there's "
+        "no one to tell.\n\n"
+        "If you'd like to wake to your own words next time, write them in "
+        "words/dream.md in your studio, in your own hour."
     ),
 }
 
@@ -191,6 +234,232 @@ def _prompt(kind, agent_id, since, handoffs, captures, questions, latest):
     if len(sections) == 1:
         sections.append("Nothing.")
     return words + "\n\n---\n\n" + "\n\n".join(sections)
+
+
+def _said_in_dreams(records) -> set[str]:
+    """The questions earlier dreams on the live store were given: each is asked
+    in one dream, and then let go (``_dream_material``)."""
+    said: set[str] = set()
+    for record in records:
+        if record.get("kind") == "dream" and record.get("store") == "live":
+            said.update(i for i in record.get("said") or [] if isinstance(i, str))
+    return said
+
+
+def _words_of(store, engram_id) -> tuple[str, str]:
+    """A memory's words, on one line and cut to DREAM_TEXT_CHARS, and the day
+    it was kept; ``("", "")`` when it can't be read."""
+    try:
+        engram = store.get_engram(engram_id)
+    except Exception:
+        return "", ""
+    if engram is None:
+        return "", ""
+    text = " ".join((engram.content or "").split())
+    if len(text) > DREAM_TEXT_CHARS:
+        text = text[:DREAM_TEXT_CHARS - 1] + "…"
+    kept = engram.created_at.isoformat() if hasattr(engram.created_at, "isoformat") else str(engram.created_at or "")
+    return text, kept[:10]
+
+
+def _dream_material(path, since, scope, model, said) -> dict:
+    """What a dream is given, read only. What's fading, oldest asked first; what
+    keeps coming back; every belief, and those asked whether they still hold;
+    what came in since the last dream, newest first; and new memories beside
+    older ones that rhyme (``_rhymes``). Questions a session stopped asking,
+    after three showings unanswered, come too: the dream is the time set aside
+    for them. One an earlier dream was given (``said``) is not given again:
+    asked once more, in its own time, and then let go."""
+    store = ReadOnlyEngramStore(path)
+    try:
+        asked = [q for q in store.pending_reflections(**scope, limit=10_000, reader_model=model,
+                                                       max_surfacings=sys.maxsize)
+                 if q["id"] not in said]
+
+        def given(kind, limit, newest=False):
+            items = [q for q in asked if q["kind"] == kind]
+            if newest:
+                items = [q for q in reversed(items) if (q.get("created_at") or "") > since]
+            out = []
+            for question in items[:limit]:
+                text, kept = _words_of(store, question["target_id"])
+                out.append({**question, "text": text or _line(question.get("excerpt") or ""), "kept": kept})
+            return out
+
+        try:
+            beliefs = [{"id": b.id, "content": " ".join((b.content or "").split()),
+                        "confidence": b.confidence}
+                       for b in store.get_beliefs(scope["agent_id"], active_only=True)]
+        except Exception:
+            beliefs = []
+        material = {
+            "fading": given("lesson", DREAM_FADING),
+            "returning": given("belief", DREAM_RETURNING),
+            "reaffirm": given("reaffirm", 10_000),
+            "new": given("impact", DREAM_NEW, newest=True),
+            "beliefs": beliefs,
+        }
+        material["rhymes"] = _rhymes(store, path, scope, since)
+        return material
+    finally:
+        store.close()
+
+
+def _rhymes(store, path, scope, since) -> list[dict]:
+    """New memories beside older ones near them in meaning: for each memory the
+    agent kept since the last dream, the newest first, the nearest it kept at
+    least RHYME_OLDER before, that no link joins to it already, near enough to
+    rhyme and not so near it says the same again (RHYME_SIMILARITY). At most
+    DREAM_RHYMES, each older memory in one. None where meaning can't be
+    searched on this machine: the dream is given the rest."""
+    try:
+        from .store.embedding_index import EmbeddingIndex
+
+        index = EmbeddingIndex(db_path=str(path), read_only=True)
+        if not index.available:
+            return []
+        conn = store._get_conn()
+        fresh = [dict(row) for row in conn.execute(
+            "SELECT id, content, created_at FROM engrams "
+            "WHERE owner_agent_id=? AND person_id=? AND project_scope=? AND author_kind='agent' "
+            "AND state='active' AND standing=0 AND created_at > ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (scope["agent_id"], scope["person_id"], scope["project_scope"], since, RHYME_NEW_LOOKED_AT),
+        ).fetchall()]
+        if not fresh:
+            return []
+        cutoff = (datetime.now(timezone.utc) - RHYME_OLDER).isoformat()
+        older = {row["id"]: dict(row) for row in conn.execute(
+            "SELECT id, content, created_at FROM engrams "
+            "WHERE owner_agent_id=? AND person_id=? AND project_scope=? AND author_kind='agent' "
+            "AND state IN ('active', 'dormant') AND created_at < ?",
+            (scope["agent_id"], scope["person_id"], scope["project_scope"], cutoff),
+        ).fetchall()}
+        if not older:
+            return []
+        low, high = RHYME_SIMILARITY
+        pairs: list[dict] = []
+        used: set[str] = set()
+        for new in fresh:
+            linked = {row[0] for row in conn.execute(
+                "SELECT target_id FROM connections WHERE source_id=? "
+                "UNION SELECT source_id FROM connections WHERE target_id=?",
+                (new["id"], new["id"]),
+            ).fetchall()}
+            for older_id, similarity in index.search_candidates(
+                    new["content"], [i for i in older if i not in used and i not in linked],
+                    k=5, floor=low, timeout=30):
+                if similarity >= high:
+                    continue
+                then = older[older_id]
+                pairs.append({
+                    "now": {"id": new["id"], "text": _words_of(store, new["id"])[0]},
+                    "then": {"id": older_id, "text": _words_of(store, older_id)[0],
+                             "kept": str(then["created_at"])[:10]},
+                    "similarity": round(similarity, 3),
+                })
+                used.add(older_id)
+                break
+            if len(pairs) >= DREAM_RHYMES:
+                break
+        return pairs
+    except Exception:
+        return []
+
+
+# A question's machinery, which a dream needn't read: the memories it was
+# counted from, and how to answer, which mnemos_reflect's description says.
+_EVIDENCE = re.compile(r"\s*\[(?:evidence|belief):[^\]]*\]")
+_HOW_TO_ANSWER = ("Is there something you believe here?", "Still true? Verdict")
+
+
+def _asked(prompt) -> list[str]:
+    """A question's own lines, without its machinery (``_EVIDENCE``,
+    ``_HOW_TO_ANSWER``), each on one line."""
+    lines = []
+    for line in _EVIDENCE.sub("", prompt or "").splitlines():
+        line = " ".join(line.split())
+        for how in _HOW_TO_ANSWER:
+            if how in line:
+                line = line[:line.index(how)].rstrip()
+        if line:
+            lines.append(line)
+    return lines
+
+
+def _belief_words(prompt) -> str:
+    """The belief a "still true?" question names, between its quotes, without
+    the "…" that marks where the question cut it short; or ``""``."""
+    match = re.search(r'You hold this belief: "(.*)"', " ".join((prompt or "").split()))
+    return match.group(1).rstrip("…").rstrip() if match else ""
+
+
+def _asks_of(belief, words) -> bool:
+    """Whether a "still true?" question's words (``_belief_words``) are this
+    belief's: its words, or the start of them where the question cut them."""
+    return bool(words) and belief.startswith(words[:120])
+
+
+def _dream_prompt(agent_id, material) -> str:
+    words_path = studio_dir(agent_id) / "words" / WORDS_FILE["dream"]
+    words = words_path.read_text().rstrip() if words_path.exists() else BOOTSTRAP["dream"]
+    sections = []
+    if material["fading"]:
+        sections.append("What's fading\n" + "\n".join(
+            f"- {q['text']}" + (f" (kept {q['kept']})" if q["kept"] else "") + f" [{q['target_id']}]"
+            for q in material["fading"]))
+    if material["returning"]:
+        lines = ["What keeps coming back"]
+        for q in material["returning"]:
+            asked = _asked(q["prompt"]) or [_line(q["prompt"])]
+            lines.append(f"- {asked[0]}")
+            lines.extend(f"  {line}" for line in asked[1:])
+            lines.append(f"  [{q['target_id']}]")
+        sections.append("\n".join(lines))
+    if material["beliefs"] or material["reaffirm"]:
+        # A belief asked whether it still holds carries the question's id on its
+        # own line; one whose belief isn't listed is asked on a line of its own.
+        asking = [(_belief_words(q["prompt"]), q) for q in material["reaffirm"]]
+        lines = ["What you believe"]
+        for b in material["beliefs"]:
+            q = next((q for words, q in asking if _asks_of(b["content"], words)), None)
+            if q is not None:
+                asking = [(words, other) for words, other in asking if other is not q]
+            lines.append(f"- {b['content']} (held at {round(b['confidence'] * 100)}%)"
+                         + (f" Still true? [{q['target_id']}]" if q else ""))
+        lines.extend(f"- Still true? {words or _line(q['prompt'])} [{q['target_id']}]"
+                     for words, q in asking)
+        sections.append("\n".join(lines))
+    if material["new"]:
+        sections.append("New since the last dream\n" + "\n".join(
+            f"- {q['text']} [{q['target_id']}]" for q in material["new"]))
+    if material["rhymes"]:
+        sections.append("Side by side\n" + "\n".join(
+            f"- now: {pair['now']['text']} [{pair['now']['id']}]\n"
+            f"  then, {pair['then']['kept']}: {pair['then']['text']} [{pair['then']['id']}]"
+            for pair in material["rhymes"]))
+    if not sections:
+        sections.append("Nothing.")
+    return words + "\n\n---\n\n" + "\n\n".join(sections)
+
+
+def _prepare(kind, store, since, scope, model, agent_id, records):
+    """An hour's prompt, what was waiting for it, why it would skip (``""`` when
+    it wouldn't), and the questions a dream is given (``[]`` for the others)."""
+    if kind == "dream":
+        material = _dream_material(store, since, scope, model, _said_in_dreams(records))
+        waiting = {key: len(material[key]) for key in ("fading", "returning", "reaffirm", "new", "rhymes")}
+        waiting["questions"] = waiting["fading"] + waiting["returning"] + waiting["reaffirm"] + waiting["new"]
+        skip = "" if waiting["questions"] or waiting["rhymes"] else (
+            f"Nothing to dream over: no question waits, and nothing new since {_minute(since)}."
+        )
+        said = [q["id"] for key in ("fading", "returning", "reaffirm", "new") for q in material[key]]
+        return _dream_prompt(agent_id, material), waiting, skip, said
+    handoffs, captures, questions, latest = _gather(kind, store, since, scope, model)
+    waiting = {"handoffs": len(handoffs), "captures": len(captures), "questions": len(questions)}
+    skip = (f"No handoffs or captures since {_minute(since)}."
+            if kind == "ours" and not handoffs and not captures else "")
+    return _prompt(kind, agent_id, since, handoffs, captures, questions, latest), waiting, skip, []
 
 
 def _there(path) -> bool:
@@ -352,10 +621,15 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
     deny.extend(["Read(//**/.env)", "Read(//**/.env.*)"])
     if kind == "mine":
         deny.extend(BASH_DENY)
+    if kind == "dream":
+        deny.extend(DREAM_DENY)
+    # A dream wakes light (who it's with, how they work, where it was), and so
+    # spends nothing a session would: a reply of the person's, a note waiting
+    # for them, a question's turn.
     hook = shlex.join([
         mnemos_bin, "hook", "session-start", "--agent-id", scope["agent_id"],
         "--person-id", scope["person_id"], "--project-scope", scope["project_scope"],
-        "--db-path", str(store),
+        "--db-path", str(store), *(["--wake", "light"] if kind == "dream" else []),
     ])
     settings = {
         "hooks": {"SessionStart": [{"matcher": "*", "hooks": [{
@@ -378,7 +652,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
            "--permission-mode", "acceptEdits", "--permission-prompts", "none",
            "--output-format", "stream-json", "--verbose",
            "--no-session-persistence", "-p"]
-    for directory in folders:
+    for directory in folders if kind != "dream" else []:
         cmd += ["--add-dir", str(directory)]
     return mcp, settings, cmd
 
@@ -489,6 +763,16 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
     }, seen_model is not None
 
 
+def _answered(store, ids) -> list[str]:
+    """Which of these questions have an answer now."""
+    if not ids:
+        return []
+    marks = ", ".join("?" for _ in ids)
+    return [row[0] for row in store._get_conn().execute(
+        f"SELECT id FROM reflection_queue WHERE id IN ({marks}) AND answered_at IS NOT NULL", list(ids),
+    ).fetchall()]
+
+
 def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = None,
              person_id: str | None = None, project_scope: str | None = None,
              dry_run: bool = False, config_dir: str | None = None, store_copy: bool = False,
@@ -510,11 +794,12 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             return {"status": "failed", "reason": unbudgeted}
         if not live.exists():
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
-        since = since_for(kind, _records(records_path))
+        records = _records(records_path)
+        since = since_for(kind, records)
         model, why = hour_model(live, scope)
-        handoffs, captures, questions, latest = _gather(kind, live, since, scope, model or HOUR_MODEL)
-        prompt = _prompt(kind, resolved.agent_id, since, handoffs, captures, questions, latest)
-        skip = why or (f"No handoffs or captures since {_minute(since)}." if kind == "ours" and not handoffs and not captures else "")
+        prompt, waiting, skip, said = _prepare(kind, live, since, scope, model or HOUR_MODEL,
+                                               resolved.agent_id, records)
+        skip = why or skip
         claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
         mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
         if not claude_bin or not mnemos_bin:
@@ -535,7 +820,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         print("\n── command ──\n" + shlex.join(cmd), file=out)
         print("\n── mcp.json ──\n" + json.dumps(mcp, indent=2), file=out)
         print("\n── settings.json ──\n" + json.dumps(settings, indent=2), file=out)
-        return {"dry_run": True, "kind": kind, "skip": skip, "prompt": prompt}
+        return {"dry_run": True, "kind": kind, "skip": skip, "prompt": prompt, "waiting": waiting}
 
     hour_id = _gen_ulid()
     folder = hours / hour_id
@@ -559,7 +844,8 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             except BlockingIOError:
                 record.update(status="skipped", reason="Another hour is running.")
                 return record
-            since = since_for(kind, _records(records_path))
+            records = _records(records_path)
+            since = since_for(kind, records)
             record["since"] = since
             if unbudgeted:
                 record.update(status="failed", reason=unbudgeted)
@@ -586,17 +872,18 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 record.update(status="skipped", reason=why)
                 return record
             record["model"] = model
-            handoffs, captures, questions, latest = _gather(kind, store, since, scope, model)
-            record["waiting"] = {"handoffs": len(handoffs), "captures": len(captures), "questions": len(questions)}
-            if kind == "ours" and not handoffs and not captures:
-                record.update(status="skipped", reason=f"No handoffs or captures since {_minute(since)}.")
+            prompt, waiting, skip, said = _prepare(kind, store, since, scope, model, resolved.agent_id, records)
+            record["waiting"] = waiting
+            if kind == "dream":
+                record["said"] = said
+            if skip:
+                record.update(status="skipped", reason=skip)
                 return record
             claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
             mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
             if not claude_bin or not mnemos_bin:
                 record.update(status="failed", reason="The claude command wasn't found." if not claude_bin else "The mnemos command wasn't found.")
                 return record
-            prompt = _prompt(kind, resolved.agent_id, since, handoffs, captures, questions, latest)
             folder.mkdir(exist_ok=True)
             mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model)
             (folder / "prompt.md").write_text(prompt)
@@ -636,6 +923,8 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 reader = ReadOnlyEngramStore(store)
                 try:
                     record.update(reader.hour_rows(hour_id, **scope))
+                    if kind == "dream":
+                        record["answered"] = _answered(reader, said)
                 finally:
                     reader.close()
             return record

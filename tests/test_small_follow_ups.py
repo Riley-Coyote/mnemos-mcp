@@ -740,7 +740,7 @@ def test_a_session_maintenance_retires_the_pile_too(tmp_path, monkeypatch):
         said = rt.maintain()
     finally:
         rt.close()
-    assert "Dream journal: updated" in said, said
+    assert "Upkeep's report: updated" in said, said
     assert sum(is_active for _, is_active, _ in _reports(db)) == 5
 
 

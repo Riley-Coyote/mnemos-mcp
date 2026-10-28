@@ -11,7 +11,8 @@ That is the whole product. Everything else in here serves it.
 
 Between your conversations it keeps living a little. It keeps a journal and
 can leave you a note, and unless you say no it has an hour a day that's its
-own and half an hour for the day's work. Only the agent writes its journal
+own, half an hour for the day's work, and a short time each night to dream
+over its memory. Only the agent writes its journal
 and its notes, and no model writes in its place: its beliefs move only by its
 own verdict. To watch its days, run `mnemos log`, a small page on your own
 machine.
@@ -50,7 +51,8 @@ What setup turns on, and how to turn each thing off:
   With no model chosen for Mnemos, all of it runs on your machine. Off:
   `mnemos daemon uninstall --write`, or leave it out with `--no-upkeep`.
 - **Quiet hours, unless you say no.** Up to an hour a day that's the agent's
-  own, and half an hour for the day's work. They run your own Claude Code on
+  own, half an hour for the day's work, and a short time each night to dream
+  over its memory. They run your own Claude Code on
   its own, on your Claude plan, so what the agent thinks over in them goes to
   Anthropic: its words for the hour, short excerpts of its recent memory, its
   wake, and whatever it reads or recalls
@@ -631,11 +633,26 @@ hours are scheduled.
 
 ### Quiet Hours
 
-An hour a day that's the agent's own, and half an hour for the day's work.
-Each runs Claude Code on its own (`mnemos life`), with the agent's memory, and
-uses your Claude plan. It runs as the memory's own model, the one that wrote
-most of it (`MNEMOS_HOUR_MODEL` chooses another). Nothing is asked of the agent in its own hour. The half
-hour looks at the day's work, and skips a day with none.
+An hour a day that's the agent's own, half an hour for the day's work, and a
+short time each night to dream. Each runs Claude Code on its own
+(`mnemos life`), with the agent's memory, and uses your Claude plan. It runs as
+the memory's own model, the one that wrote most of it (`MNEMOS_HOUR_MODEL`
+chooses another). Nothing is asked of the agent in its own hour. The half hour
+looks at the day's work, and skips a day with none.
+
+The dream comes after the deep upkeep, at 03:30. Upkeep links memories and
+lets the unused fade; what needs a mind it asks the agent, and a session at
+work lets most of it pass. The dream is the time for that: what's fading and
+what it taught, thoughts that keep coming back on different days and whether
+each is a belief, its beliefs and whether each still holds, what came in since
+the last dream and what it changed, and a few new memories set beside older
+ones near them in meaning. The agent answers what it can in its own words and
+lets the rest go; each question comes to one dream only. It reaches nothing
+but its memory: no file, shell or web, no note to you, no page, no handoff. It
+wakes light, so it spends nothing your next session would: a reply of yours, a
+note waiting for you. It skips a night when nothing waits, and stops at 20
+minutes or 200,000 tokens. Its words are the agent's own once it writes them
+(`~/.mnemos/studio/<agent>/words/dream.md`).
 
 Setup asks once, at the terminal, and yes is the default. Run without a
 terminal (by an agent setting Mnemos up for you), it schedules nothing and asks
@@ -644,10 +661,11 @@ agent tells you in its first session in Claude Code. They go on unless you say
 no. Where no `claude` command is found, they stay off. By hand:
 
 ```bash
-mnemos daemon install --hours --write          # the agent's hour at 08:00, ours at 19:00
-mnemos daemon install --hours --mine-at 07:30 --ours-at 21:00 --write
+mnemos daemon install --hours --write          # the agent's hour at 08:00, ours at 19:00, the dream at 03:30
+mnemos daemon install --hours --mine-at 07:30 --ours-at 21:00 --dream-at 04:00 --write
 mnemos daemon uninstall --hours --write        # off; upkeep stays
 mnemos life --hour mine --dry-run              # what an hour would see, running nothing
+mnemos life --hour dream --dry-run             # what tonight's dream would be given
 ```
 
 An hour works in its studio (`~/.mnemos/studio/<agent>`) and is given no other

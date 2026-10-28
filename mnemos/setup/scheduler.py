@@ -97,7 +97,9 @@ JOBS: tuple[SchedulerJob, ...] = (
 # The quiet hours (mnemos/life.py): time between sessions that belongs to the
 # agent. "mine" is its own hour, every day, with nothing asked of it; "ours"
 # is half an hour for the day's work, which the runner skips on a day with no
-# work. Each runs the person's own Claude Code on its own (`claude -p`), on
+# work; "dream" is a short time each night, after the deep upkeep at 03:00, for
+# what in its memory needs a mind, which the runner skips when nothing waits.
+# Each runs the person's own Claude Code on its own (`claude -p`), on
 # their Claude plan, and what the agent thinks over in it goes to Anthropic,
 # so they are scheduled only when asked for: yes to setup's one question, or
 # `mnemos daemon install --hours` (an app that runs Mnemos for people may keep
@@ -114,6 +116,12 @@ HOUR_JOBS: tuple[SchedulerJob, ...] = (
         args=("life", "--hour", "ours"),
         description="Half an hour for the day's work",
         daily_at=(19, 0),
+    ),
+    SchedulerJob(
+        name="hour-dream",
+        args=("life", "--hour", "dream"),
+        description="A short time each night to dream over its memory",
+        daily_at=(3, 30),
     ),
 )
 
@@ -169,12 +177,15 @@ def hour_jobs(
     *,
     mine_at: tuple[int, int] | None = None,
     ours_at: tuple[int, int] | None = None,
+    dream_at: tuple[int, int] | None = None,
 ) -> list[SchedulerJob]:
-    """The two quiet hours, at the given times or their own (08:00, 19:00)."""
-    mine, ours = HOUR_JOBS
+    """The quiet hours, at the given times or their own (08:00, 19:00, and
+    03:30 for the dream, after the deep upkeep)."""
+    mine, ours, dream = HOUR_JOBS
     return [
         replace(mine, daily_at=mine_at or mine.daily_at),
         replace(ours, daily_at=ours_at or ours.daily_at),
+        replace(dream, daily_at=dream_at or dream.daily_at),
     ]
 
 

@@ -70,9 +70,9 @@ HOUR_ID = re.compile(r"[0-9A-Za-z_-]{1,128}")
 # Folders in the studio that hold tools, not things an hour made.
 NOT_MADE = {"worktrees", "node_modules", "__pycache__"}
 MOST_STUDIO_FILES = 5000
-# A scheduled command that runs the hours: `mnemos … life --hour mine|ours`.
+# A scheduled command that runs the hours: `mnemos … life --hour mine|ours|dream`.
 RUNS_LIFE = re.compile(r"(?:^|[\s/])mnemos(?:\s+\S+)*?\s+life\s")
-HOUR_KIND = re.compile(r"--hour[\s=](mine|ours)\b")
+HOUR_KIND = re.compile(r"--hour[\s=](mine|ours|dream)\b")
 NAMED_AGENT = re.compile(r"--agent-id[\s=](\S+)")
 # A systemd timer that fires once a day, at a time of day.
 ON_CALENDAR = re.compile(r"^OnCalendar=\*-\*-\* (\d{1,2}):(\d{2})(?::\d{2})?\s*$", re.MULTILINE)

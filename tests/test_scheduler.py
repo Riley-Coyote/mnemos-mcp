@@ -393,16 +393,17 @@ class TestQuietHours:
             claude_bin=self.CLAUDE, mnemos_command=self.MNEMOS, **extra
         )
 
-    def test_mine_at_eight_and_ours_at_seven_by_default(self):
-        mine, ours = scheduler.hour_jobs()
+    def test_mine_at_eight_ours_at_seven_and_the_dream_after_the_deep_upkeep_by_default(self):
+        mine, ours, dream = scheduler.hour_jobs()
         assert (mine.name, mine.args, mine.daily_at) == ("hour-mine", ("life", "--hour", "mine"), (8, 0))
         assert (ours.name, ours.args, ours.daily_at) == ("hour-ours", ("life", "--hour", "ours"), (19, 0))
-        moved = scheduler.hour_jobs(mine_at=(6, 45), ours_at=(21, 5))
-        assert [job.daily_at for job in moved] == [(6, 45), (21, 5)]
+        assert (dream.name, dream.args, dream.daily_at) == ("hour-dream", ("life", "--hour", "dream"), (3, 30))
+        moved = scheduler.hour_jobs(mine_at=(6, 45), ours_at=(21, 5), dream_at=(4, 10))
+        assert [job.daily_at for job in moved] == [(6, 45), (21, 5), (4, 10)]
 
     def test_neither_is_upkeep_or_scheduled_by_default(self):
         names = {job.name for job in scheduler.jobs_for(has_model=True)}
-        assert not names & {"hour-mine", "hour-ours"}
+        assert not names & {"hour-mine", "hour-ours", "hour-dream"}
 
     def test_the_environment_finds_claude_and_mnemos_without_a_shell(self):
         env = self._env()
@@ -457,14 +458,14 @@ class TestQuietHours:
         unready = scheduler.plan(agent_id="nova", mnemos_command=self.MNEMOS, has_model=False,
                                  backend="launchd")
         assert unready["hours_ready"] is False
-        assert [entry["job"].name for entry in unready["hours"]] == ["hour-mine", "hour-ours"]
+        assert [entry["job"].name for entry in unready["hours"]] == ["hour-mine", "hour-ours", "hour-dream"]
         assert [entry["job"].name for entry in unready["entries"]] == ["maintain", "maintain-deep"]
 
         ready = scheduler.plan(agent_id="nova", mnemos_command=self.MNEMOS, has_model=False,
                                backend="launchd", hour_env=self._env(),
                                hours=scheduler.hour_jobs(mine_at=(7, 30)))
         assert ready["hours_ready"] is True
-        [mine, _ours] = ready["hours"]
+        [mine, _ours, _dream] = ready["hours"]
         assert plistlib.loads(mine["content"])["StartCalendarInterval"] == {"Hour": 7, "Minute": 30}
         assert mine["environment"] == self._env()
         # Upkeep runs in the same folder, and needs nothing else from the environment.

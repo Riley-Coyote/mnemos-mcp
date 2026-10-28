@@ -4750,8 +4750,14 @@ class EngramStore:
         project_scope: str = "global",
         limit: int = 2,
         reader_model: str = "",
+        max_surfacings: int | None = None,
     ) -> list[dict[str, Any]]:
         """Unanswered reflections worth showing, oldest and least-shown first.
+
+        One shown ``MAX_SURFACINGS`` times unanswered is no longer shown: a
+        session that let it pass three times has answered. ``max_surfacings``
+        is how many showings still count as asking: the dream counts every one
+        (``life._dream_material``), being the time set aside for exactly these.
 
         ``excerpt`` is resolved from the engram **at read time**, and the join
         drops any request whose subject is gone or archived. Both properties
@@ -4791,7 +4797,8 @@ class EngramStore:
             ORDER BY q.surfaced_count ASC, q.created_at ASC
             LIMIT ?
             """,
-            (agent_id, person_id, project_scope, self.MAX_SURFACINGS, now,
+            (agent_id, person_id, project_scope,
+             self.MAX_SURFACINGS if max_surfacings is None else max_surfacings, now,
              *RETIRED_REFLECTION_KINDS, *model_params, limit),
         ).fetchall()
 

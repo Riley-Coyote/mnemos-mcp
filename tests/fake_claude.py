@@ -17,8 +17,9 @@ if scenario == 'early_exit':
     Path(os.environ['FAKE_CLAUDE_LOG']).write_text(json.dumps({'argv': argv}))
     print("error: unknown option '--restricted'", file=sys.stderr, flush=True)
     sys.exit(2)
+prompt = sys.stdin.read()
 Path(os.environ['FAKE_CLAUDE_LOG']).write_text(json.dumps({
-    'argv': argv, 'stdin': sys.stdin.read(),
+    'argv': argv, 'stdin': prompt,
     'env_hour': os.environ.get('MNEMOS_HOUR_ID'),
     'env_config': os.environ.get('CLAUDE_CONFIG_DIR'),
     # Where it started, and the Claude Code settings it would have found
@@ -97,6 +98,21 @@ else:
             'content': [{'type': 'text', 'text': "You've hit your session limit · resets 12:20am"}],
         }})
         emit({'type': 'result', 'is_error': False})
+    elif scenario == 'dream_answers':
+        # A dream answers the first question it was given, by the id the
+        # prompt shows it in brackets, as mnemos_reflect would record it.
+        import re
+        target = re.search(r'\[(engram_[0-9A-Z]+)\]', prompt).group(1)
+        store = EngramStore(path)
+        try:
+            with store.transaction() as conn:
+                conn.execute("UPDATE reflection_queue SET answered_at = '2026-10-28T08:00:00+00:00', "
+                             "answer = 'It taught me to look.' WHERE target_id = ? AND answered_at IS NULL",
+                             (target,))
+        finally:
+            store.close()
+        assistant()
+        emit({'type': 'result', 'is_error': False, 'session_id': 'fake-session', 'usage': usage})
     elif scenario == 'garbage':
         emit({'type': 'assistant', 'message': {}})
         emit({'type': 'assistant'})

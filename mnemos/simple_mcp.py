@@ -724,7 +724,7 @@ def register_simple_tools(server: FastMCP) -> None:
         session introduced itself as, who performed the last maintenance
         cycle, onboarding and verification progress, how many journal
         entries and notes there are and how many replies wait to reach you,
-        and the latest dream journal entry.
+        and upkeep's latest report.
 
         It also watches what should be moving: questions nobody answers, the
         maintenance report the briefing can find, maintenance that changes
@@ -759,10 +759,10 @@ register_simple_tools(simple_mcp)
 
 def _with_card_line(card: str, line: str) -> str:
     """``card`` with ``line`` among its labelled lines: after the last one
-    (``Last dream``), or, on a card without it, just before its closing
-    words."""
+    (``Upkeep's last report``), or, on a card without it, just before its
+    closing words."""
     rows = card.split("\n")
-    at = next((i + 1 for i in range(len(rows) - 1, -1, -1) if rows[i].startswith("Last dream:")), None)
+    at = next((i + 1 for i in range(len(rows) - 1, -1, -1) if rows[i].startswith("Upkeep's last report:")), None)
     if at is None:
         at = max(0, len(rows) - 2)
     rows.insert(at, line)

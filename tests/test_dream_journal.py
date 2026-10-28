@@ -182,7 +182,7 @@ def test_maintain_writes_dream(tmp_path):
         _seed_promotion_candidate(runtime)
 
         result = runtime.maintain()
-        assert "Dream journal: updated" in result
+        assert "Upkeep's report: updated" in result
         assert runtime.last_dream_note_id is not None
         narrative = runtime.last_dream_narrative
         assert narrative is not None
@@ -205,7 +205,7 @@ def test_dream_failure_never_breaks_maintain(tmp_path, monkeypatch):
         monkeypatch.setattr("mnemos.dream_journal.write_dream_entry", _boom)
 
         result = runtime.maintain()
-        assert "Dream journal: skipped (write failed)" in result
+        assert "Upkeep's report: skipped (write failed)" in result
         assert runtime.last_dream_note_id is None
         assert runtime.last_dream_narrative is None
     finally:

@@ -722,10 +722,10 @@ _ONBOARDING_RITUAL = f"{_ONBOARDING_HEAD} Before other work, {_RITUAL_INTRO}\n{_
 # What the first session has the agent tell the person about the quiet hours:
 # what they are and what they cost, in the words setup uses.
 _HOURS_TOLD = (
-    "between sessions you'd have up to an hour a day that's your own, and half an "
-    "hour for the day's work; they run Claude Code on its own, on their Claude plan, "
-    "so they use some of its usage, and what you think over in them goes to "
-    "Anthropic, as your sessions do"
+    "between sessions you'd have up to an hour a day that's your own, half an hour "
+    "for the day's work, and a short time each night to dream over your memory; "
+    "they run Claude Code on its own, on their Claude plan, so they use some of its "
+    "usage, and what you think over in them goes to Anthropic, as your sessions do"
 )
 
 
@@ -6585,7 +6585,7 @@ class MnemosRuntime:
             f"Passes: {', '.join(stats.get('passes_run', [])) or 'none'}",
             *_promotion_lines(promotion),
             f"Model path: {model_note}",
-            f"Dream journal: {dream_status}",
+            f"Upkeep's report: {dream_status}",
             # After the passes, so lessons this cycle distilled are indexed too.
             *_index_lines(self._index_for_recall(index_budget)),
         ]
@@ -7976,7 +7976,7 @@ def format_health_card(data: dict[str, Any]) -> str:
         line("Verification", verification_line),
         line("Last handoff", handoff_line),
         *journal_lines,
-        line("Last dream", dream_line),
+        line("Upkeep's last report", dream_line),
         *continuity_lines,
         "",
         "Everything on this card is safe to relay to the human in plain words.",

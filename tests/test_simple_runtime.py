@@ -661,7 +661,7 @@ def test_health_card_renders_expected_lines(tmp_path):
         "Mnemos health card",
         "Scope:",
         "Verification:",
-        "Last dream:",
+        "Upkeep's last report:",
         "safe to relay",
     ):
         assert needle in card

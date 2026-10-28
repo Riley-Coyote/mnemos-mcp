@@ -335,8 +335,9 @@ def main(argv: list[str] | None = None) -> int:
 
     p_life = sub.add_parser("life", help="Run one quiet hour between sessions (the agent's own, or the day's work)")
     _scope_options(p_life)
-    p_life.add_argument("--hour", choices=["mine", "ours"], required=True,
-                        help="mine: the agent's own hour; ours: the day's work")
+    p_life.add_argument("--hour", choices=["mine", "ours", "dream"], required=True,
+                        help="mine: the agent's own hour; ours: the day's work; "
+                             "dream: a short time each night over its own memory")
     p_life.add_argument("--dry-run", action="store_true",
                         help="Print what would be gathered and run, and run nothing")
     p_life.add_argument("--config-dir",
@@ -814,8 +815,9 @@ def main(argv: list[str] | None = None) -> int:
                 action="store_true",
                 help=(
                     "Also schedule the quiet hours: an hour a day that's the agent's "
-                    "own, and half an hour for the day's work. They run Claude on its "
-                    "own and use your Claude plan."
+                    "own, half an hour for the day's work, and a short time each night "
+                    "to dream over its memory. They run Claude on its own and use your "
+                    "Claude plan."
                 ),
             )
             _p.add_argument(
@@ -825,6 +827,10 @@ def main(argv: list[str] | None = None) -> int:
             _p.add_argument(
                 "--ours-at", type=_clock, default=None, metavar="HH:MM",
                 help="With --hours: when the half hour for the day's work starts (default 19:00)",
+            )
+            _p.add_argument(
+                "--dream-at", type=_clock, default=None, metavar="HH:MM",
+                help="With --hours: when the dream starts (default 03:30, after the deep upkeep at 03:00)",
             )
         if _name == "uninstall":
             _p.add_argument(
@@ -1204,12 +1210,15 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
         return 1
     hours = bool(getattr(args, "hours", False))
     mine_at, ours_at = getattr(args, "mine_at", None), getattr(args, "ours_at", None)
-    if (mine_at or ours_at) and not hours:
-        print("--mine-at and --ours-at set the quiet hours' times: add --hours.", file=sys.stderr)
+    dream_at = getattr(args, "dream_at", None)
+    if (mine_at or ours_at or dream_at) and not hours:
+        print("--mine-at, --ours-at and --dream-at set the quiet hours' times: add --hours.",
+              file=sys.stderr)
         return 1
 
     blueprint = _blueprint(
         args, hours=command == "install" and hours, mine_at=mine_at, ours_at=ours_at,
+        dream_at=dream_at,
     )
     backend = blueprint["backend"]
 
@@ -1236,6 +1245,7 @@ def _blueprint(
     hours: bool = False,
     mine_at: tuple[int, int] | None = None,
     ours_at: tuple[int, int] | None = None,
+    dream_at: tuple[int, int] | None = None,
 ) -> dict:
     """What would be scheduled for this command's scope (``scheduler.plan``).
 
@@ -1260,7 +1270,7 @@ def _blueprint(
         agent_id=scope.agent_id,
         mnemos_command=mnemos_command,
         scope_args=_scope_args(args),
-        hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at),
+        hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at, dream_at=dream_at),
         hour_env=hour_env,
     )
 
@@ -1268,8 +1278,9 @@ def _blueprint(
 # What the quiet hours are, said wherever they're offered or scheduled: what
 # they cost the person, up to an hour and a half a day of Claude on their plan.
 QUIET_HOURS = (
-    "up to an hour a day that's its own, and half an hour for the day's work; "
-    "they run Claude on its own and use your Claude plan"
+    "up to an hour a day that's its own, half an hour for the day's work, and a "
+    "short time each night to dream over its memory; they run Claude on its own "
+    "and use your Claude plan"
 )
 QUIET_HOURS_QUESTION = f"Quiet hours give the agent {QUIET_HOURS}. Turn them on? [Y/n] "
 _HOURS_ON = "mnemos daemon install --hours --write"
@@ -1668,12 +1679,14 @@ def _quiet_hours_setup(blueprint: dict, scope) -> bool:
         print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
         return True
     _state.record_hours_choice(agent_id, "yes")
-    mine, ours = (entry["job"].daily_at for entry in blueprint["hours"])
+    mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
     print(
         f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
-        f"and the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work)."
+        f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
+        f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
     )
-    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM --write")
+    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
+          "--dream-at HH:MM --write")
     print(f"  Turn them off: {_HOURS_OFF}")
     return False
 

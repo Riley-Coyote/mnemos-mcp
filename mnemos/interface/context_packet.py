@@ -1425,7 +1425,7 @@ def _hour_shows(packet: dict[str, Any], dropped: set[tuple[str, str]]) -> str:
     hour = packet.get("hour")
     if not hour or ("report", "") in dropped:
         return ""
-    return {"mine": "- my quiet hour", "ours": "- our hour"}.get(hour.get("kind"), "")
+    return {"mine": "- my quiet hour", "ours": "- our hour", "dream": "- my dream"}.get(hour.get("kind"), "")
 
 
 def _format_tools(packet: dict[str, Any], tools: dict[str, Any]) -> str:

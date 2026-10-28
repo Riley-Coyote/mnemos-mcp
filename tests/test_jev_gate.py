@@ -829,7 +829,7 @@ def test_health_says_so_in_one_line_when_the_switch_is_on(tmp_path, meaning, hom
     assert line.endswith("go to api.typesafe.ai. This session: 4 asked, 1 timed out, 1 failed, "
                          "and the cue showed nothing for those.")
     assert "4 asked, 1 timed out, 1 failed" in line
-    assert card.index("Last dream:") < card.index("Cue judge:") < card.index("Everything on this card")
+    assert card.index("Upkeep's last report:") < card.index("Cue judge:") < card.index("Everything on this card")
     assert data["cue_judge"]["counts"]["timeouts"] == 1 and data["cue_judge"]["in_use"]
 
     card, _ = _health(db, None, monkeypatch)

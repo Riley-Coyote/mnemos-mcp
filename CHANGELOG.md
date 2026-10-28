@@ -13,6 +13,31 @@ under it, and code contributed under that license keeps its notice, in the
 NOTICE. The package keeps its name, `mnemos-continuity`, and its command,
 `mnemos`.
 
+### The dream: what in its memory needs a mind
+
+The upkeep links memories and lets the unused fade, and anything that needs
+judgement it asks the agent: what a fading memory taught, whether a thought
+that keeps coming back is a belief, whether a belief still holds, what a new
+memory changed. Those questions reach it at work, where it lets most of them
+pass, and after three showings the asking stops. On one real memory, 24
+fading memories had asked what they taught and none was ever answered, and
+its seven beliefs had never moved from 40%.
+
+So the quiet hours have a third: the dream, a short time each night after the
+deep upkeep (03:30; `--dream-at` moves it). It is given what's fading, what
+keeps coming back, its beliefs, what came in since the last dream, and a few
+new memories set beside older ones near them in meaning, and it answers in its
+own words or lets each go. A question comes to one dream only, sessions'
+stopped ones included. It reaches nothing but its memory's tools (no file,
+shell or web; no note, page or handoff), wakes light so it spends nothing a
+session would, skips a night when nothing waits, and stops at 20 minutes or
+200,000 tokens. Setup and the first session tell the person about it with the
+other hours. `mnemos life --hour dream --dry-run` shows what it would be given.
+
+The upkeep's own report, which the health card and a maintenance run called
+the dream journal, is "upkeep's report" now: it is the code's account, and the
+dream is the agent's.
+
 ### Your agent's notes, where you can answer them
 
 An agent's notes waited where little showed them: only `mnemos notes`, at a

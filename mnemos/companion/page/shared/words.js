@@ -85,8 +85,8 @@ export function tempWord(k, h) {
   return 'Cold';
 }
 
-export const KIND = { mine: 'Its own hour', ours: 'Our hour' };
-export const KIND_LONG = { mine: 'Its own hour', ours: 'Our hour, for the day’s work' };
+export const KIND = { mine: 'Its own hour', ours: 'Our hour', dream: 'A dream' };
+export const KIND_LONG = { mine: 'Its own hour', ours: 'Our hour, for the day’s work', dream: 'A dream, over its own memory' };
 export const ASK = {
   lesson: ['What did it teach?', 'Memories fading, asked what they taught before they go.'],
   impact: ['What did it change?', 'Memories kept without saying what they changed.'],

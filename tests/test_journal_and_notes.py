@@ -1138,7 +1138,7 @@ def test_health_says_what_the_journal_holds_and_raises_no_alarm(tmp_path):
     assert ("Journal:       2 entries; notes: 1 by the agent, 2 by the person; "
             "2 replies and notes not yet delivered") in both, both
     assert "ATTENTION" not in card, "the journal raised an alarm"
-    assert card.index("Last handoff:") < card.index("Journal:") < card.index("Last dream:")
+    assert card.index("Last handoff:") < card.index("Journal:") < card.index("Upkeep's last report:")
 
 
 def test_the_instructions_carry_the_journal_and_the_note_rules_and_still_fit():

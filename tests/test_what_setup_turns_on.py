@@ -38,7 +38,7 @@ from mnemos.setup import scheduler
 
 SCOPE = ["--agent-id", "nova", "--person-id", "riley", "--project-scope", "demo"]
 LABELS = {f"com.mnemos.nova.{name}" for name in ("maintain", "maintain-deep")}
-HOURS = {f"com.mnemos.nova.{name}" for name in ("hour-mine", "hour-ours")}
+HOURS = {f"com.mnemos.nova.{name}" for name in ("hour-mine", "hour-ours", "hour-dream")}
 
 
 @pytest.fixture
@@ -321,13 +321,15 @@ def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd,
     assert asked == [cli.QUIET_HOURS_QUESTION]
     # In plain words, what they cost: up to an hour and a half a day of Claude,
     # on the person's own plan.
-    assert "up to an hour a day that's its own, and half an hour for the day's work" in asked[0]
+    assert ("up to an hour a day that's its own, half an hour for the day's work, and a short "
+            "time each night to dream over its memory") in asked[0]
     assert "they run Claude on its own and use your Claude plan" in asked[0]
     assert asked[0].endswith("[Y/n] ")
     assert launchd.loaded == LABELS | HOURS
 
     mnemos = cli._mnemos_command()
-    for name, kind, at in (("hour-mine", "mine", (8, 0)), ("hour-ours", "ours", (19, 0))):
+    for name, kind, at in (("hour-mine", "mine", (8, 0)), ("hour-ours", "ours", (19, 0)),
+                           ("hour-dream", "dream", (3, 30))):
         job = _plist(f"com.mnemos.nova.{name}")
         assert job["ProgramArguments"] == [
             mnemos, "--agent-id", "nova", "--person-id", "riley", "--project-scope", "demo",
@@ -340,7 +342,8 @@ def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd,
         assert env["MNEMOS_LIFE_MNEMOS_BIN"] == mnemos
         assert env["PATH"].split(os.pathsep)[0] == str(claude.parent)
     out = capsys.readouterr().out
-    assert "Quiet hours are on: the agent's own hour daily at 08:00, and the day's work at 19:00" in out
+    assert ("Quiet hours are on: the agent's own hour daily at 08:00, the day's work at 19:00 "
+            "(skipped on a day with no work), and its dream at 03:30 (skipped when nothing waits).") in out
     assert "Turn them off: mnemos daemon uninstall --hours --write" in out
 
     # Setup again: they are on, and nobody is asked twice.
@@ -455,7 +458,7 @@ def test_uninstall_hours_takes_off_only_the_hours(launchd, claude, capsys):
     assert main(["daemon", "install", *SCOPE, "--hours", "--write"]) == 0
 
     assert main(["daemon", "uninstall", *SCOPE, "--hours"]) == 0
-    assert "Would remove 2 scheduled job(s)" in capsys.readouterr().out
+    assert "Would remove 3 scheduled job(s)" in capsys.readouterr().out
     assert launchd.loaded == LABELS | HOURS, "a preview removed something"
 
     assert main(["daemon", "uninstall", *SCOPE, "--hours", "--write"]) == 0
@@ -568,6 +571,7 @@ def test_mnemos_log_sees_the_hours_setup_schedules(monkeypatch, os_scheduler, cl
 
     found = sorted(exporter.export()[0]["schedule"], key=lambda hour: hour["kind"])
     assert [(hour["kind"], hour["when"], hour["loaded"]) for hour in found] == [
+        ("dream", {"Hour": 3, "Minute": 30}, True),
         ("mine", {"Hour": 7, "Minute": 30}, True),
         ("ours", {"Hour": 19, "Minute": 0}, True),
     ]
