@@ -119,16 +119,24 @@ export class Room {
     }
     return days.map((day) => {
       const name = dayName(day.d), date = longDay(day.d);
-      return `<section class="day"><h3 class="dayh"><span>${esc(name)}</span>${name === date ? '' : `<span class="date">${esc(date)}</span>`}</h3>${day.items.map((it) => this.eventHTML(it)).join('')}</section>`;
+      // its notes to itself, one after another, gather into one quiet list: they are its working notes, not the story
+      const events = [];
+      for (const it of day.items) {
+        const last = events[events.length - 1];
+        if (it.type === 'left' && last && last.type === 'left') events[events.length - 1] = { t: last.t, type: 'lefts', list: [last.l, it.l] };
+        else if (it.type === 'left' && last && last.type === 'lefts') last.list.push(it.l);
+        else events.push(it);
+      }
+      return `<section class="day"><h3 class="dayh"><span>${esc(name)}</span>${name === date ? '' : `<span class="date">${esc(date)}</span>`}</h3>${events.map((it) => this.eventHTML(it)).join('')}</section>`;
     }).join('') + (items.length > this.s.shown ? '<div class="more-rows"></div>' : '');
   }
 
-  /* One event: its time in the rail, a small label naming what kind of thing happened, then the thing. A quiet hour,
-     the mind's own time, is a raised object; everything else is a quiet line on the page. Long writing opens folded. */
+  /* One event: in the rail, its time and what kind of thing happened (the page's words); beside it, the thing itself
+     (the mind's). A quiet hour, the mind's own time, is a raised object; everything else is a quiet line on the page.
+     Long writing opens folded. */
   eventHTML(it) {
     const { who, life } = this.ctx();
-    const t = `<div class="t">${clock(at(it.t))}</div>`;
-    const kind = (label, right = '') => `<div class="kd"><span>${label}</span>${right}</div>`;
+    const rail = (label, aside = '') => `<div class="t"><span>${clock(at(it.t))}</span><span class="k">${label}</span>${aside ? `<span>${aside}</span>` : ''}</div>`;
     const SHORT = 300;
     if (it.type === 'hour') {
       const h = it.h, k = temperature(h);
@@ -142,9 +150,8 @@ export class Room {
       ].filter(Boolean);
       const temp = `<span class="temp" style="--k:${Math.max(0, Math.min(1, k)).toFixed(3)}"><i></i>${tempWord(k, h).toLowerCase()}</span>`;
       const entries = [...h.journal].reverse();
-      return `<article class="ev hour" data-hour="${esc(h.id)}">${t}<div class="b">
-        ${kind(KIND[h.kind] || esc(h.kind), temp)}
-        <div class="line">${clock(at(h.start))} to ${clock(at(h.end))}${h.minutes != null ? ` · ${h.minutes < 1 ? 'under a minute' : `${Math.round(h.minutes * 10) / 10} minutes`}` : ''}${h.practice ? ' · practice, on a copy of its memory' : ''}</div>
+      return `<article class="ev hour" data-hour="${esc(h.id)}">${rail(KIND[h.kind] || esc(h.kind))}<div class="b">
+        <div class="hl"><div class="line">${clock(at(h.start))} to ${clock(at(h.end))}${h.minutes != null ? ` · ${h.minutes < 1 ? 'under a minute' : `${Math.round(h.minutes * 10) / 10} minutes`}` : ''}${h.practice ? ' · practice, on a copy of its memory' : ''}</div>${temp}</div>
         <div class="sub">${esc(trailSentence(h))}</div>
         ${pics.length ? `<div class="thumbs">${pics.map((f) => `<button class="thumb" type="button" data-pic="${esc(f.picture)}" data-cap="${esc(f.path)}" aria-label="Open ${esc(f.path)}"><img src="${esc(f.picture)}" alt="" loading="lazy"></button>`).join('')}</div>` : ''}
         ${entries.map((e) => `<div class="inner"><div class="kd small">Its journal${e.mood ? ` · ${esc(e.mood)}` : ''}</div>${this.entry(e.id, e.text, SHORT)}</div>`).join('')}
@@ -153,32 +160,33 @@ export class Room {
     }
     if (it.type === 'journal') {
       const e = it.e;
-      return `<div class="ev">${t}<div class="b">${kind('Journal', e.mood ? `<span class="aside">${esc(e.mood)}</span>` : '')}${this.entry(e.id, e.text, SHORT)}</div></div>`;
+      return `<div class="ev">${rail('Journal', e.mood ? esc(e.mood) : '')}<div class="b">${this.entry(e.id, e.text, SHORT)}</div></div>`;
     }
     if (it.type === 'note') {
       const n = it.n, mine = n.author === 'agent';
-      return `<div class="ev">${t}<div class="b">${kind(mine ? `A note ${esc(forPerson(who))}` : `From ${esc(person(who))}`, mine ? `<span class="aside">${n.read ? 'read' : 'not yet read'}</span>` : '')}${this.own(n.id, n.text, 'text note', SHORT)}</div></div>`;
+      return `<div class="ev">${rail(mine ? `A note ${esc(forPerson(who))}` : `From ${esc(person(who))}`, mine ? (n.read ? 'read' : 'not yet read') : '')}<div class="b">${this.own(n.id, n.text, 'text note', SHORT)}</div></div>`;
     }
-    if (it.type === 'left') {
-      // its notes often open with a signature line ("Left by …, date, session …"); preview what comes after it
-      const l = it.l, lines = l.text.split('\n').filter((x) => x.trim());
-      const lead = lines.length > 1 && /^left by /i.test(lines[0]) ? lines.slice(1).join('\n') : l.text;
-      return `<div class="ev slim">${t}<div class="b">${kind('Note to itself', l.model && !sameModel(l.model, who.model) ? `<span class="aside">signed ${esc(modelName(l.model))}</span>` : '')}
-        <div class="sub one">${esc(firstLine(lead, 200))}</div>
-        <details data-key="left-${esc(l.at)}"><summary>Read it</summary><div class="text plain">${esc(l.text)}</div></details></div></div>`;
+    if (it.type === 'left' || it.type === 'lefts') {
+      // its notes often open with a signature line ("Left by …, date, session …"); each line shows what comes after it.
+      // One note keeps its time in the rail; a run of them keeps each time beside its own line.
+      const list = it.type === 'lefts' ? it.list : [it.l], one = list.length === 1;
+      const lead = (l) => { const lines = l.text.split('\n').filter((x) => x.trim()); return lines.length > 1 && /^left by /i.test(lines[0]) ? lines.slice(1).join('\n') : l.text; };
+      const signed = (l) => (l.model && !sameModel(l.model, who.model) ? ` · signed ${esc(modelName(l.model))}` : '');
+      return `<div class="ev slim">${one ? rail('Note to itself') : '<div class="t"><span class="k">Notes to itself</span></div>'}<div class="b"><ul class="lefts${one ? ' one' : ''}">${list.map((l) =>
+        `<li><details data-key="left-${esc(l.at)}"><summary>${one ? '' : `<span class="w">${clock(at(l.at))}</span>`}<span class="f">${esc(firstLine(lead(l), 200))}${signed(l)}</span></summary><div class="text plain">${esc(l.text)}</div></details></li>`).join('')}</ul></div></div>`;
     }
     if (it.type === 'answer') {
       const a = it.a;
-      return `<div class="ev">${t}<div class="b">${kind('Answered its memory')}<div class="qline">${esc(question(a.prompt))}</div><div class="text note">${esc(a.answer)}</div></div></div>`;
+      return `<div class="ev">${rail('Answered its memory')}<div class="b"><div class="qline">${esc(question(a.prompt))}</div><div class="text note">${esc(a.answer)}</div></div></div>`;
     }
     if (it.type === 'belief') {
       const { b, x } = it, up = (x.to ?? 0) > (x.from ?? 0);
-      return `<div class="ev">${t}<div class="b">${kind('Belief', `<span class="aside">${up ? 'held more firmly' : 'held less firmly'} · ${Math.round((x.from ?? 0) * 100)}% → ${Math.round((x.to ?? 0) * 100)}%</span>`)}<div class="text clamp2">${esc(b.text)}</div></div></div>`;
+      return `<div class="ev">${rail('Belief', `${up ? 'more firmly' : 'less firmly'}, ${Math.round((x.from ?? 0) * 100)}% → ${Math.round((x.to ?? 0) * 100)}%`)}<div class="b"><div class="text clamp2">${esc(b.text)}</div></div></div>`;
     }
     if (it.type === 'formed') {
       const list = it.list;
       const rows = [...list].reverse().slice(0, 12).map((m) => `<li><button class="rowb" data-mem="${esc(m.id)}"><div class="meta"><span>${clock(at(m.born))}</span>${m.lesson ? '<span class="k2">a lesson</span>' : ''}</div><div class="words">${esc(m.content)}</div></button></li>`).join('');
-      return `<div class="ev slim">${t}<div class="b">${kind('Memories')}<div class="sub one">Formed ${plural(list.length, 'memory', 'memories')}</div>
+      return `<div class="ev slim">${rail('Memories')}<div class="b"><div class="sub one">Kept ${plural(list.length, 'memory', 'memories')}</div>
         <details data-key="formed-${esc(list[0].born)}"><summary>${list.length === 1 ? 'Read it' : 'Read them'}</summary><ul class="rows">${rows}</ul>${list.length > 12 ? `<p class="count">and ${list.length - 12} more, in Memories</p>` : ''}</details></div></div>`;
     }
     return '';
@@ -267,7 +275,7 @@ export class Room {
     const answered = Q.answered.map((a) => `<li><button class="rowb" ${byId.has(a.about) ? `data-mem="${esc(a.about)}"` : 'disabled'}>
       <div class="meta"><span class="k">${(ASK[a.kind] || [a.kind])[0]}</span><span>answered ${shortDay(at(a.at))}</span></div>
       <div class="q">${esc(question(a.prompt))}</div><div class="ans">${esc(a.answer)}</div></button></li>`).join('');
-    return `<div class="kinds" role="group" aria-label="Kinds of question">${kinds.map(([k, n]) => `<button class="kindb" data-qkind="${k}" aria-pressed="${this.s.qkind === k}"><b>${n}</b><span>${(ASK[k] || [k])[0]}</span></button>`).join('')}</div>
+    return `<div class="kinds" role="group" aria-label="Kinds of question">${kinds.map(([k, n]) => `<button class="kindb" data-qkind="${k}" aria-pressed="${this.s.qkind === k}"><span>${(ASK[k] || [k])[0]}</span><b>${n}</b></button>`).join('')}</div>
       <p class="note-k">${this.s.qkind !== 'all' && ASK[this.s.qkind] ? esc(ASK[this.s.qkind][1]) + ' ' : ''}Open a question to read the memory it’s about.${this.s.qkind !== 'all' ? ' <button class="chip" data-qkind="all">Show every kind</button>' : ''}</p>
       <ul class="rows" style="margin-top:var(--s3)">${rows}</ul>${list.length > this.s.shown ? '<div class="more-rows"></div>' : ''}
       ${answered ? `<span class="label sub-h">Answered, in its words</span><ul class="rows" style="margin-top:var(--s2)">${answered}</ul>` : ''}`;

@@ -507,7 +507,7 @@ def test_every_font_ships_with_its_license():
     files = page_files()
     css = files["shared/fonts.css"].decode("utf-8")
     fonts = re.findall(r"url\(\.\./fonts/([\w.-]+)\)", css)
-    assert len(fonts) == 6
+    assert len(fonts) == 7
     for font in fonts:
         assert f"fonts/{font}" in files, font
     for family in ("Inter", "InterTight", "CormorantGaramond", "Silkscreen"):

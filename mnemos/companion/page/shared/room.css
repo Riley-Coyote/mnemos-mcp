@@ -2,10 +2,16 @@
    Everything a mind holds, clean and readable. Anything you read is set in Inter; the serif is kept for what works
    as a title: a journal entry's first sentence, and a belief, which is one statement.
 
+   Its words lead; the page keeps quiet. What the mind wrote is set to be read; what the page says about it (what
+   kind of thing, when, how warm) stays small, in sentence case, mostly in the rail beside the time.
+
    Structure comes from tone and space, never from divider lines (Riley: hairlines make an interface busy, not
-   organized). Three steps of surface: the floor, a card for each section or entry, and a nested card for what sits
-   inside one. On a raised sheet (a drawer) every card steps one tone up, so it still stands out. The only
-   lines left carry meaning: the bar of how firmly a belief is held, and the mark under the open tab. */
+   organized). Two steps of surface: the floor, and a card for each section or entry, lit from one light above (on
+   black a hairline of light along its top and a faint wash down its face; by day a soft shadow below). Nothing nests
+   a card in a card. On a raised sheet (a drawer) every card steps one tone up, so it still stands out. The only lines
+   left carry meaning: the bar of how firmly a belief is held, and the mark under the open tab.
+
+   Dark and light are each designed: dark is the page's own, light follows the system's setting. */
 :root{
   --floor:#060608;--surface-1:#0d0d11;--surface-2:#141419;--surface-3:#1b1b21;--surface-4:#212128;
   --raised:var(--surface-1);--raised-2:var(--surface-2);
@@ -19,10 +25,27 @@
   --t-own-l:19px;--t-own:17.5px;--t-own-s:16.5px;--t-read:15px;--t-read-s:14px;--t-body:13.5px;--t-small:12.5px;--t-micro:11.5px;--t-label:10.5px;
   --s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;--s7:48px;--s8:72px;
   --r:14px;--r-s:10px;--quick:.18s;--calm:.45s;--ease:cubic-bezier(.2,.7,.2,1);
+  --glow:236,239,244;                                   /* the warmth's light: the ink's own colour */
+  --lit:rgba(255,255,255,.06);--wash:rgba(255,255,255,.02);--lift:0 0 #0000;   /* light from above, on black */
+  --track:var(--surface-1);--thumb:var(--surface-3);--thumb-shadow:0 1px 2px rgba(0,0,0,.45);
+  color-scheme:dark;
+}
+/* by day: clean neutrals on a grey floor, the cards white and lifted by a soft shadow below. Every grey that carries
+   words passes WCAG AA for small text on the floor and on a card. */
+@media (prefers-color-scheme:light){
+  :root{
+    --floor:#f5f5f7;--surface-1:#ffffff;--surface-2:#f0f0f3;--surface-3:#e8e8ec;--surface-4:#e0e0e5;
+    --ink-1:#16161a;--ink-2:#46464d;--ink-3:#595960;--ink-4:#68686f;
+    --hair:rgba(0,0,0,.08);--hair-2:rgba(0,0,0,.14);--focus:rgba(0,0,0,.45);
+    --signal:#3a6ec2;--glow:22,22,26;
+    --lit:transparent;--wash:transparent;--lift:0 1px 2px rgba(0,0,0,.05),0 4px 16px rgba(0,0,0,.045);
+    --track:#e9e9ed;--thumb:#ffffff;--thumb-shadow:0 1px 2px rgba(0,0,0,.12),0 0 0 .5px rgba(0,0,0,.05);
+    color-scheme:light;
+  }
 }
 /* on a raised sheet, the cards step up one tone */
 .sheet{--card:var(--surface-2);--card-in:var(--surface-3);--card-hover:var(--surface-3);--card-press:var(--surface-4)}
-.label{font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+.label{font:500 var(--t-small)/1.2 var(--sans);color:var(--ink-3)}
 
 /* tabs: the categories, one row; the mark under the open one is the only line here */
 .tabs{display:flex;gap:var(--s4);overflow-x:auto;scrollbar-width:none}
@@ -86,7 +109,7 @@
 .detail .words{margin-top:var(--s4);max-width:66ch;font:400 16px/1.7 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
 .detail .changed{margin-top:var(--s5);padding:14px 16px;border-radius:var(--r-s);background:var(--card)}
 .detail .changed p{margin-top:var(--s2);font:400 var(--t-read)/1.65 var(--sans);color:var(--ink-1)}
-.detail h3{margin:var(--s6) 0 var(--s3);font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-4)}
+.detail h3{margin:var(--s6) 0 var(--s3);font:500 var(--t-small)/1.2 var(--sans);color:var(--ink-3)}
 .detail .lines{color:var(--ink-2);font-size:var(--t-body);list-style:none;display:grid;gap:6px}
 .detail .lines li{padding:10px 14px;border-radius:var(--r-s);background:var(--card)}
 .detail .lines .a{display:block;margin-top:4px;font:400 var(--t-read-s)/1.55 var(--sans);color:var(--ink-1)}
@@ -94,29 +117,31 @@
 .detail .mindlink{display:inline-block;margin-top:var(--s5);font-size:var(--t-small)}
 
 /* beliefs: each one a card */
-.belief{padding:var(--s5);border-radius:var(--r);background:var(--card)}
+.belief{padding:var(--s5);border-radius:var(--r);background:linear-gradient(180deg,var(--wash),transparent 45%),var(--card);box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
 .belief + .belief{margin-top:var(--s2)}
 .note-k + .belief{margin-top:var(--s4)}
-.belief .words{font:400 21px/1.38 var(--own);color:var(--ink-1);max-width:58ch}
+.belief > .words{font:400 21px/1.38 var(--own);color:var(--ink-1);max-width:58ch}   /* the belief itself; the memory under it keeps the row type */
 .held{margin-top:var(--s4);height:1px;background:var(--hair-2);position:relative}
 .held i{position:absolute;left:0;top:-1px;height:3px;background:var(--ink-2)}
 .belief .sign{margin-top:var(--s3);color:var(--ink-3);font-size:var(--t-micro);line-height:1.6}
-.belief .rows{margin-top:var(--s4);--card:var(--card-in);--card-hover:var(--surface-3);--card-press:var(--surface-4)}
+/* the memory a belief rests on: a line inside the belief, not a card inside a card; it lights when you point at it */
+.belief .rows{margin-top:var(--s4);--card:transparent;--card-hover:var(--card-in);--card-press:var(--surface-3)}
+.belief .rowb{margin:0 -12px;padding:10px 12px;width:calc(100% + 24px)}
 
-/* questions: their kinds, counted */
-.kinds{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:var(--s2);margin-top:var(--s4)}
-.kindb{all:unset;cursor:pointer;padding:var(--s3) 14px;border:1px solid transparent;border-radius:var(--r-s);background:var(--card);transition:border-color var(--quick),background var(--quick)}
-.kindb b{display:block;font:250 26px/1 var(--display);letter-spacing:-.02em}
-.kindb span{display:block;margin-top:6px;color:var(--ink-3);font-size:var(--t-micro);line-height:1.35}
-.kindb:hover{background:var(--card-hover)}
-.kindb:focus-visible{border-color:var(--focus)}
-.kindb:active{background:var(--card-press)}
-.kindb[aria-pressed="true"]{background:var(--card-press)}
-.kindb[aria-pressed="true"] span{color:var(--ink-1)}
+/* questions: their kinds, counted; a row of filters, each its question and then its count */
+.kinds{display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);margin-top:var(--s4)}
+.kindb{all:unset;cursor:pointer;display:inline-flex;align-items:baseline;gap:6px;padding:4px 0;border-bottom:1px solid transparent;color:var(--ink-3);font-size:var(--t-small);
+  transition:color var(--quick),border-color var(--quick)}
+.kindb b{font-weight:400;font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.kindb:hover{color:var(--ink-1)}
+.kindb:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
+.kindb:active{color:var(--ink-2)}
+.kindb[aria-pressed="true"]{color:var(--ink-1);border-bottom-color:var(--ink-3)}
+.kindb[aria-pressed="true"] b{color:var(--ink-1)}
 .sub-h{display:block;margin:var(--s7) 0 var(--s2)}
 
 /* the journal and notes: whole entries, each a card */
-.jentry{padding:var(--s5);border-radius:var(--r);background:var(--card)}
+.jentry{padding:var(--s5);border-radius:var(--r);background:linear-gradient(180deg,var(--wash),transparent 45%),var(--card);box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
 .jentry + .jentry{margin-top:var(--s2)}
 .jentry .t-own{margin-top:var(--s3);font:400 23px/1.3 var(--own);color:var(--ink-1);max-width:46ch}
 .jentry .text{margin-top:var(--s3);max-width:66ch;font:400 var(--t-read)/1.7 var(--sans);color:var(--ink-1);white-space:pre-wrap;overflow-wrap:anywhere}
@@ -125,24 +150,26 @@
 .fold:focus-visible{color:var(--ink-1);border-bottom-color:var(--focus)}
 .fold:active{color:var(--ink-2)}
 
-/* the log: a mind's days, newest first. Space separates the days and events. Each event says what kind of thing it
-   was in a small label you can scan. A quiet hour is a card, its writing in nested cards; the rest are quiet lines. */
+/* the log: a mind's days, newest first. Space separates the days and events. The rail beside each one holds the time
+   and, below it, what kind of thing it was, so the column to its right is only the mind's own words. A quiet hour is
+   an object, lit from above; its notes to itself, working notes, gather into one quiet list; the rest are lines. */
 .day{margin-top:var(--s7)}
 .day:first-child{margin-top:var(--s4)}
-.dayh{display:flex;align-items:baseline;gap:var(--s3);margin-bottom:var(--s2);
-  font:500 var(--t-label)/1 var(--sans);letter-spacing:.16em;text-transform:uppercase;color:var(--ink-2)}
-.dayh .date{color:var(--ink-4);letter-spacing:.12em}
-.ev{position:relative;display:grid;grid-template-columns:64px minmax(0,1fr);column-gap:var(--s4);padding:20px 0}
+.dayh{display:flex;align-items:baseline;gap:var(--s3);margin-bottom:var(--s3);font:500 var(--t-read)/1.2 var(--sans);letter-spacing:-.005em;color:var(--ink-1)}
+.dayh .date{font-weight:400;color:var(--ink-4);letter-spacing:0}
+.ev{position:relative;display:grid;grid-template-columns:96px minmax(0,1fr);column-gap:var(--s4);padding:20px 0}
 .ev.slim{padding:18px 0}
 /* between posts, one quiet line across the writing only, so the times stay one clean column; an hour card is set apart
    by its own surface, so no line runs beside one */
-.ev + .ev::before{content:"";position:absolute;top:0;left:calc(64px + var(--s4));right:0;height:1px;background:var(--hair)}
+.ev + .ev::before{content:"";position:absolute;top:0;left:calc(96px + var(--s4));right:0;height:1px;background:var(--hair)}
 .ev.hour + .ev::before,.ev + .ev.hour::before{display:none}
-.ev .t{color:var(--ink-4);font-size:var(--t-micro);font-variant-numeric:tabular-nums;padding-top:1px}
-.kd{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);font:500 var(--t-label)/1.2 var(--sans);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
-.kd .aside{font:400 var(--t-micro)/1.2 var(--sans);letter-spacing:0;text-transform:none;color:var(--ink-4);text-align:right}
-.kd.small{margin-top:0;color:var(--ink-4);letter-spacing:.12em}
-.ev .line{margin-top:var(--s2);color:var(--ink-2);font-size:var(--t-small)}
+.ev .t{display:flex;flex-direction:column;gap:3px;color:var(--ink-4);font-size:var(--t-micro);line-height:1.35;font-variant-numeric:tabular-nums;padding-top:2px}
+.ev .t .k{color:var(--ink-3)}                            /* what kind of thing it was: the page's word, kept in the rail */
+.kd{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);font:500 var(--t-micro)/1.3 var(--sans);color:var(--ink-3)}
+.kd .aside{font-weight:400;color:var(--ink-4);text-align:right}
+.kd.small{margin-top:0;color:var(--ink-4)}
+.ev .line{color:var(--ink-2);font-size:var(--t-small)}
+.ev .hl{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3)}
 .ev .sub{margin-top:var(--s2);color:var(--ink-2);font-size:var(--t-small);max-width:68ch}
 .ev .sub.one{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .t-own{font:400 21px/1.32 var(--own);color:var(--ink-1);letter-spacing:-.003em}
@@ -156,12 +183,13 @@
 .ev .thumbs{margin-top:var(--s4);display:flex;gap:var(--s2);flex-wrap:wrap}
 /* the hour: an object, because it is one: the mind's own time, holding what it wrote and made */
 .ev.hour{padding:var(--s3) 0}
-.ev.hour .b{padding:var(--s4) var(--s5) var(--s5);border-radius:var(--r);background:var(--card)}
+.ev.hour .b{padding:var(--s4) var(--s5) var(--s5);border-radius:var(--r);background:linear-gradient(180deg,var(--wash),transparent 45%),var(--card);
+  box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
 .ev.hour .t{padding-top:calc(var(--s4) + 1px)}
-.ev .inner{margin-top:var(--s3);padding:14px 18px 16px;border-radius:var(--r-s);background:var(--card-in)}
+.ev .inner{margin-top:var(--s5)}                        /* what the hour wrote: set apart by space, not another card */
 .ev .thumbs + .inner{margin-top:var(--s4)}
 .temp{display:inline-flex;align-items:center;gap:6px;font:400 var(--t-micro)/1 var(--sans);letter-spacing:0;text-transform:none;color:var(--ink-2)}
-.temp i{width:6px;height:6px;border-radius:50%;--k:0;background:rgba(236,239,244,calc(.25 + .7 * var(--k)));box-shadow:0 0 calc(1px + 8px * var(--k)) rgba(236,239,244,calc(.4 * var(--k)))}
+.temp i{width:6px;height:6px;border-radius:50%;--k:0;background:rgba(var(--glow),calc(.25 + .7 * var(--k)));box-shadow:0 0 calc(1px + 8px * var(--k)) rgba(var(--glow),calc(.4 * var(--k)))}
 .thumb{all:unset;cursor:zoom-in;width:96px;height:96px;border:1px solid transparent;border-radius:var(--r-s);overflow:hidden;background:var(--card-in);transition:border-color var(--quick)}
 .thumb img{width:100%;height:100%;object-fit:cover;display:block;opacity:.9;transition:opacity var(--quick)}
 .thumb:hover img{opacity:1}
@@ -174,15 +202,30 @@
 .ev summary:focus-visible{outline:none;color:var(--ink-1);border-bottom-color:var(--focus)}
 .ev details .text.plain{max-width:68ch;margin-top:var(--s3);padding:14px 16px;border-radius:var(--r-s);background:var(--card);font:400 var(--t-small)/1.6 var(--sans);color:var(--ink-2)}
 .ev .rows{margin-top:var(--s3)}
+/* its notes to itself: working notes, one line each, opened in place */
+.lefts{list-style:none;display:grid;gap:2px}
+.lefts summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:56px minmax(0,1fr);gap:var(--s3);align-items:baseline;padding:3px 0;
+  color:var(--ink-2);font-size:var(--t-small);transition:color var(--quick)}
+.lefts summary::-webkit-details-marker{display:none}
+.lefts summary .w{color:var(--ink-4);font-size:var(--t-micro);font-variant-numeric:tabular-nums}
+.lefts summary .f{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lefts summary:hover{color:var(--ink-1)}
+.lefts summary:focus-visible{outline:none;color:var(--ink-1);box-shadow:inset 0 -1px 0 var(--focus)}
+.lefts details[open] summary{color:var(--ink-1)}
+.lefts details[open] summary .f{white-space:normal}
+.lefts details .text.plain{margin:var(--s2) 0 var(--s3)}
+.lefts.one summary{grid-template-columns:minmax(0,1fr)}
+/* the mind's own words, once on the page: its newest note to you */
+.voice{font:italic 300 19px/1.42 var(--own);letter-spacing:.003em;color:var(--ink-1)}
 .ev .fold{margin-top:var(--s2)}
 
 @media (max-width:520px){
-  .kinds{grid-template-columns:repeat(2,minmax(0,1fr))}
   .ev{grid-template-columns:1fr;row-gap:var(--s2)}
+  .ev .t{flex-direction:row;flex-wrap:wrap;gap:0 var(--s2)}
+  .ev .t > span + span::before{content:"· ";color:var(--ink-4)}
   .ev + .ev::before{left:0}
   .ev.hour .t{padding-top:0}
   .ev.hour .b{padding:var(--s4)}
-  .ev .inner{padding:12px 14px 14px}
   .belief,.jentry{padding:var(--s4)}
   .thumb{width:72px;height:72px}
 }

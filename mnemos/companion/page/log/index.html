@@ -28,7 +28,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
 .state b{font-weight:450;color:var(--ink-1)}
 /* the warmth, as one point of light: as bright as the mind still is, a hollow ring once it's cold */
 .dot{flex:none;width:9px;height:9px;margin-top:27px;border-radius:50%;--k:0;
-  background:rgba(236,239,244,calc(.18 + .76 * var(--k)));box-shadow:0 0 calc(2px + 12px * var(--k)) rgba(236,239,244,calc(.45 * var(--k)));
+  background:rgba(var(--glow),calc(.18 + .76 * var(--k)));box-shadow:0 0 calc(2px + 12px * var(--k)) rgba(var(--glow),calc(.45 * var(--k)));
   transition:background 1.6s var(--ease),box-shadow 1.6s var(--ease)}
 .dot.cold{background:transparent;box-shadow:inset 0 0 0 1px var(--ink-3)}
 .verify{margin-top:var(--s4);padding-left:21px;display:flex;flex-wrap:wrap;gap:2px var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
@@ -43,8 +43,8 @@ main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
 :root{--glide:cubic-bezier(.32,.72,0,1)}
 .scroller{overflow-x:auto;scrollbar-width:none;padding:2px 0}
 .scroller::-webkit-scrollbar{display:none}
-.track{position:relative;display:inline-flex;padding:4px;border-radius:999px;background:var(--surface-1)}
-.marker{position:absolute;top:4px;bottom:4px;left:0;width:0;border-radius:999px;background:var(--surface-3);box-shadow:0 1px 2px rgba(0,0,0,.45);pointer-events:none;
+.track{position:relative;display:inline-flex;padding:4px;border-radius:999px;background:var(--track)}
+.marker{position:absolute;top:4px;bottom:4px;left:0;width:0;border-radius:999px;background:var(--thumb);box-shadow:var(--thumb-shadow);pointer-events:none;
   transition:transform .48s var(--glide),width .48s var(--glide)}
 .marker.still{transition:none}
 .nav .tabs{position:relative;z-index:1;gap:2px;overflow:visible}
@@ -64,7 +64,8 @@ main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
 .margin{grid-column:10/span 3;padding-top:var(--s5);align-self:start}
 /* it stays in view while you read, but only when the whole stack fits the window (set by log.js) */
 .margin.stick{position:sticky;top:56px}
-.panel{padding:14px 16px;border-radius:var(--r);background:var(--surface-1)}
+/* each panel an object, lit from one light above */
+.panel{padding:14px 16px;border-radius:var(--r);background:linear-gradient(180deg,var(--wash),transparent 45%),var(--surface-1);box-shadow:inset 0 1px 0 var(--lit),var(--lift)}
 .panel + .panel{margin-top:10px}
 .m-h{display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);margin-bottom:10px}
 .m-h .label{color:var(--ink-3)}
@@ -75,6 +76,7 @@ main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
 .m-item + .m-item{margin-top:14px}
 .m-item .text{font:400 13.5px/1.55 var(--sans);color:var(--ink-1);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:3;overflow:hidden}
 .m-item .text.two{-webkit-line-clamp:2;font:400 16.5px/1.38 var(--own)}  /* a belief: one statement, set as a title */
+.m-item .text.voice{font:italic 300 18.5px/1.4 var(--own);-webkit-line-clamp:5}   /* its newest note to you: the mind's own words, once */
 .m-item .by{margin-top:6px;color:var(--ink-4);font-size:var(--t-micro)}
 .m-item .q{color:var(--ink-3);font-size:var(--t-micro)}
 .m-item .ask{margin-top:4px;color:var(--ink-2);font-size:var(--t-small);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -84,13 +86,15 @@ main{max-width:1180px;margin:0 auto;padding:28px 28px 96px}
 .strength{margin-top:6px;display:grid;grid-template-columns:1fr auto;align-items:center;gap:var(--s3);color:var(--ink-4);font-size:var(--t-micro)}
 .held.thin{display:block;margin:0;height:1px}
 .held.thin i{top:0;height:1px;background:var(--ink-2)}
-.m-counts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--s2)}
-.m-count{all:unset;box-sizing:border-box;cursor:pointer;padding:9px 11px;border:1px solid transparent;border-radius:var(--r-s);background:var(--surface-2);transition:border-color var(--quick),background var(--quick)}
-.m-count b{display:block;font:250 19px/1 var(--display);letter-spacing:-.02em;color:var(--ink-1)}
-.m-count span{display:block;margin-top:4px;color:var(--ink-3);font-size:var(--t-micro);line-height:1.25}
-.m-count:hover{background:var(--surface-3)}
+/* what its memory asks: each kind a row, its question then its count, the counts in one column */
+.m-counts{display:grid;gap:1px}
+.m-count{all:unset;box-sizing:border-box;cursor:pointer;display:flex;justify-content:space-between;align-items:baseline;gap:var(--s3);margin:0 -8px;padding:6px 8px;
+  border:1px solid transparent;border-radius:var(--r-s);transition:border-color var(--quick),background var(--quick)}
+.m-count span{color:var(--ink-2);font-size:var(--t-small)}
+.m-count b{font:400 var(--t-small)/1.2 var(--sans);font-variant-numeric:tabular-nums;color:var(--ink-1)}
+.m-count:hover{background:var(--surface-2)}
 .m-count:focus-visible{border-color:var(--focus)}
-.m-count:active{background:var(--surface-4)}
+.m-count:active{background:var(--surface-3)}
 .m-counts + .m-item{margin-top:var(--s4)}
 .m-item details summary{list-style:none;cursor:pointer;display:inline-block;margin-top:6px;color:var(--ink-3);font-size:var(--t-small);border-bottom:1px solid transparent;transition:color var(--quick),border-color var(--quick)}
 .m-item details summary::-webkit-details-marker{display:none}

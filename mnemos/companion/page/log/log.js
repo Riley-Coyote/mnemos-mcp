@@ -70,7 +70,7 @@ function marginHTML() {
   const panel = (attrs, inner) => `<section class="panel" ${attrs}>${inner}</section>`;
   const parts = [];
   parts.push(panel('data-for="notes"', head(who.person ? `For ${esc(who.person)}` : 'For you', notes.length ? go('notes', `All ${notes.length} →`) : '')
-    + (notes.length ? notes.slice(0, 2).map((n) => `<div class="m-item"><div class="text note">${esc(n.text)}</div><div class="by">${when(n.at)} · ${n.read ? 'read' : 'not yet read'}</div></div>`).join('')
+    + (notes.length ? notes.slice(0, 2).map((n, i) => `<div class="m-item"><div class="text note${i ? '' : ' voice'}">${esc(n.text)}</div><div class="by">${when(n.at)} · ${n.read ? 'read' : 'not yet read'}</div></div>`).join('')
       : `<p class="m-empty">None yet: it leaves one only when it would say it if ${esc(person(who))} walked in.${practice.length ? ` ${practice.length === 1 ? 'One from practice is' : `${practice.length} from practice are`} in the log.` : ''}</p>`)));
   if (life.beliefs.length) parts.push(panel('data-for="beliefs"', head('Beliefs', go('beliefs', `All ${life.beliefs.length} →`))
     + life.beliefs.map((b) => `<div class="m-item"><div class="text two">${esc(b.text)}</div><div class="strength"><span class="held thin" aria-hidden="true"><i style="width:${Math.round(b.confidence * 100)}%"></i></span><span>held at ${Math.round(b.confidence * 100)}%</span></div></div>`).join('')));
@@ -78,7 +78,7 @@ function marginHTML() {
     const kinds = Object.entries(Q.byKind).sort((a, b) => (ASK_ORDER[a[0]] ?? 9) - (ASK_ORDER[b[0]] ?? 9));
     const latest = Q.answered[0];
     parts.push(panel('data-for="questions"', head('Its memory asks', go('questions', `All ${Q.open.toLocaleString('en-US')} →`))
-      + `<div class="m-counts">${kinds.map(([k, n]) => `<button class="m-count" type="button" data-qkind="${k}" aria-label="${n} questions: ${(ASK[k] || [k])[0]}"><b>${n.toLocaleString('en-US')}</b><span>${(ASK[k] || [k])[0]}</span></button>`).join('')}</div>`
+      + `<div class="m-counts">${kinds.map(([k, n]) => `<button class="m-count" type="button" data-qkind="${k}" aria-label="${n} questions: ${(ASK[k] || [k])[0]}"><span>${(ASK[k] || [k])[0]}</span><b>${n.toLocaleString('en-US')}</b></button>`).join('')}</div>`
       + (latest ? `<div class="m-item"><div class="q">Its latest answer · ${when(latest.at)}</div><div class="ask">${esc(question(latest.prompt))}</div><div class="a">${esc(latest.answer)}</div></div>` : '')));
   }
   const c = carrying();
@@ -96,7 +96,10 @@ function glanceHTML() {
   const who = life.identity, Q = life.questions, notes = notesFor(), unread = notes.filter((n) => !n.read).length;
   const line = (attrs, a, b) => `<button class="g" type="button" ${attrs}><span>${a}</span><span>${b}</span></button>`;
   const rows = [line('data-goto="notes"', who.person ? `For ${esc(who.person)}` : 'For you', notes.length ? (unread ? `${unread} not yet read` : plural(notes.length, 'note')) : 'no notes yet')];
-  if (life.beliefs.length) rows.push(line('data-goto="beliefs"', 'Beliefs', `${life.beliefs.length}, held at ${life.beliefs.map((b) => `${Math.round(b.confidence * 100)}%`).join(', ')}`));
+  if (life.beliefs.length) {
+    const held = life.beliefs.map((b) => Math.round(b.confidence * 100)), lo = Math.min(...held), hi = Math.max(...held);
+    rows.push(line('data-goto="beliefs"', 'Beliefs', `${life.beliefs.length}, ${held.length === 1 ? 'held' : lo === hi ? 'each held' : 'held'} at ${lo === hi ? `${lo}%` : `${lo} to ${hi}%`}`));
+  }
   if (Q.open) rows.push(line('data-goto="questions"', 'What its memory asks', `${Q.open.toLocaleString('en-US')} open`));
   const made = madeLately()[0];
   if (made) rows.push(line(`data-pic="${esc(made.picture)}" data-cap="${esc(made.path)}"`, 'Made lately', esc(made.path.split('/').pop())));
