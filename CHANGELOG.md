@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.5.0 (unreleased)
+## 0.5.0 (2026-10-28)
 
 ### Apache-2.0, and a new home
 
