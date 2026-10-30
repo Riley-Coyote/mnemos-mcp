@@ -1,0 +1,349 @@
+{
+  "machine": {
+    "platform": "macOS-27.0.1-arm64-arm-64bit",
+    "machine": "arm64",
+    "python": "3.12.11",
+    "sqlite": "3.50.4",
+    "sqlcipher": "4.19.0 community",
+    "sqlcipher_sqlite": "3.53.4"
+  },
+  "store": {
+    "plain_bytes": 171761664,
+    "encrypt_export_raw_s": 1.33,
+    "encrypt_export_pass_s": 1.5,
+    "cipher_bytes": 172793856,
+    "cipher_header_is_plaintext": false,
+    "cipher_integrity": true,
+    "cipher_settings": {
+      "cipher_page_size": "4096",
+      "kdf_iter": "256000",
+      "cipher_hmac_algorithm": "HMAC_SHA512",
+      "cipher_kdf_algorithm": "PBKDF2_HMAC_SHA512",
+      "cipher_provider": "openssl",
+      "cipher_provider_version": "OpenSSL 3.6.0 1 Oct 2025"
+    },
+    "cipher_fts5_rows": 13000,
+    "plain_sqlite_can_read_cipher": "no: file is not a database",
+    "candidates_scope": 2600,
+    "candidates_all": 13000
+  },
+  "variants": {
+    "plain": {
+      "recall_scope_words": {
+        "n": 60,
+        "median_ms": 36.17,
+        "p95_ms": 117.47,
+        "min_ms": 5.77,
+        "max_ms": 222.67
+      },
+      "recall_scope_meaning": {
+        "n": 60,
+        "median_ms": 51.91,
+        "p95_ms": 182.75,
+        "min_ms": 32.88,
+        "max_ms": 1541.58
+      },
+      "recall_scope_total": {
+        "n": 60,
+        "median_ms": 88.11,
+        "p95_ms": 275.38,
+        "min_ms": 44.3,
+        "max_ms": 1764.25
+      },
+      "recall_all_words": {
+        "n": 20,
+        "median_ms": 44.64,
+        "p95_ms": 151.93,
+        "min_ms": 11.45,
+        "max_ms": 151.93
+      },
+      "recall_all_meaning": {
+        "n": 20,
+        "median_ms": 255.18,
+        "p95_ms": 1438.23,
+        "min_ms": 185.14,
+        "max_ms": 1438.23
+      },
+      "recall_all_total": {
+        "n": 20,
+        "median_ms": 294.58,
+        "p95_ms": 1499.69,
+        "min_ms": 197.02,
+        "max_ms": 1499.69
+      },
+      "write": {
+        "n": 200,
+        "median_ms": 0.69,
+        "p95_ms": 3.85,
+        "min_ms": 0.21,
+        "max_ms": 39.74
+      },
+      "wake": {
+        "n": 20,
+        "median_ms": 114.36,
+        "p95_ms": 589.75,
+        "min_ms": 77.88,
+        "max_ms": 589.75
+      },
+      "snapshot": {
+        "seconds": 0.68,
+        "bytes": 174907392,
+        "plaintext_header": true
+      }
+    },
+    "plain-sqlcipher-build": {
+      "recall_scope_words": {
+        "n": 60,
+        "median_ms": 18.91,
+        "p95_ms": 47.76,
+        "min_ms": 3.83,
+        "max_ms": 58.56,
+        "ratio_to_plain_median": 0.5
+      },
+      "recall_scope_meaning": {
+        "n": 60,
+        "median_ms": 46.89,
+        "p95_ms": 188.71,
+        "min_ms": 27.66,
+        "max_ms": 362.58,
+        "ratio_to_plain_median": 0.82
+      },
+      "recall_scope_total": {
+        "n": 60,
+        "median_ms": 63.3,
+        "p95_ms": 222.93,
+        "min_ms": 34.6,
+        "max_ms": 416.26,
+        "ratio_to_plain_median": 0.71
+      },
+      "recall_all_words": {
+        "n": 20,
+        "median_ms": 24.88,
+        "p95_ms": 85.13,
+        "min_ms": 7.71,
+        "max_ms": 85.13,
+        "ratio_to_plain_median": 0.51
+      },
+      "recall_all_meaning": {
+        "n": 20,
+        "median_ms": 249.03,
+        "p95_ms": 1856.51,
+        "min_ms": 152.09,
+        "max_ms": 1856.51,
+        "ratio_to_plain_median": 0.97
+      },
+      "recall_all_total": {
+        "n": 20,
+        "median_ms": 264.1,
+        "p95_ms": 1887.53,
+        "min_ms": 164.45,
+        "max_ms": 1887.53,
+        "ratio_to_plain_median": 0.89
+      },
+      "write": {
+        "n": 200,
+        "median_ms": 0.48,
+        "p95_ms": 4.04,
+        "min_ms": 0.15,
+        "max_ms": 25.9,
+        "ratio_to_plain_median": 0.7
+      },
+      "wake": {
+        "n": 20,
+        "median_ms": 71.03,
+        "p95_ms": 124.21,
+        "min_ms": 48.16,
+        "max_ms": 124.21,
+        "ratio_to_plain_median": 0.61
+      }
+    },
+    "cipher-raw": {
+      "recall_scope_words": {
+        "n": 60,
+        "median_ms": 26.75,
+        "p95_ms": 83.87,
+        "min_ms": 6.69,
+        "max_ms": 243.3,
+        "ratio_to_plain_median": 0.7
+      },
+      "recall_scope_meaning": {
+        "n": 60,
+        "median_ms": 98.74,
+        "p95_ms": 415.32,
+        "min_ms": 65.89,
+        "max_ms": 480.47,
+        "ratio_to_plain_median": 1.91
+      },
+      "recall_scope_total": {
+        "n": 60,
+        "median_ms": 128.04,
+        "p95_ms": 486.15,
+        "min_ms": 76.49,
+        "max_ms": 540.88,
+        "ratio_to_plain_median": 1.48
+      },
+      "recall_all_words": {
+        "n": 20,
+        "median_ms": 33.51,
+        "p95_ms": 360.39,
+        "min_ms": 13.0,
+        "max_ms": 360.39,
+        "ratio_to_plain_median": 0.82
+      },
+      "recall_all_meaning": {
+        "n": 20,
+        "median_ms": 467.48,
+        "p95_ms": 1111.96,
+        "min_ms": 362.97,
+        "max_ms": 1111.96,
+        "ratio_to_plain_median": 1.72
+      },
+      "recall_all_total": {
+        "n": 20,
+        "median_ms": 513.97,
+        "p95_ms": 1330.02,
+        "min_ms": 375.97,
+        "max_ms": 1330.02,
+        "ratio_to_plain_median": 1.58
+      },
+      "write": {
+        "n": 200,
+        "median_ms": 0.83,
+        "p95_ms": 5.12,
+        "min_ms": 0.29,
+        "max_ms": 38.23,
+        "ratio_to_plain_median": 1.17
+      },
+      "wake": {
+        "n": 20,
+        "median_ms": 234.57,
+        "p95_ms": 410.62,
+        "min_ms": 178.35,
+        "max_ms": 410.62,
+        "ratio_to_plain_median": 2.07
+      },
+      "snapshot": {
+        "seconds": 2.26,
+        "bytes": 176058368,
+        "plaintext_header": false
+      }
+    },
+    "cipher-raw-cache": {
+      "recall_scope_words": {
+        "n": 60,
+        "median_ms": 20.3,
+        "p95_ms": 60.29,
+        "min_ms": 5.36,
+        "max_ms": 65.18,
+        "ratio_to_plain_median": 0.59
+      },
+      "recall_scope_meaning": {
+        "n": 60,
+        "median_ms": 26.3,
+        "p95_ms": 97.4,
+        "min_ms": 17.87,
+        "max_ms": 145.54,
+        "ratio_to_plain_median": 0.5
+      },
+      "recall_scope_total": {
+        "n": 60,
+        "median_ms": 51.13,
+        "p95_ms": 133.59,
+        "min_ms": 24.91,
+        "max_ms": 210.73,
+        "ratio_to_plain_median": 0.53
+      },
+      "recall_all_words": {
+        "n": 20,
+        "median_ms": 41.91,
+        "p95_ms": 517.62,
+        "min_ms": 16.67,
+        "max_ms": 517.62,
+        "ratio_to_plain_median": 1.34
+      },
+      "recall_all_meaning": {
+        "n": 20,
+        "median_ms": 470.28,
+        "p95_ms": 2320.81,
+        "min_ms": 313.29,
+        "max_ms": 2320.81,
+        "ratio_to_plain_median": 1.64
+      },
+      "recall_all_total": {
+        "n": 20,
+        "median_ms": 521.12,
+        "p95_ms": 2451.08,
+        "min_ms": 356.18,
+        "max_ms": 2451.08,
+        "ratio_to_plain_median": 1.69
+      },
+      "write": {
+        "n": 200,
+        "median_ms": 0.96,
+        "p95_ms": 6.34,
+        "min_ms": 0.27,
+        "max_ms": 26.26,
+        "ratio_to_plain_median": 1.29
+      },
+      "wake": {
+        "n": 20,
+        "median_ms": 124.57,
+        "p95_ms": 647.98,
+        "min_ms": 91.14,
+        "max_ms": 647.98,
+        "ratio_to_plain_median": 1.01
+      }
+    },
+    "cipher-pass": {
+      "wake": {
+        "n": 20,
+        "median_ms": 353.16,
+        "p95_ms": 590.89,
+        "min_ms": 222.48,
+        "max_ms": 590.89,
+        "ratio_to_plain_median": 2.63
+      }
+    }
+  },
+  "vectors_read": {
+    "recall_scope": 10906,
+    "recall_all": 54121
+  },
+  "wake_rows": {
+    "cipher-pass": [
+      255,
+      20,
+      30,
+      13000
+    ],
+    "plain": [
+      255,
+      20,
+      30,
+      13200
+    ],
+    "cipher-raw": [
+      255,
+      20,
+      30,
+      13200
+    ],
+    "plain-sqlcipher-build": [
+      255,
+      20,
+      30,
+      13200
+    ],
+    "cipher-raw-cache": [
+      255,
+      20,
+      30,
+      13200
+    ]
+  },
+  "load_average": [
+    507.84521484375,
+    735.75537109375,
+    583.97607421875
+  ]
+}

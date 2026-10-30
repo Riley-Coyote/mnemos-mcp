@@ -19,6 +19,9 @@ The queries are Mnemos's own shapes at origin/main cd8547f:
 
 Variants:
   plain        the stdlib sqlite3
+  plain-sqlcipher-build  SQLCipher's own build, unkeyed: a plain file, the same
+               SQLite version as the cipher variants, so version differences
+               are not read as the cost of encryption
   cipher-raw   SQLCipher 4 defaults, keyed with a raw 256-bit key (x'..'): no
                KDF, which is how a KMS-unwrapped data key would key it
   cipher-pass  SQLCipher 4 defaults keyed with a passphrase: PBKDF2-HMAC-SHA512,
@@ -37,6 +40,7 @@ import json
 import os
 import platform
 import random
+import shutil
 import sqlite3
 import statistics
 import struct
@@ -66,6 +70,8 @@ FTS_SQL = (
 def connect(variant: str, path: Path):
     if variant == "plain":
         conn = sqlite3.connect(str(path), check_same_thread=False)
+    elif variant == "plain-sqlcipher-build":
+        conn = sqlcipher3.connect(str(path), check_same_thread=False)  # no key: a plain file
     else:
         conn = sqlcipher3.connect(str(path), check_same_thread=False)
         key = PASSPHRASE if variant == "cipher-pass" else RAW_KEY
@@ -110,64 +116,48 @@ def query_words(conn, rng: random.Random, n: int) -> list[str]:
     return queries
 
 
-def recall(conn, queries: list[str], candidates: list[str], nprng) -> dict:
-    fts_t, vec_t, total_t, hits = [], [], [], []
-    for q in queries:
-        t0 = time.perf_counter()
-        rows = conn.execute(FTS_SQL, (q, "active", AGENT, PERSON, SCOPE, 50)).fetchall()
-        t1 = time.perf_counter()
-        query = nprng.standard_normal(DIMS)
-        query /= np.linalg.norm(query)
-        found = []
-        for i in range(0, len(candidates), ID_CHUNK):
-            chunk = candidates[i:i + ID_CHUNK]
-            found += conn.execute(
-                "SELECT item_id, embedding, dims, part, text_hash FROM passage_vectors "
-                "WHERE model_name = ? AND scheme >= ? AND item_id IN (%s)" % ",".join("?" * len(chunk)),
-                (MODEL, SCHEME, *chunk),
-            ).fetchall()
-        matrix = np.frombuffer(b"".join(r[1] for r in found), dtype=np.float32).reshape(
-            len(found), DIMS).astype(np.float64)
-        sims = (matrix @ query) / np.linalg.norm(matrix, axis=1)
-        best: dict[str, float] = {}
-        for (item_id, *_), s in zip(found, sims.tolist()):
-            if s > best.get(item_id, -2.0):
-                best[item_id] = s
-        top = sorted(best, key=best.get, reverse=True)[:30]
-        t2 = time.perf_counter()
-        fts_t.append(t1 - t0)
-        vec_t.append(t2 - t1)
-        total_t.append(t2 - t0)
-        hits.append((len(rows), len(found), len(top)))
-    return {
-        "fts": stats(fts_t), "vectors": stats(vec_t), "total": stats(total_t),
-        "fts_hits_median": statistics.median(h[0] for h in hits),
-        "vectors_read": hits[0][1], "top": hits[0][2],
-    }
+def recall_once(conn, q: str, candidates: list[str], query: np.ndarray) -> tuple[float, float, int]:
+    """One recall: (seconds for the words, seconds for the meaning, vectors read)."""
+    t0 = time.perf_counter()
+    rows = conn.execute(FTS_SQL, (q, "active", AGENT, PERSON, SCOPE, 50)).fetchall()
+    t1 = time.perf_counter()
+    found = []
+    for i in range(0, len(candidates), ID_CHUNK):
+        chunk = candidates[i:i + ID_CHUNK]
+        found += conn.execute(
+            "SELECT item_id, embedding, dims, part, text_hash FROM passage_vectors "
+            "WHERE model_name = ? AND scheme >= ? AND item_id IN (%s)" % ",".join("?" * len(chunk)),
+            (MODEL, SCHEME, *chunk),
+        ).fetchall()
+    matrix = np.frombuffer(b"".join(r[1] for r in found), dtype=np.float32).reshape(
+        len(found), DIMS).astype(np.float64)
+    sims = (matrix @ query) / np.linalg.norm(matrix, axis=1)
+    best: dict[str, float] = {}
+    for (item_id, *_), s in zip(found, sims.tolist()):
+        if s > best.get(item_id, -2.0):
+            best[item_id] = s
+    sorted(best, key=best.get, reverse=True)[:30]
+    t2 = time.perf_counter()
+    assert rows, "the words found nothing"
+    return t1 - t0, t2 - t1, len(found)
 
 
-def writes(conn, n: int, rng: random.Random, nprng, tag: str) -> dict:
-    samples = []
-    for i in range(n):
-        eid = f"bench_{tag}_{i:05d}"
-        body = " ".join(f"w{rng.randint(0, 5000)}" for _ in range(rng.randint(40, 250)))
-        parts = len(body) // 250 + 1
-        vecs = nprng.standard_normal((parts, DIMS)).astype(np.float32)
-        t0 = time.perf_counter()
-        conn.execute(
-            "INSERT INTO engrams (id, content, content_at_encoding, owner_agent_id, person_id, "
-            "project_scope, created_at, last_accessed) VALUES (?,?,?,?,?,?,datetime(),datetime())",
-            (eid, body, body, AGENT, PERSON, SCOPE),
-        )
-        conn.execute("INSERT INTO engrams_fts (content, id) VALUES (?, ?)", (body, eid))
-        conn.executemany(
-            "INSERT INTO passage_vectors (item_id, model_name, part, text_hash, dims, embedding, scheme) "
-            "VALUES (?,?,?,?,?,?,?)",
-            [(eid, MODEL, p, "h", DIMS, v.tobytes(), SCHEME) for p, v in enumerate(vecs)],
-        )
-        conn.commit()
-        samples.append(time.perf_counter() - t0)
-    return stats(samples)
+def write_once(conn, eid: str, body: str, vecs: np.ndarray) -> float:
+    """One capture: the engram, its FTS row and its passages, one transaction."""
+    t0 = time.perf_counter()
+    conn.execute(
+        "INSERT INTO engrams (id, content, content_at_encoding, owner_agent_id, person_id, "
+        "project_scope, created_at, last_accessed) VALUES (?,?,?,?,?,?,datetime(),datetime())",
+        (eid, body, body, AGENT, PERSON, SCOPE),
+    )
+    conn.execute("INSERT INTO engrams_fts (content, id) VALUES (?, ?)", (body, eid))
+    conn.executemany(
+        "INSERT INTO passage_vectors (item_id, model_name, part, text_hash, dims, embedding, scheme) "
+        "VALUES (?,?,?,?,?,?,?)",
+        [(eid, MODEL, p, "h", DIMS, v.tobytes(), SCHEME) for p, v in enumerate(vecs)],
+    )
+    conn.commit()
+    return time.perf_counter() - t0
 
 
 WAKE_CHILD = r"""
@@ -184,18 +174,14 @@ print(json.dumps({"s": time.perf_counter() - t0, "rows": [len(a), len(b), len(c)
 """
 
 
-def wake(variant: str, path: Path, n: int) -> dict:
-    samples, rows = [], None
-    for _ in range(n):
-        out = subprocess.run(
-            [sys.executable, "-c", WAKE_CHILD, variant, str(path), str(Path(__file__).parent)],
-            capture_output=True, text=True, check=True,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-        )
-        got = json.loads(out.stdout)
-        samples.append(got["s"])
-        rows = got["rows"]
-    return {**stats(samples), "rows": rows}
+def wake_once(variant: str, path: Path) -> tuple[float, list[int]]:
+    out = subprocess.run(
+        [sys.executable, "-c", WAKE_CHILD, variant, str(path), str(Path(__file__).parent)],
+        capture_output=True, text=True, check=True,
+        env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+    )
+    got = json.loads(out.stdout)
+    return got["s"], got["rows"]
 
 
 def snapshot(variant: str, path: Path) -> dict:
@@ -284,30 +270,92 @@ def main() -> None:
     result["store"]["candidates_scope"] = len(candidates_scope)
     result["store"]["candidates_all"] = len(candidates_all)
 
-    for variant, path in (("plain", work), ("cipher-raw", raw), ("cipher-raw-cache", raw)):
-        rng = random.Random(11)
-        nprng = np.random.default_rng(11)
-        conn = connect(variant, path)
-        queries = query_words(conn, rng, args.queries)
-        recall(conn, queries[:3], candidates_scope, nprng)  # warm the caches once
-        v = {
-            "recall_scope": recall(conn, queries, candidates_scope, nprng),
-            "recall_all": recall(conn, queries[:10], candidates_all, nprng),
-            "write": writes(conn, args.writes, rng, nprng, variant),
-        }
-        conn.close()
-        v["wake"] = wake(variant, path, args.wakes)
-        if variant != "cipher-raw-cache":
-            v["snapshot"] = snapshot(variant, path)
-        result["variants"][variant] = v
-        print(variant, json.dumps(v)[:300], flush=True)
-    result["variants"]["cipher-pass"] = {"wake": wake("cipher-pass", pas, args.wakes)}
+    # Every sample is taken for every variant back to back, in a shuffled order,
+    # so load from anything else on the machine falls on all of them alike.
+    # The ratio to plain is taken per sample, then its median reported.
+    raw2 = plain.with_name("cipher-raw-cache.db")
+    encrypt_copy(plain, raw2, f"\"{RAW_KEY}\"")
+    work2 = plain.with_name("bench-plain-sc.db")
+    shutil.copyfile(work, work2)
+    paths = {"plain": work, "plain-sqlcipher-build": work2, "cipher-raw": raw, "cipher-raw-cache": raw2}
+    conns = {v: connect(v, p) for v, p in paths.items()}
+    rng = random.Random(11)
+    nprng = np.random.default_rng(11)
+    queries = query_words(conns["plain"], rng, args.queries)
+    samples: dict = {v: {} for v in paths}
+
+    def add(variant: str, op: str, seconds: float) -> None:
+        samples[variant].setdefault(op, []).append(seconds)
+
+    def rounds(n: int, op: str, run) -> None:
+        for i in range(n):
+            order = list(paths)
+            rng.shuffle(order)
+            for v in order:
+                run(i, v)
+
+    for q in queries[:3]:  # warm every cache once
+        for v in paths:
+            recall_once(conns[v], q, candidates_scope, np.ones(DIMS) / DIMS ** 0.5)
+    vectors_read = {}
+
+    def recall_round(cands: list[str], label: str):
+        def run(i: int, v: str) -> None:
+            query = np.random.default_rng(i).standard_normal(DIMS)
+            query /= np.linalg.norm(query)
+            words, meaning, read = recall_once(conns[v], queries[i % len(queries)], cands, query)
+            add(v, f"{label}_words", words)
+            add(v, f"{label}_meaning", meaning)
+            add(v, f"{label}_total", words + meaning)
+            vectors_read[label] = read
+        return run
+
+    rounds(args.queries, "recall_scope", recall_round(candidates_scope, "recall_scope"))
+    rounds(max(5, args.queries // 3), "recall_all", recall_round(candidates_all, "recall_all"))
+
+    bodies = []
+    for i in range(args.writes):
+        body = " ".join(f"w{rng.randint(0, 5000)}" for _ in range(rng.randint(40, 250)))
+        bodies.append((body, nprng.standard_normal((len(body) // 250 + 1, DIMS)).astype(np.float32)))
+    rounds(args.writes, "write", lambda i, v: add(
+        v, "write", write_once(conns[v], f"bench_{v}_{i:05d}", *bodies[i])))
+    for c in conns.values():
+        c.close()
+
+    paths_wake = {**paths, "cipher-pass": pas}
+    wake_rows = {}
+
+    def wake_run(i: int, v: str) -> None:
+        sec, rows = wake_once(v, paths_wake[v])
+        add(v, "wake", sec)
+        wake_rows[v] = rows
+    samples["cipher-pass"] = {}
+    for i in range(args.wakes):
+        order = list(paths_wake)
+        rng.shuffle(order)
+        for v in order:
+            wake_run(i, v)
+
+    for v, ops in samples.items():
+        out = {}
+        for op, xs in ops.items():
+            out[op] = stats(xs)
+            base = samples["plain"].get(op)
+            if v != "plain" and base:
+                out[op]["ratio_to_plain_median"] = round(statistics.median(
+                    x / b for x, b in zip(xs, base) if b > 0), 2)
+        result["variants"][v] = out
+    result["vectors_read"] = vectors_read
+    result["wake_rows"] = wake_rows
+    for v in ("plain", "cipher-raw"):
+        result["variants"][v]["snapshot"] = snapshot(v, paths[v])
+    result["load_average"] = os.getloadavg()
 
     text = json.dumps(result, indent=2)
     print(text)
     if args.out:
         args.out.write_text(text + "\n")
-    for p in (work, raw, pas):
+    for p in (work, raw, pas, raw2, work2):
         for suffix in ("", "-wal", "-shm"):
             Path(str(p) + suffix).unlink(missing_ok=True)
 
