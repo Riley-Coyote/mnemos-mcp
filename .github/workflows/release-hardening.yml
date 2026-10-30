@@ -26,6 +26,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: The guard on a live ~/.mnemos holds
+        # The suite is a hermetic run (tests/conftest.py): any test that
+        # reaches the real ~/.mnemos fails. These prove that tripwire works.
+        run: uv run --extra dev --extra mcp pytest -q tests/test_live_store_guard.py
+
       - name: Run tests with MCP surface
         if: matrix.python-version != '3.13'
         run: uv run --extra dev --extra mcp pytest -q
@@ -33,6 +38,13 @@ jobs:
       - name: Enforce supported-code coverage
         if: matrix.python-version == '3.13'
         run: uv run --extra dev --extra mcp pytest -q --cov --cov-report=term
+
+      - name: No test touched the runner's ~/.mnemos
+        shell: bash
+        run: |
+          if [ -e "$HOME/.mnemos" ]; then
+            echo "The suite wrote into $HOME/.mnemos:"; ls -la "$HOME/.mnemos"; exit 1
+          fi
 
       - name: Reject correctness errors
         if: matrix.python-version == '3.13'

@@ -35,6 +35,16 @@ uv run --extra dev --extra mcp pytest -q   # the suite as the gate runs it
 scripts/local_ci.sh           # every check, Python 3.10–3.13: the merge gate
 ```
 
+**Hermetic runs.** Work on Mnemos never touches anyone's live memory. Run
+anything that opens a store through `scripts/hermetic.sh <command>`: a
+temporary HOME, an explicit `MNEMOS_DB_PATH` inside it, a venv of its own
+(`.hermetic-venv`), no bytecode. It sets `MNEMOS_HERMETIC=1`, and in that mode
+the engine refuses to resolve, migrate, serve or open for writing any store
+under the account's real `~/.mnemos` (`mnemos/live_guard.py`), unless the
+command passes `mnemos --i-mean-it ...` (before the subcommand). The suite is
+a hermetic run too: a test that reaches the real `~/.mnemos` fails, even when
+the error was swallowed. Outside hermetic mode nothing changes.
+
 A bug fix lands with a test that **fails on the previous code**. Confirm that
 directly — stash the fix, run the test, watch it fail, restore. A test that
 passes both before and after documents behaviour; it does not protect it.

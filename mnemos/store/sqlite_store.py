@@ -26,6 +26,7 @@ from typing import Any
 from ..authorship import AUTHOR_KINDS
 from ..code_version import MAINTENANCE_CODE_VERSION
 from ..file_security import secure_directory, secure_file
+from ..live_guard import check_store_path
 from ..place import nearness
 from .embedding_index import PASSAGE_TABLE_SQL
 from .fts import is_common
@@ -1038,6 +1039,9 @@ class EngramStore:
 
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path).expanduser()
+        # Every writable open migrates; a hermetic run never does that to a
+        # live ~/.mnemos (mnemos/live_guard.py).
+        check_store_path(self.db_path, action="open for writing and migrate")
         private_root = Path.home() / ".mnemos"
         try:
             owned_directory = self.db_path.parent == private_root or self.db_path.parent.is_relative_to(private_root)

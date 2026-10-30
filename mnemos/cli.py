@@ -881,7 +881,20 @@ def main(argv: list[str] | None = None) -> int:
         help="Index everything waiting for recall's meaning search, and nothing else",
     )
 
+    parser.add_argument(
+        "--i-mean-it",
+        action="store_true",
+        help=(
+            "In a hermetic run (MNEMOS_HERMETIC=1), allow a store under the real "
+            "~/.mnemos, which is otherwise refused (see mnemos/live_guard.py)"
+        ),
+    )
+
     args = parser.parse_args(argv)
+    if args.i_mean_it:
+        # Set for this process and whatever it starts (a server, a hook), so
+        # the store-open guard sees it wherever the store is opened.
+        os.environ["MNEMOS_I_MEAN_IT"] = "1"
     # Whether this process is the command itself (the console script, or
     # `python -m mnemos.cli`), not a host that called main() with arguments.
     # Only the command itself may end its own process (see _hook_prompt).
@@ -932,7 +945,13 @@ def main(argv: list[str] | None = None) -> int:
 
     handler = handlers.get(args.command)
     if handler:
-        return handler(args)
+        from .live_guard import LiveStoreRefused
+
+        try:
+            return handler(args)
+        except LiveStoreRefused as refused:
+            print(f"mnemos: {refused}", file=sys.stderr)
+            return 2
     parser.print_help()
     return 1
 
