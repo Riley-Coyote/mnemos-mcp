@@ -116,3 +116,30 @@ def test_the_command_refuses_and_the_flag_allows(fake_real_home, tmp_path):
     allowed = _cli(["--i-mean-it", "--db-path", str(target), "init"], env)
     assert allowed.returncode == 0, allowed.stderr
     assert target.is_file()
+
+
+def test_a_suite_with_a_test_that_reaches_it_fails(fake_real_home, tmp_path):
+    """The tripwire CI relies on: one test that reaches the live home, even
+    behind an ``except``, fails the run. Run on a copy of this suite's
+    conftest, with the fake real home standing in for the real one."""
+    suite = tmp_path / "suite"
+    suite.mkdir()
+    (suite / "conftest.py").write_text((REPO / "tests" / "conftest.py").read_text())
+    (suite / "test_leak.py").write_text(
+        "from mnemos.simple_scope import resolve_scope\n"
+        "def test_leaks():\n"
+        "    try:\n"
+        "        resolve_scope(db_path='~/.mnemos/leak.db'.replace('~', "
+        f"{str(fake_real_home)!r}))\n"
+        "    except Exception:\n"
+        "        pass\n"
+    )
+    env = {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"}
+    env[live_guard.PROTECTED_HOME_ENV] = str(fake_real_home)
+    run = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", str(suite)],
+        cwd=REPO, env=env, capture_output=True, text=True, timeout=300,
+    )
+    assert run.returncode != 0, run.stdout
+    assert "a test reached a live ~/.mnemos" in run.stdout
+    assert not (fake_real_home / ".mnemos").exists()
