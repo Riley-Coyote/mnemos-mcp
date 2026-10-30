@@ -1158,6 +1158,9 @@ class EmbeddingIndex:
                     f"{path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False,
                 )
             else:
+                from ..live_guard import check_store_path
+
+                check_store_path(path, action="open for writing")
                 self._conn = sqlite3.connect(str(path), check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
         return self._conn

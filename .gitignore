@@ -49,3 +49,6 @@ scripts/health_baseline.local.json
 
 # Instructions for agents on one machine only
 CLAUDE.local.md
+
+# Hermetic runs (scripts/hermetic.sh)
+.hermetic-venv/

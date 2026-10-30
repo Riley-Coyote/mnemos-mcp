@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 
 from .config.loader import load_config
+from .live_guard import check_store_path
 
 
 def _slugify(value: str, fallback: str) -> str:
@@ -86,6 +87,10 @@ def resolve_scope(
             resolved_db = str(configured)
         else:
             resolved_db = f"~/.mnemos/{resolved_agent}.db"
+
+    # A hermetic run (scripts/hermetic.sh, the test suite) never resolves
+    # into a live ~/.mnemos, by any of the routes above.
+    check_store_path(resolved_db, action="use")
 
     return MnemosScope(
         agent_id=resolved_agent,

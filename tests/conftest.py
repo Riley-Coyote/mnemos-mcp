@@ -15,6 +15,34 @@ try:
 except ImportError:  # pragma: no cover - mcp is a core dependency
     pass
 
+# The real home, read before any test moves HOME: the live ~/.mnemos the
+# suite must never reach. A hermetic shell (scripts/hermetic.sh) already
+# names it; otherwise it is this process's own home. The guard also protects
+# the account's home as the system has it (mnemos/live_guard.py); this adds
+# the home where the system gives none (Windows).
+_REAL_HOME = os.environ.get("MNEMOS_PROTECTED_HOME") or os.path.expanduser("~")
+
+
+@pytest.fixture(autouse=True)
+def _live_store_guard(monkeypatch):
+    """No test reaches a live ~/.mnemos, and a test that tries fails.
+
+    The suite is a hermetic run: the store-open guard refuses any path under
+    the real home's .mnemos (mnemos/live_guard.py), and a refusal fails the
+    test even when the code that met it swallowed the error. A test of the
+    guard itself clears ``live_guard.refusals`` after it has checked them."""
+    from mnemos import live_guard
+
+    monkeypatch.setenv("MNEMOS_HERMETIC", "1")
+    monkeypatch.setenv("MNEMOS_PROTECTED_HOME", _REAL_HOME)
+    monkeypatch.delenv("MNEMOS_I_MEAN_IT", raising=False)
+    before = len(live_guard.refusals)
+    yield
+    reached = live_guard.refusals[before:]
+    del live_guard.refusals[before:]
+    if reached:
+        pytest.fail("a test reached a live ~/.mnemos:\n" + "\n".join(reached), pytrace=False)
+
 
 @pytest.fixture(autouse=True)
 def _isolate_mnemos_env(monkeypatch, tmp_path_factory):

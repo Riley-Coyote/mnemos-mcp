@@ -1378,7 +1378,10 @@ def keep_judged_calls(
     it could not (no store, a lock held past ``wait``)."""
     import sqlite3
 
+    from .live_guard import check_store_path
+
     path = Path(db_path).expanduser()
+    check_store_path(path, action="write the cue's judge row in")
     if not path.is_file():
         return False
     conn = sqlite3.connect(str(path), timeout=wait)
