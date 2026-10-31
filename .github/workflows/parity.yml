@@ -1,0 +1,36 @@
+name: Engine parity
+
+# QA1a: the gate on Riley's live engine. Required for pull requests into main
+# (mark "Engine parity / parity" required in main's branch protection); it does
+# not run for home/v2, where Phase 2 integrates.
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  parity:
+    name: parity
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: The scripted life, duplicated, reordered and killed mid-transaction
+        env:
+          MNEMOS_PARITY: "1"
+          PARITY_SEEDS: "8"
+        run: scripts/hermetic.sh python -m pytest -q -s tests/parity
+
+      - name: Report, with the reflection-queue collision rate
+        run: scripts/hermetic.sh python -m tests.parity.harness --seeds 2
+
+      - name: Nothing touched the runner's ~/.mnemos
+        shell: bash
+        run: |
+          if [ -e "$HOME/.mnemos" ]; then
+            echo "The harness wrote into $HOME/.mnemos:"; ls -la "$HOME/.mnemos"; exit 1
+          fi
