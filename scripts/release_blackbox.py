@@ -330,6 +330,10 @@ def audit_hermes_connect(executable: Path, env: dict[str, str], root: Path) -> N
 
     Connecting edits their config.yaml, which takes PyYAML. It came only with
     an extra, so this stopped at a warning and connected nothing.
+
+    --no-upkeep: scheduling goes through launchd or systemd, which a throwaway
+    HOME doesn't wall off. On a Mac it would register real jobs on the machine
+    running this; on Linux it fails, because systemd can't see the unit file.
     """
     hermes_home = root / "hermes home"
     hermes_home.mkdir()
@@ -340,7 +344,7 @@ def audit_hermes_connect(executable: Path, env: dict[str, str], root: Path) -> N
         {**env, "HERMES_HOME": str(hermes_home)},
         "--agent-id", "hermes",
         "--db-path", str(root / "database with spaces" / "hermes.db"),
-        "connect", "hermes", "--no-hours", "--write",
+        "connect", "hermes", "--no-upkeep", "--write",
     )
     written = config.read_text(encoding="utf-8")
     assert "their-model" in written, written
