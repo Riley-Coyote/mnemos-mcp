@@ -39,6 +39,9 @@ dependencies = [
     "mcp[cli]>=1.30.0,<2",
     "ulid-py>=1.1.0",
     "python-dotenv>=1.0.0",
+    # `mnemos connect hermes` edits Hermes's config.yaml. As it came only with
+    # the embeddings extra, a plain install stopped there and connected nothing.
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]

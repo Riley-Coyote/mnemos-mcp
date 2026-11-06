@@ -325,6 +325,29 @@ def audit_database(db: Path, network_marker: Path) -> None:
     assert not network_marker.exists(), network_marker.read_text() if network_marker.exists() else ""
 
 
+def audit_hermes_connect(executable: Path, env: dict[str, str], root: Path) -> None:
+    """Someone with Hermes already set up connects it from a plain install.
+
+    Connecting edits their config.yaml, which takes PyYAML. It came only with
+    an extra, so this stopped at a warning and connected nothing.
+    """
+    hermes_home = root / "hermes home"
+    hermes_home.mkdir()
+    config = hermes_home / "config.yaml"
+    config.write_text("model:\n  default: their-model\n", encoding="utf-8")
+    cli(
+        executable,
+        {**env, "HERMES_HOME": str(hermes_home)},
+        "--agent-id", "hermes",
+        "--db-path", str(root / "database with spaces" / "hermes.db"),
+        "connect", "hermes", "--no-hours", "--write",
+    )
+    written = config.read_text(encoding="utf-8")
+    assert "their-model" in written, written
+    assert "provider: mnemos" in written, written
+    assert "mcp_servers:" in written, written
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mnemos", required=True, type=Path)
@@ -385,6 +408,7 @@ def main() -> int:
     assert "Mnemos" in version.stdout
     asyncio.run(audit_mcp(executable, env, db))
     audit_database(db, network_marker)
+    audit_hermes_connect(executable, env, root)
     print(json.dumps({"result": "PASS", "root": str(root)}, indent=2))
     return 0
 
