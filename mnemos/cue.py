@@ -1705,20 +1705,65 @@ def _check(deadline: float) -> None:
         raise HookTimeout()
 
 
-def read_payload(stream: Any, *, deadline: float) -> bytes:
-    """What Claude Code wrote on the hook's stdin: until it closes it or a
-    whole JSON object has come, at most ``PAYLOAD_BYTES``, never waiting past
-    ``deadline``."""
-    import select
+_WIN_FILE_TYPE_DISK = 1
+_WIN_FILE_TYPE_PIPE = 3
+_WIN_POLL_SECONDS = 0.01
 
+
+def _win_pipe_ready(fd: int) -> bool:
+    """Whether Windows stdin is readable now: disk, pipe data, or pipe EOF.
+
+    A console isn't a hook payload and must never block on a read.
+    """
+    import ctypes
+    import msvcrt
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetFileType.argtypes = [wintypes.HANDLE]
+    kernel32.GetFileType.restype = wintypes.DWORD
+    kernel32.PeekNamedPipe.argtypes = [
+        wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD), ctypes.POINTER(wintypes.DWORD),
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    kernel32.PeekNamedPipe.restype = wintypes.BOOL
+
+    handle = wintypes.HANDLE(msvcrt.get_osfhandle(fd))
+    kind = kernel32.GetFileType(handle)
+    if kind == _WIN_FILE_TYPE_DISK:
+        return True
+    if kind != _WIN_FILE_TYPE_PIPE:
+        return False
+    available = wintypes.DWORD(0)
+    ok = kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(available), None)
+    return not ok or available.value > 0
+
+
+def stdin_ready(fd: int, timeout: float) -> bool:
+    """Readiness within a bounded wait for POSIX or Windows hook stdin."""
+    if sys.platform != "win32":
+        import select
+
+        return bool(select.select([fd], [], [], max(timeout, 0.0))[0])
+
+    until = time.monotonic() + max(timeout, 0.0)
+    while True:
+        if _win_pipe_ready(fd):
+            return True
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            return False
+        time.sleep(min(_WIN_POLL_SECONDS, remaining))
+
+
+def read_payload(stream: Any, *, deadline: float) -> bytes:
+    """Read hook JSON without waiting past deadline or blocking on an empty pipe."""
     received = bytearray()
     fd = stream.fileno()
     while len(received) <= PAYLOAD_BYTES:
         remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        ready, _, _ = select.select([fd], [], [], remaining)
-        if not ready:
+        if remaining <= 0 or not stdin_ready(fd, remaining):
             break
         chunk = os.read(fd, 65536)
         if not chunk:
