@@ -158,7 +158,7 @@ Simple mode exposes twelve user-facing tools:
 | Tool | Purpose |
 |---|---|
 | `mnemos_context` | Startup continuity packet. Creates local storage if there's none, records what it delivered, and can optionally include an identity graph artifact. It runs no maintenance. |
-| `mnemos_handoff` | Leave an exact, signed note in the agent's own words for whoever works in this scope next — possibly a different model. Each session keeps its own note: a new one replaces only what that session left before (history is kept), so parallel sessions no longer overwrite each other. Remove one with `mnemos_correct`. |
+| `mnemos_handoff` | Leave an exact, signed note in the agent's own words for whoever works in this scope next — possibly a different model. Each session keeps its own note: a new one replaces only what that session left before (history is kept), so parallel sessions no longer overwrite each other (Claude Code says which session is which; in Hermes Provider Mode, `mnemos_identity_handoff` does the same for each chat or topic; a client that can't say shares one note). Remove one with `mnemos_correct`. |
 | `mnemos_capture` | Capture durable preferences, decisions, project state, workflows, and context. |
 | `mnemos_recall` | Search scoped continuity and durable memory with natural language. |
 | `mnemos_correct` | Update, supersede, or archive stale memory. |
@@ -277,7 +277,7 @@ model turn was run to see whether the text reaches it.
 | Codex | saw it | docs say | docs say | docs say | yes |
 | Grok | saw it | no (saw it: its hook runs, nothing it prints reaches the model) | no (docs say) | no (saw it) | yes |
 | Gemini CLI | saw it | not tested | no (docs say) | not tested | yes |
-| Hermes | saw it | not tested (Provider Mode) | not tested | not tested | yes |
+| Hermes | saw it | saw it (Provider Mode, with a stand-in model) | saw it (same) | saw it (same) | yes |
 | OpenClaw | saw it | not tested (a bootstrap hook) | not tested | no (needs a plugin) | yes |
 | Pi | docs say | needs an extension | needs an extension | needs an extension | not installed here |
 | Muse Code | docs say | hook format not documented | not documented | not documented | not installed here |

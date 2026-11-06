@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,6 +21,14 @@ PLUGIN_VERSION = "0.3.0"
 PROVIDER_MODE = "provider"
 SIDECAR_MODE = "sidecar"
 DEFAULT_MCP_SERVER_NAME = "mnemos"
+# Every conversation on a Hermes gateway reaches an MCP tool through one server,
+# which can't tell them apart, so a handoff left there would land in the one
+# slot they'd all share. In Provider Mode the agent has mnemos_identity_handoff,
+# which knows its conversation.
+_PROVIDER_LEAVES_OUT = ("mnemos_handoff",)
+# Mnemos and what it imports, which Hermes' own environment has to be able to find.
+_NEEDS_IN_HERMES = ("mnemos", "ulid", "dotenv", "yaml", "mcp")
+_SHIM_OPENING = '"""Mnemos memory provider shim for Hermes Agent.'
 
 
 def provider_plugin_dirs(hermes_home: str | Path) -> list[Path]:
@@ -37,17 +47,77 @@ def provider_plugin_dirs(hermes_home: str | Path) -> list[Path]:
     ]
 
 
+def _mnemos_import_paths() -> list[str]:
+    """Where this Mnemos and what it imports are installed: usually one
+    site-packages, or a checkout and a site-packages for an editable install."""
+
+    paths: list[str] = []
+    for name in _NEEDS_IN_HERMES:
+        try:
+            spec = importlib.util.find_spec(name)
+        except (ImportError, ValueError):  # ValueError: loaded, with no spec to read
+            continue
+        if spec is None or not spec.origin:
+            continue
+        origin = Path(spec.origin).resolve()
+        paths.append(str(origin.parent.parent if spec.submodule_search_locations else origin.parent))
+    return list(dict.fromkeys(paths))
+
+
 def render_plugin_shim() -> str:
-    """Return the tiny Hermes plugin shim that imports Mnemos."""
+    """Return the tiny Hermes plugin shim that imports Mnemos.
+
+    Hermes loads it in its own environment, which has no Mnemos, and hides the
+    failure at debug level: until this said where Mnemos is, Provider Mode was
+    set, reported active, and never loaded.
+    """
 
     return (
-        '"""Mnemos memory provider shim for Hermes Agent."""\n\n'
+        f"{_SHIM_OPENING}\"\"\"\n\n"
+        "import sys\n\n"
         "from agent.memory_provider import MemoryProvider\n\n"
-        "from mnemos.integrations.hermes import build_memory_provider_class\n\n\n"
+        "# Where Mnemos was when it was connected. Looked in last, so Hermes' own\n"
+        "# packages win. If Mnemos moves, run `mnemos connect hermes --write` again.\n"
+        f"sys.path.extend(p for p in {_mnemos_import_paths()!r} if p not in sys.path)\n\n"
+        "from mnemos.integrations.hermes import build_memory_provider_class  # noqa: E402\n\n\n"
         "MnemosMemoryProvider = build_memory_provider_class(MemoryProvider)\n\n\n"
         "def register(ctx):\n"
         "    ctx.register_memory_provider(MnemosMemoryProvider())\n"
     )
+
+
+def _hermes_python(home: Path) -> Path | None:
+    """The Python Hermes runs in, when this machine has one to find."""
+
+    found = shutil.which("hermes")
+    candidates = [Path(found).resolve().parent / "python"] if found else []
+    candidates.extend([
+        home / "hermes-agent" / "venv" / "bin" / "python",
+        home / "hermes-agent" / "venv" / "Scripts" / "python.exe",
+    ])
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def _why_hermes_cant_load_mnemos(python: Path | None) -> str | None:
+    """Try what the shim does, in Hermes' own Python: its loader hides a failure,
+    so nothing else would say. None when it loads, or there's no Python to try."""
+
+    if python is None:
+        return None
+    code = (
+        f"import sys; sys.path.extend({_mnemos_import_paths()!r}); "
+        "import mnemos.integrations.hermes"
+    )
+    try:
+        proc = subprocess.run(
+            [str(python), "-c", code], capture_output=True, text=True, timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return str(exc)
+    if proc.returncode == 0:
+        return None
+    lines = proc.stderr.strip().splitlines()
+    return lines[-1] if lines else f"exit {proc.returncode}"
 
 
 def render_plugin_manifest() -> str:
@@ -262,15 +332,25 @@ def install_hermes_plugin(
             })
 
     for path, content in files.items():
-        if path.exists() and path.read_text(encoding="utf-8", errors="replace") != content and not force:
+        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else None
+        # A shim Mnemos wrote says where Mnemos was then, so it goes stale.
+        ours = existing is not None and existing.startswith(_SHIM_OPENING)
+        if existing is not None and existing != content and not (force or ours):
             result.warnings.append(f"Existing file differs; re-run with --force to replace: {path}")
             continue
         if dry_run:
             result.files_written.append(path)
             continue
         path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, content, backup_existing=force)
+        atomic_write_text(path, content, backup_existing=force or ours)
         result.files_written.append(path)
+
+    if selected_mode == PROVIDER_MODE and not dry_run:
+        problem = _why_hermes_cant_load_mnemos(_hermes_python(home))
+        if problem:
+            result.warnings.append(
+                f"Hermes can't load Mnemos in its own Python, so it won't wake with this memory: {problem}"
+            )
 
     config_updates = {
         "db_path": db_path,
@@ -295,6 +375,7 @@ def install_hermes_plugin(
             project_scope=project_scope,
             dry_run=dry_run,
             replace_existing_server=not agent_safe,
+            exclude_tools=_PROVIDER_LEAVES_OUT if selected_mode == PROVIDER_MODE else (),
         )
         result.mcp_configured = configured
         result.mcp_config_path = config_path
@@ -485,6 +566,7 @@ def _configure_mcp_server(
     project_scope: str | None = None,
     dry_run: bool = False,
     replace_existing_server: bool = True,
+    exclude_tools: tuple[str, ...] = (),
 ) -> tuple[bool, str | None, Path]:
     config_path = home / "config.yaml"
     if dry_run:
@@ -496,6 +578,8 @@ def _configure_mcp_server(
         person_id=person_id,
         project_scope=project_scope,
     )
+    if exclude_tools:
+        server["tools"] = {"exclude": list(exclude_tools)}
 
     try:
         import yaml  # type: ignore

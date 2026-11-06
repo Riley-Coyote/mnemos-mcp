@@ -3679,8 +3679,9 @@ class EngramStore:
 
         First the note the reader's own session left, if it left one: a
         session coming back from compaction or a resume gets its own thread
-        back before anyone else's. Otherwise the newest note written where
-        the reader works (``reader_place``, as ``place_of`` gives it), or in a
+        back before anyone else's, even when more sessions have left notes
+        since than are kept. Otherwise the newest note written where the
+        reader works (``reader_place``, as ``place_of`` gives it), or in a
         related place: a session started in a project picks up that project's
         thread, however long ago it was left. Otherwise the newest note.
 
@@ -3701,7 +3702,16 @@ class EngramStore:
             (agent_id, person_id, project_scope),
         ).fetchall()
         notes = [self._hydrate_hypomnema_row(dict(row)) for row in rows]
-        if not notes:
+        reader = (reader_session or "").strip()
+        own = next(
+            (note for note in notes if reader and note.get("author_session") == reader),
+            None,
+        )
+        if own is None and reader:
+            own = self._crowded_out_handoff(
+                reader, agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+            )
+        if not notes and own is None:
             return []
         here = (reader_place or "").strip()
         near = {
@@ -3709,17 +3719,39 @@ class EngramStore:
         }
         # Newest first already; a stable sort keeps that order within each place.
         by_place = sorted(notes, key=lambda note: -near[note["id"]])
-        reader = (reader_session or "").strip()
-        first = next(
-            (note for note in notes if reader and note.get("author_session") == reader),
-            by_place[0],
-        )
+        first = own if own is not None else by_place[0]
         cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
         others = [
             note for note in by_place
             if note["id"] != first["id"] and _written_since(note.get("created_at"), cutoff)
         ]
         return [first, *others[: max(0, int(limit) - 1)]]
+
+    def _crowded_out_handoff(
+        self,
+        session: str,
+        *,
+        agent_id: str,
+        person_id: str,
+        project_scope: str,
+    ) -> dict[str, Any] | None:
+        """The note ``session`` left last, if it left use only because newer
+        sessions' notes crowded it out. One it forgot stays gone."""
+
+        row = self._get_conn().execute(
+            """
+            SELECT * FROM hypomnema_entries
+            WHERE agent_id = ? AND person_id = ? AND project_scope = ?
+              AND entry_kind = 'handoff' AND author_session = ?
+            ORDER BY created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (agent_id, person_id, project_scope, session),
+        ).fetchone()
+        if row is None:
+            return None
+        note = self._hydrate_hypomnema_row(dict(row))
+        return note if handoff_retirement(note) == "retired" else None
 
     def recallable_handoffs(
         self,

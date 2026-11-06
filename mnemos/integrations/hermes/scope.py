@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -10,6 +11,24 @@ from pathlib import Path
 from typing import Any
 
 from ...file_security import atomic_write_text
+
+
+def conversation_id(*, gateway_session_key: str = "", session_id: str = "") -> str:
+    """One id for one conversation, however many sessions it runs through.
+
+    Hermes's gateway names a conversation with its session key: a chat, or a
+    topic in one (a Telegram forum topic, a Discord thread). The key stays the
+    same across a ``/new``, an idle reset and a compression; the session id
+    changes with each. Without a gateway (the command line), the session id is
+    all there is.
+
+    Hashed because the key holds chat and user ids and a handoff keeps this
+    beside its words, and because Mnemos reads it as a session id, which has
+    no colons (``clean_session_id``).
+    """
+
+    raw = (gateway_session_key or "").strip() or (session_id or "").strip()
+    return f"hermes-{hashlib.sha256(raw.encode('utf-8')).hexdigest()[:32]}" if raw else ""
 
 
 def slugify(value: str | None, fallback: str) -> str:
@@ -79,7 +98,12 @@ class HermesMnemosConfig:
     ``auto_capture``, ``auto_bootstrap``, ``auto_session_distill`` and
     ``capture_uncertain`` were settings for writing in the agent's place,
     which the provider no longer does (0.4.1); a file that still has them is
-    read without them."""
+    read without them.
+
+    ``max_context_chars`` bounds what recall adds to each message.
+    ``max_wake_chars`` bounds the memory a session wakes with; 0 leaves that to
+    the wake's own budget, the one every agent's wake has (``PACKET_MAX_CHARS``,
+    and the handoff shown whole takes no room from it)."""
 
     db_path: str | None = None
     agent_id: str | None = None
@@ -90,6 +114,7 @@ class HermesMnemosConfig:
     deep_maintenance: bool = False
     max_recall_results: int = 4
     max_context_chars: int = 2200
+    max_wake_chars: int = 0
     maintenance_interval: int = 24
 
     @classmethod
@@ -106,6 +131,7 @@ class HermesMnemosConfig:
             deep_maintenance=_as_bool(raw.get("deep_maintenance"), False),
             max_recall_results=_as_int(raw.get("max_recall_results"), 4, minimum=1, maximum=16),
             max_context_chars=_as_int(raw.get("max_context_chars"), 2200, minimum=800, maximum=12000),
+            max_wake_chars=_as_int(raw.get("max_wake_chars"), 0, minimum=0, maximum=100000),
             maintenance_interval=_as_int(raw.get("maintenance_interval"), 24, minimum=0, maximum=500),
         )
 
@@ -120,6 +146,7 @@ class HermesMnemosConfig:
             "deep_maintenance": self.deep_maintenance,
             "max_recall_results": self.max_recall_results,
             "max_context_chars": self.max_context_chars,
+            "max_wake_chars": self.max_wake_chars,
             "maintenance_interval": self.maintenance_interval,
         }
 
@@ -136,6 +163,7 @@ class HermesScope:
     session_id: str
     platform: str = "cli"
     agent_context: str = "primary"
+    conversation: str = ""
 
 
 def derive_hermes_scope(
@@ -177,6 +205,7 @@ def derive_hermes_scope(
     explicit_db = cfg.db_path or os.environ.get("MNEMOS_DB_PATH")
     db_path = explicit_db or str(home / "mnemos" / "mnemos.db")
     db_path = db_path.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+    session = str(session_id or context.get("session_id") or "")
 
     return HermesScope(
         agent_id=slugify(str(agent_raw), "hermes"),
@@ -184,9 +213,13 @@ def derive_hermes_scope(
         project_scope=slugify(str(project_raw), "global"),
         db_path=db_path,
         hermes_home=home,
-        session_id=str(session_id or context.get("session_id") or ""),
+        session_id=session,
         platform=str(context.get("platform") or "cli"),
         agent_context=str(context.get("agent_context") or "primary"),
+        conversation=conversation_id(
+            gateway_session_key=str(context.get("gateway_session_key") or ""),
+            session_id=session,
+        ),
     )
 
 

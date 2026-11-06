@@ -1,5 +1,48 @@
 # Changelog
 
+## Unreleased
+
+### Hermes: many conversations at once
+
+Someone running many Telegram topics on one Hermes agent asked how Mnemos handles
+that. Checking it through real Hermes turned up more than the question did.
+
+- **Provider Mode now loads.** Hermes loads the shim in its own Python, which has no Mnemos,
+  and hides the failure at debug level. `mnemos connect hermes` said "Provider Mode active: yes"
+  and nothing loaded: no wake and no recall on each message, on any normal install, only the
+  tools. The shim now says where Mnemos is, and connecting tries the load in Hermes' Python and
+  warns if it fails. Run `mnemos connect hermes --write` again to replace an existing shim. We ran
+  all of this through Hermes 0.17's own loader and agent, with a stand-in model recording what
+  reached it; Telegram itself wasn't in the loop.
+- **Each conversation keeps its own note.** Sessions were told apart by an id only
+  Claude Code sets, so on Hermes every topic shared one handoff: the newest replaced the
+  rest, and a topic starting a fresh session woke to another topic's thread. Hermes'
+  gateway says which conversation is which, and it stays the same across `/new`, an idle
+  reset and compression, so now a topic keeps its own note and wakes to it first, with the
+  others as short lines. Provider Mode has a new tool for this, `mnemos_identity_handoff`,
+  and `mnemos connect hermes` leaves the MCP `mnemos_handoff` out of Provider Mode, because
+  every topic reaches an MCP tool through one server that can't tell them apart. Sidecar Mode
+  still shares one note.
+- **A wake is no longer spent before it's read.** Starting up built a whole wake and threw it
+  away, and a wake counts what it shows as shown. So on Hermes a reply from the person, a quiet
+  hour and the rest of what shows once were marked delivered and never reached the agent. Now
+  starting up only opens the memory.
+- **The wake isn't cut to recall's limit.** It was cut to the 2,200 characters meant for what
+  recall adds to a message, mid-sentence, on a memory with next to nothing in it. It now has the
+  same budget every agent's wake has, and `max_context_chars` bounds only what recall adds. If
+  you set that low to shrink the wake, set the new `max_wake_chars` in `mnemos.json` instead.
+
+For everyone: a session whose note was pushed out because more than eight sessions have left
+notes since now still gets its own back when it returns. One it forgot stays gone.
+
+### Connecting Hermes from a plain install
+
+`mnemos connect hermes` and `mnemos hermes quickstart` edit Hermes' `config.yaml`, which takes
+PyYAML, and PyYAML came only with the `embeddings` extra. Without it, on any Hermes that already
+had a config, they stopped at a warning and connected nothing, including through the prompt in
+`HERMES_INSTALL.md`. PyYAML is now a dependency, and the black box connects a Hermes that
+already has a config.
+
 ## 0.6.3 (2026-11-04)
 
 - The notebook (`mnemos log`) has a new look, and does what it did. True black and

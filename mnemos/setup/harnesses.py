@@ -323,18 +323,20 @@ HERMES = Harness(
     level=INSTALLS,
     version="0.17",
     mcp=Ability(True, "mcp_servers in config.yaml; hermes mcp test listed the 12 tools", SAW),
+    # Saw it: real turns of Hermes 0.17's own agent in its own Python, through
+    # its plugin loader, with a stand-in model recording what reached it.
     wake=Ability(
         True,
         "Provider Mode: Mnemos is Hermes' memory provider and its system-prompt block carries the wake",
-        UNTESTED,
+        SAW,
     ),
     after_compaction=Ability(
-        True, "the provider's system-prompt block is built for every request", UNTESTED
+        True, "Hermes rebuilds the system prompt after a compression, with the provider's block in it", SAW
     ),
     cue=Ability(
         True,
         "Provider Mode: the provider's prefetch recalls what bears on each message",
-        UNTESTED,
+        SAW,
     ),
     headless="hermes chat -q",
     hours=Hours(

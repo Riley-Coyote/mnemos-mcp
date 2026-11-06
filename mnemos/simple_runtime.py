@@ -1157,6 +1157,7 @@ class MnemosRuntime:
         read_only: bool = False,
         marks_lived: bool = True,
         harness: str = "",
+        conversation: str = "",
     ) -> None:
         # Which agent this runtime serves, when its host says so (the Hermes
         # provider does), and the name an MCP client gave in its handshake
@@ -1164,6 +1165,10 @@ class MnemosRuntime:
         # them (``_setup_part``).
         self.harness = harness
         self.client_name = ""
+        # Which conversation this runtime serves, when its host says so. One
+        # Hermes gateway runs every topic in one process, a runtime for each,
+        # so the environment can't say (``_note_session``).
+        self.conversation = conversation
         self.scope = resolve_scope(
             db_path=db_path,
             agent_id=agent_id,
@@ -4599,6 +4604,17 @@ class MnemosRuntime:
         ids, texts = shown_memories(dict(packet))
         record_briefing(session, db_path=str(self.db_path), **self._scope_args(), ids=ids, texts=texts)
 
+    def _note_session(self) -> str:
+        """Whose handoff counts as this one's own: the conversation this
+        runtime was told it serves, else the harness session.
+
+        Only handoffs go by it. A conversation can outlive many sessions, and
+        what counts once per session (a recall's reinforcement, among others)
+        must not become once per conversation, or a long-lived Telegram topic
+        would stop strengthening what it uses.
+        """
+        return self.conversation or harness_session()
+
     def _briefing_packet(
         self,
         *,
@@ -4610,7 +4626,7 @@ class MnemosRuntime:
         """The shared packet, built as the session-start hook builds it.
 
         Each input defaults to what this process can see: the model making the
-        call, the Claude Code session (``CLAUDE_CODE_SESSION_ID``) and the
+        call, the session whose handoff is its own (``_note_session``) and the
         working folder. Claude Code starts each session's server in the
         session's own folder, so the folder ranks notes the way the hook's
         payload does; it never chooses the scope.
@@ -4624,7 +4640,7 @@ class MnemosRuntime:
             project_scope=self.scope.project_scope,
             include_engrams=False,
             reader_model=self.author_model() if reader_model is None else reader_model,
-            reader_session=harness_session() if reader_session is None else reader_session,
+            reader_session=self._note_session() if reader_session is None else reader_session,
             session_counter=session_counter,
             workdir=_working_folder() if workdir is None else workdir,
             older_than_store=self._older_than_store() is not None,
@@ -4684,7 +4700,7 @@ class MnemosRuntime:
         assert self._store is not None
         author = self.author_model(signed_as)
         self._traced_author(author)
-        session = harness_session()
+        session = self._note_session()
         handoff_id = self._store.write_handoff(
             text,
             agent_id=self.scope.agent_id,
@@ -4974,7 +4990,7 @@ class MnemosRuntime:
             if not note:
                 return self._recall_journal_or_note(note_id)
             if note.get("entry_kind") == "handoff":
-                label, whose = whose_handoff(note, self.author_model(), harness_session())
+                label, whose = whose_handoff(note, self.author_model(), self._note_session())
                 lines = [f"{label}:", note["content"]]
                 if whose != "own":
                     lines.append(COLLEAGUE_LINE)
@@ -5600,7 +5616,7 @@ class MnemosRuntime:
         # only when something signed was found (reading the model may read the
         # session's transcript).
         reader, session = (
-            (self.author_model(), harness_session()) if handoffs or journal else ("", "")
+            (self.author_model(), self._note_session()) if handoffs or journal else ("", "")
         )
         if handoffs:
             lines.extend(["", "Handoffs:"])

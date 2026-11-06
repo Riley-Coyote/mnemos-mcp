@@ -382,6 +382,24 @@ class TestThePacketStaysSmall:
         own = _hook(db_path, tmp_path, _start(LIGHTS, source="resume"))
         assert own.index("What Lights Up") < own.index("Sanctuary steward")
 
+    def test_a_session_crowded_out_still_gets_its_own_note_back(self, tmp_path):
+        # Nine sessions left notes, so the first one's was retired. When that
+        # session comes back, the thread is still its own.
+        db_path = tmp_path / "shared.db"
+        sessions = [f"{index:08d}-4444-4444-8444-444444444444" for index in range(9)]
+        store = EngramStore(db_path)
+        try:
+            for index, session in enumerate(sessions):
+                store.write_handoff(f"Thread {index} note.", author_session=session, **SCOPE)
+            assert "Thread 0 note." not in {row["content"] for row in _active(store)}
+        finally:
+            store.close()
+
+        packet = _hook(db_path, tmp_path, _start(sessions[0], source="resume"))
+        assert re.search(r"### where i was\n[^\n]*, this session:\nThread 0 note\.", packet), packet
+        # A session that never left a note doesn't get it.
+        assert "Thread 0 note." not in _hook(db_path, tmp_path, _start(FRESH))
+
     def test_every_note_shown_counts_as_delivered(self, tmp_path):
         db_path = tmp_path / "shared.db"
         _handoff_from(LIGHTS, LIGHTS_NOTE, db_path, tmp_path)

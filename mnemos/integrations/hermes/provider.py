@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +22,7 @@ from ...simple_runtime import MnemosRuntime
 from .scope import (
     HermesMnemosConfig,
     HermesScope,
+    conversation_id,
     derive_hermes_scope,
     save_hermes_mnemos_config,
 )
@@ -117,6 +118,26 @@ IDENTITY_REPORT_SCHEMA = {
     },
 }
 
+IDENTITY_HANDOFF_SCHEMA = {
+    "name": "mnemos_identity_handoff",
+    "description": (
+        "Leave your own note on where this conversation stands, in first person. Use after "
+        "meaningful progress or a changed plan, while work remains, and before pausing or "
+        "changing direction; not after every turn. Each conversation (a chat, or a topic in "
+        "one) keeps its own note: this replaces only the one this conversation left before, "
+        "and it is what this conversation wakes to next time, so write about this "
+        "conversation's work, not the others'. It is stored exactly as written."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string", "description": "The note, in your own words."},
+            "signed_as": {"type": "string", "description": "Your exact model id, when you know it."},
+        },
+        "required": ["text"],
+    },
+}
+
 
 def _json_ok(**payload: Any) -> str:
     payload.setdefault("ok", True)
@@ -198,6 +219,7 @@ class MnemosMemoryProviderCore:
         self._scope: HermesScope | None = None
         self._runtime: MnemosRuntime | None = None
         self._session_id = ""
+        self._conversation_follows_session = True
         # What prefetch last recalled for each session: the query, the store's
         # revision then (_store_revision), and the context. Any write, here
         # or by another process, changes the revision.
@@ -229,6 +251,7 @@ class MnemosMemoryProviderCore:
         )
         self._config = config
         self._session_id = self._scope.session_id
+        self._conversation_follows_session = not str(kwargs.get("gateway_session_key") or "").strip()
         self._writes_enabled = self._scope.agent_context in {"", "primary"}
         self._runtime = MnemosRuntime(
             db_path=self._scope.db_path,
@@ -237,9 +260,12 @@ class MnemosMemoryProviderCore:
             project_scope=self._scope.project_scope,
             use_dedicated_model=config.deep_maintenance,
             harness="hermes",
+            conversation=self._scope.conversation,
         )
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
-        self._runtime.context(max_results=1)
+        # Opened, not read: a wake counts what it shows as shown, so one built
+        # here would spend what shows once on a read no model sees.
+        self._runtime._ensure_init()
 
     def system_prompt_block(self) -> str:
         self._ensure_runtime()
@@ -258,10 +284,13 @@ class MnemosMemoryProviderCore:
             "durable appears (a preference, a decision, a correction, project state, how the "
             "person likes to work), keep it with mnemos_identity_capture as it happens, in "
             "your own words: sessions end without warning. Put right what turns out wrong "
-            "with mnemos_identity_correct.\n\n"
+            "with mnemos_identity_correct. Leave your note on where this conversation stands "
+            "with mnemos_identity_handoff: each conversation (a chat, or a topic in one) keeps "
+            "its own, and wakes to it first.\n\n"
             f"{packet}"
         )
-        return _truncate(body, self._config.max_context_chars)
+        wake_limit = self._config.max_wake_chars
+        return _truncate(body, wake_limit) if wake_limit else body
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         self._ensure_runtime()
@@ -328,6 +357,7 @@ class MnemosMemoryProviderCore:
             IDENTITY_RECALL_SCHEMA,
             IDENTITY_CORRECT_SCHEMA,
             IDENTITY_REPORT_SCHEMA,
+            IDENTITY_HANDOFF_SCHEMA,
         ]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
@@ -340,6 +370,8 @@ class MnemosMemoryProviderCore:
                 return self._tool_correct(args)
             if tool_name == "mnemos_identity_report":
                 return self._tool_report(args)
+            if tool_name == "mnemos_identity_handoff":
+                return self._tool_handoff(args)
             return _json_error(f"Unknown Mnemos tool: {tool_name}")
         except Exception as exc:
             logger.debug("Mnemos tool %s failed", tool_name, exc_info=True)
@@ -377,6 +409,18 @@ class MnemosMemoryProviderCore:
         self._session_id = str(new_session_id or "")
         if reset:
             self._prefetch_cache.clear()
+        # A gateway conversation is its key, which a switch doesn't move. On
+        # the command line it is the session, except that a compression
+        # continues the same conversation under a new id.
+        if (
+            self._conversation_follows_session
+            and kwargs.get("reason") != "compression"
+            and self._scope is not None
+            and self._runtime is not None
+        ):
+            conversation = conversation_id(session_id=self._session_id)
+            self._scope = replace(self._scope, conversation=conversation)
+            self._runtime.conversation = conversation
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """Compression writes nothing, and adds nothing to the summary."""
@@ -464,6 +508,16 @@ class MnemosMemoryProviderCore:
             return _json_ok(status="queued_for_review", continuity_note_id=note_id, scope=asdict(self.scope))
         result = self._capture(content, context, importance)
         return _json_ok(status="captured", result=result, scope=asdict(self.scope))
+
+    def _tool_handoff(self, args: dict[str, Any]) -> str:
+        self._ensure_runtime()
+        assert self._runtime is not None
+        # Stored exactly as written: no cleaning, unlike a capture.
+        text = str(args.get("text") or "")
+        if not text.strip():
+            return _json_error("text is required")
+        result = self._runtime.handoff(text, signed_as=str(args.get("signed_as") or ""))
+        return _json_ok(status="saved", result=result, scope=asdict(self.scope))
 
     def _tool_recall(self, args: dict[str, Any]) -> str:
         self._ensure_runtime()

@@ -67,6 +67,18 @@ memory:
 
 Use Provider Mode only when you want Mnemos to occupy Hermes' single external memory-provider slot. Hermes built-in `MEMORY.md` and `USER.md` remain active, but another external provider cannot also occupy `memory.provider` at the same time.
 
+Hermes runs in its own Python environment, so the shim says where Mnemos is installed, and looks there after Hermes' own packages. Nothing is installed into Hermes. Connecting tries the load in Hermes' Python and warns if it fails. If you move or reinstall Mnemos somewhere else, run `mnemos connect hermes --write` again. When Mnemos' Python is a different version from Hermes', search by meaning may not load inside Hermes: the wake and each message's recall then go by words, and the tools, which run in Mnemos' own Python, still search by meaning.
+
+## Many Conversations At Once
+
+Run as many chats and Telegram topics as you like on one agent. They share one memory: what the agent keeps in one is there in the others, and each message brings up only what bears on it.
+
+In Provider Mode each conversation also keeps its own note on where it stands. The agent leaves it with `mnemos_identity_handoff`, and a topic that starts a fresh session (a `/new`, an idle reset) wakes to its own note first, with the other conversations' recent notes as short lines. Hermes' gateway says which conversation is which, so nothing needs setting up. Notes stay active for the eight most recent conversations; a topic left longer still gets its own back.
+
+In Sidecar Mode the conversations share one note, the newest. All of them reach the tools through one MCP server, which can't tell them apart. The older notes are kept and recall finds them.
+
+There's no wall between conversations: the memory is one memory, and a topic can't yet be kept apart from the others.
+
 ## What Quickstart Reports
 
 `mnemos hermes quickstart` installs and immediately runs a doctor-style check. It reports:

@@ -69,6 +69,7 @@ def test_provider_imports_and_exposes_hermes_tools(tmp_path):
         "mnemos_identity_recall",
         "mnemos_identity_correct",
         "mnemos_identity_report",
+        "mnemos_identity_handoff",
     }
 
 
@@ -77,6 +78,7 @@ def test_provider_defaults_are_small_identity_continuity_defaults():
 
     assert config.max_recall_results == 4
     assert config.max_context_chars == 2200
+    assert config.max_wake_chars == 0  # the wake's own budget
 
 
 def test_provider_context_stays_under_configured_budget(tmp_path):
@@ -87,6 +89,7 @@ def test_provider_context_stays_under_configured_budget(tmp_path):
             person_id="riley",
             project_scope="mnemos",
             max_context_chars=800,
+            max_wake_chars=800,
             max_recall_results=4,
         )
     )
