@@ -323,8 +323,9 @@ HERMES = Harness(
     level=INSTALLS,
     version="0.17",
     mcp=Ability(True, "mcp_servers in config.yaml; hermes mcp test listed the 12 tools", SAW),
-    # Saw it: real turns of Hermes 0.17's own agent in its own Python, through
-    # its plugin loader, with a stand-in model recording what reached it.
+    # Saw it: real turns through Hermes' own gateway, Telegram adapter, plugin
+    # loader and agent, in its own Python, on 0.17 and today's main, with stand-ins
+    # for the Telegram servers and the model recording what reached it.
     wake=Ability(
         True,
         "Provider Mode: Mnemos is Hermes' memory provider and its system-prompt block carries the wake",

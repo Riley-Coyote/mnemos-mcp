@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
+import time
 import uuid
 from collections.abc import Iterable
 from contextlib import contextmanager
@@ -41,6 +42,7 @@ from ..core.identity import AgentIdentity
 # person (see JOURNAL_WRITTEN and NOTE_KINDS). v18: lived_days, the days the
 # agent lived (see consolidation/lived.py).
 SCHEMA_VERSION = 19
+OPENING_PATIENCE_SECONDS = 30
 
 # The lowest maintenance code version still allowed to maintain this store,
 # raised by each newer version that opens it (see mnemos/code_version.py).
@@ -901,6 +903,48 @@ def handoff_retirement(note: dict[str, Any]) -> str | None:
     return None
 
 
+def _turn_wal_on(conn: sqlite3.Connection) -> None:
+    """Turn write-ahead logging on, waiting out anyone else doing the same. The
+    switch needs the file to itself and SQLite doesn't wait for that: whoever
+    loses is told "locked" at once, whatever the busy timeout says. Several
+    connections meet here when several sessions open a new store together."""
+    deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
+    while True:
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
+def _create_tables(conn: sqlite3.Connection) -> None:
+    """Run the schema script. On a new store, all of it at once: anyone opening
+    the store while it is being made would otherwise find it half made, take it
+    for an older store to back up, and fail checking it. (Only there: the lock it
+    takes would make every open of an old store wait for any writer.)"""
+    new = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'engrams'"
+    ).fetchone() is None
+    script = (
+        f"BEGIN IMMEDIATE;\n{SQL_CREATE_TABLES}\n"
+        f"INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');\n"
+        "COMMIT;"
+    ) if new else SQL_CREATE_TABLES
+    deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
+    while True:
+        try:
+            conn.executescript(script)
+            return
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc) or time.monotonic() >= deadline:
+                raise
+            if conn.in_transaction:
+                conn.rollback()
+            time.sleep(0.05)
+
+
 def _new_id() -> str:
     return str(uuid.uuid4())
 
@@ -1103,7 +1147,7 @@ class EngramStore:
             had_lived_days = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lived_days'"
             ).fetchone() is not None
-            conn.executescript(SQL_CREATE_TABLES)
+            _create_tables(conn)
             self._classify_legacy_hypomnema(conn)
             self._backfill_engram_scopes(conn)
             self._label_engram_authors(conn)
@@ -1616,20 +1660,27 @@ class EngramStore:
     def _get_conn(self) -> sqlite3.Connection:
         """Get or create SQLite connection with WAL mode."""
         if self._conn is None:
-            self._conn = sqlite3.connect(
+            conn = sqlite3.connect(
                 str(self.db_path),
                 check_same_thread=False,
             )
-            self._conn.row_factory = sqlite3.Row
-            self._conn.execute("PRAGMA busy_timeout=5000")
-            self._conn.execute("PRAGMA journal_mode=WAL")
-            self._conn.execute("PRAGMA synchronous=NORMAL")
-            self._conn.execute("PRAGMA foreign_keys=ON")
-            self._conn.set_trace_callback(
-                lambda statement: self._secure_sqlite_files()
-                if statement.lstrip().upper().startswith(("COMMIT", "END"))
-                else None
-            )
+            try:
+                conn.row_factory = sqlite3.Row
+                conn.execute("PRAGMA busy_timeout=5000")
+                _turn_wal_on(conn)
+                conn.execute("PRAGMA synchronous=NORMAL")
+                conn.execute("PRAGMA foreign_keys=ON")
+                conn.set_trace_callback(
+                    lambda statement: self._secure_sqlite_files()
+                    if statement.lstrip().upper().startswith(("COMMIT", "END"))
+                    else None
+                )
+            except BaseException:
+                conn.close()
+                raise
+            # Only a connection set up whole is kept: the next call would
+            # otherwise take a half-made one as ready.
+            self._conn = conn
             self._secure_sqlite_files()
         return self._conn
 
@@ -4201,9 +4252,9 @@ class EngramStore:
             agent_id=agent_id,
             person_id=person_id,
             project_scope=project_scope,
-            active_only=True,
+            active_only=False,
         )
-        if row is None:
+        if row is None or not (row.get("active") or handoff_retirement(row) == "retired"):
             raise KeyError(f"Active hypomnema entry not found for scope: {entry_id}")
 
         now = _utc_now()

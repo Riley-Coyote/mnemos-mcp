@@ -171,7 +171,7 @@ Example:
 }
 ```
 
-If no IDs are configured, Mnemos derives them from Hermes runtime context:
+`mnemos connect hermes` and `mnemos hermes quickstart --provider` configure them, so the agent has one memory in every chat and for everyone in them. If no IDs are configured, as after a plain `mnemos hermes install --mode provider`, Mnemos derives them from Hermes runtime context, so each chat and each person has a memory of their own, and renaming a group starts a new one:
 
 - `agent_id`: Hermes profile or `agent_identity`
 - `person_id`: gateway user name, user ID, chat ID, or `user`

@@ -11,18 +11,35 @@ that. Checking it through real Hermes turned up more than the question did.
   and hides the failure at debug level. `mnemos connect hermes` said "Provider Mode active: yes"
   and nothing loaded: no wake and no recall on each message, on any normal install, only the
   tools. The shim now says where Mnemos is, and connecting tries the load in Hermes' Python and
-  warns if it fails. Run `mnemos connect hermes --write` again to replace an existing shim. We ran
-  all of this through Hermes 0.17's own loader and agent, with a stand-in model recording what
-  reached it; Telegram itself wasn't in the loop.
+  warns if it fails, and `mnemos hermes doctor` now tries it too, instead of saying "active".
+  Run `mnemos connect hermes --write` again to replace an existing shim. We ran all of this
+  through real Hermes (0.17 and today's main): its gateway, its Telegram adapter and its agent,
+  with stand-ins for the Telegram servers and the model. Live Telegram wasn't in the loop.
+- **A topic's own threads could stop the whole gateway.** Hermes runs a turn's queued recall on
+  one thread and the next message on another, over one SQLite connection. Two at once could
+  hang the whole process with no error, every topic with it. Calls to one provider now go one at
+  a time.
+- **Topics speaking at once after a start all get their memory.** Hermes from before October 2026
+  can hand a thread a half-loaded plugin, and that thread goes without memory for its session:
+  through a real gateway, two topics of three. The shim now does nothing slow as it loads, and a small
+  gateway hook (`hooks/mnemos-preload`) loads Mnemos before the gateway connects to anything.
+- **Housekeeping runs from inside Hermes on any install.** Started from inside Hermes it runs on
+  Hermes' Python, and on a clone it couldn't import what it needs. It died on its first line, and
+  nothing said so.
+- **`mnemos hermes quickstart --provider` is one memory now.** It wrote no scope, so memory split
+  by chat and by person, a group's rename started over, and it had no tools past the provider's.
+  It now sets up what `mnemos connect hermes` does, keeping what a sidecar already holds. A store
+  already at `$HERMES_HOME/mnemos/mnemos.db`, or a scope you gave, stays as it is.
 - **Each conversation keeps its own note.** Sessions were told apart by an id only
   Claude Code sets, so on Hermes every topic shared one handoff: the newest replaced the
   rest, and a topic starting a fresh session woke to another topic's thread. Hermes'
   gateway says which conversation is which, and it stays the same across `/new`, an idle
   reset and compression, so now a topic keeps its own note and wakes to it first, with the
   others as short lines. Provider Mode has a new tool for this, `mnemos_identity_handoff`,
-  and `mnemos connect hermes` leaves the MCP `mnemos_handoff` out of Provider Mode, because
-  every topic reaches an MCP tool through one server that can't tell them apart. Sidecar Mode
-  still shares one note.
+  and `mnemos connect hermes` leaves the MCP `mnemos_handoff` and `mnemos_context` out of Provider
+  Mode, because every topic reaches an MCP tool through one server that can't tell them apart.
+  They come back when Provider Mode goes, or if Hermes can't load Mnemos. Sidecar Mode still
+  shares one note.
 - **A wake is no longer spent before it's read.** Starting up built a whole wake and threw it
   away, and a wake counts what it shows as shown. So on Hermes a reply from the person, a quiet
   hour and the rest of what shows once were marked delivered and never reached the agent. Now
@@ -33,7 +50,9 @@ that. Checking it through real Hermes turned up more than the question did.
   you set that low to shrink the wake, set the new `max_wake_chars` in `mnemos.json` instead.
 
 For everyone: a session whose note was pushed out because more than eight sessions have left
-notes since now still gets its own back when it returns. One it forgot stays gone.
+notes since now still gets its own back when it returns, and can forget it. One it forgot stays
+gone. And several sessions opening a new store at the same moment all open it: they used to be
+told "database is locked", or to find it half made.
 
 ### Connecting Hermes from a plain install
 

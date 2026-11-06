@@ -65,9 +65,11 @@ memory:
   provider: mnemos
 ```
 
+It also adds the tools and gives the agent one memory, in every chat and for everyone in them, the same setup `mnemos connect hermes --write` makes. What a sidecar already keeps stays kept. A store already at `$HERMES_HOME/mnemos/mnemos.db`, or a scope you pass, stays as it is.
+
 Use Provider Mode only when you want Mnemos to occupy Hermes' single external memory-provider slot. Hermes built-in `MEMORY.md` and `USER.md` remain active, but another external provider cannot also occupy `memory.provider` at the same time.
 
-Hermes runs in its own Python environment, so the shim says where Mnemos is installed, and looks there after Hermes' own packages. Nothing is installed into Hermes. Connecting tries the load in Hermes' Python and warns if it fails. If you move or reinstall Mnemos somewhere else, run `mnemos connect hermes --write` again. When Mnemos' Python is a different version from Hermes', search by meaning may not load inside Hermes: the wake and each message's recall then go by words, and the tools, which run in Mnemos' own Python, still search by meaning.
+Hermes runs in its own Python environment, so the shim says where Mnemos is installed, and looks there after Hermes' own packages. Nothing is installed into Hermes. Connecting tries the load in Hermes' Python and warns if it fails, and `mnemos hermes doctor` tries it again whenever you ask. If you move or reinstall Mnemos somewhere else, run `mnemos connect hermes --write` again. Provider Mode also adds one small gateway hook, `hooks/mnemos-preload`, that loads Mnemos before the gateway connects: Hermes from before October 2026 could otherwise leave a topic without memory when several spoke at once right after a start. When Mnemos' Python is a different version from Hermes', search by meaning may not load inside Hermes: the wake and each message's recall then go by words, and the tools, which run in Mnemos' own Python, still search by meaning.
 
 ## Many Conversations At Once
 

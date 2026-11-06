@@ -11,9 +11,11 @@ name (see ``hermes_auto_written`` in the store, which labels those a tool's).
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
+import threading
 from dataclasses import asdict, replace
 from pathlib import Path
 from typing import Any
@@ -211,6 +213,21 @@ def _tags_for(text: str, *extra: str) -> list[str]:
 # How a memory mirrored from Hermes's built-in memory begins its context.
 _MIRROR_MARK = "Mirrored from Hermes built-in"
 
+def _one_at_a_time(method):
+    """One provider, one SQLite connection, and Hermes calls from several threads:
+    a turn's queued prefetch on one, the next message on another. On one
+    connection two at once can stop the whole process, every topic with it, with
+    no error: one waits for SQLite holding Python's lock, the other inside SQLite
+    for Python's lock, to run the connection's trace callback."""
+
+    @functools.wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return locked
+
+
 class MnemosMemoryProviderCore:
     """Hermes-compatible provider implementation without importing Hermes."""
 
@@ -226,6 +243,7 @@ class MnemosMemoryProviderCore:
         self._prefetch_cache: dict[str, tuple[str, tuple[int, int] | None, str]] = {}
         self._writes_enabled = True
         self._turn_count = 0
+        self._lock = threading.RLock()
 
     @property
     def name(self) -> str:
@@ -240,6 +258,7 @@ class MnemosMemoryProviderCore:
     def is_available(self) -> bool:
         return True
 
+    @_one_at_a_time
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         hermes_home = kwargs.get("hermes_home")
         config = self._config or HermesMnemosConfig.load(hermes_home)
@@ -267,6 +286,7 @@ class MnemosMemoryProviderCore:
         # here would spend what shows once on a read no model sees.
         self._runtime._ensure_init()
 
+    @_one_at_a_time
     def system_prompt_block(self) -> str:
         self._ensure_runtime()
         assert self._runtime is not None
@@ -292,6 +312,7 @@ class MnemosMemoryProviderCore:
         wake_limit = self._config.max_wake_chars
         return _truncate(body, wake_limit) if wake_limit else body
 
+    @_one_at_a_time
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         self._ensure_runtime()
         assert self._runtime is not None
@@ -322,6 +343,7 @@ class MnemosMemoryProviderCore:
             self._prefetch_cache.pop(cache_key, None)
         return context
 
+    @_one_at_a_time
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         self.prefetch(query, session_id=session_id)
 
@@ -340,6 +362,7 @@ class MnemosMemoryProviderCore:
         except Exception:
             return None
 
+    @_one_at_a_time
     def sync_turn(
         self,
         user_content: str,
@@ -360,6 +383,7 @@ class MnemosMemoryProviderCore:
             IDENTITY_HANDOFF_SCHEMA,
         ]
 
+    @_one_at_a_time
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
         try:
             if tool_name == "mnemos_identity_capture":
@@ -377,6 +401,7 @@ class MnemosMemoryProviderCore:
             logger.debug("Mnemos tool %s failed", tool_name, exc_info=True)
             return _json_error(str(exc), tool=tool_name)
 
+    @_one_at_a_time
     def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
         self._turn_count = int(turn_number or self._turn_count + 1)
         if not self._writes_enabled:
@@ -389,6 +414,7 @@ class MnemosMemoryProviderCore:
             self._runtime.maintain(auto=True)
             self._prefetch_cache.clear()  # upkeep can archive what was recalled
 
+    @_one_at_a_time
     def on_session_end(self, messages: list[dict[str, Any]]) -> None:
         """The memory's upkeep, and nothing written from the session."""
         if not self._writes_enabled:
@@ -398,6 +424,7 @@ class MnemosMemoryProviderCore:
         self._runtime.maintain(auto=True)
         self._prefetch_cache.clear()  # upkeep can archive what was recalled
 
+    @_one_at_a_time
     def on_session_switch(
         self,
         new_session_id: str,
@@ -426,10 +453,12 @@ class MnemosMemoryProviderCore:
         """Compression writes nothing, and adds nothing to the summary."""
         return ""
 
+    @_one_at_a_time
     def on_delegation(self, task: str, result: str, *, child_session_id: str = "", **kwargs: Any) -> None:
         """A delegation writes nothing: its result is in the conversation,
         for the agent to keep if it matters."""
 
+    @_one_at_a_time
     def on_memory_write(
         self,
         action: str,
@@ -490,6 +519,7 @@ class MnemosMemoryProviderCore:
     def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
         save_hermes_mnemos_config(hermes_home, values)
 
+    @_one_at_a_time
     def shutdown(self) -> None:
         if self._runtime is not None:
             self._runtime.close()
@@ -664,8 +694,10 @@ class MnemosMemoryProviderCore:
             return default
 
 
+@functools.lru_cache(maxsize=None)
 def build_memory_provider_class(memory_provider_base: type) -> type:
-    """Build a Hermes ``MemoryProvider`` subclass without hard-importing Hermes."""
+    """Build a Hermes ``MemoryProvider`` subclass without hard-importing Hermes.
+    One class per base: Hermes asks again for every agent it builds."""
 
     class MnemosMemoryProvider(MnemosMemoryProviderCore, memory_provider_base):  # type: ignore[misc, valid-type]
         pass

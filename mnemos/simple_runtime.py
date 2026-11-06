@@ -345,15 +345,13 @@ _UPKEEP_FAILED = "upkeep_failed"
 # first when it isn't on the path already (a checkout run from its own
 # directory, say).
 _UPKEEP_CHILD = (
-    "import os, sys\n"
+    "import json, os, sys\n"
     "if hasattr(os, 'nice'):\n"
     "    try:\n"
     "        os.nice(10)\n"
     "    except OSError:\n"
     "        pass\n"
-    "root = sys.argv[1]\n"
-    "if root not in sys.path:\n"
-    "    sys.path.insert(0, root)\n"
+    "sys.path.extend(p for p in json.loads(sys.argv[1]) if p not in sys.path)\n"
     "from mnemos.simple_runtime import run_background_upkeep\n"
     "sys.exit(run_background_upkeep(sys.argv[2:]))\n"
 )
@@ -452,9 +450,11 @@ def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
     if not sys.executable:
         return False
     db_path = Path(scope.db_path).expanduser()
-    root = str(Path(__file__).resolve().parent.parent)
+    # Everything this process can import from. Inside Hermes this is Hermes'
+    # Python, with Mnemos and what it needs only on a path the plugin added.
+    paths = [*sys.path, str(Path(__file__).resolve().parent.parent)]
     command = [
-        sys.executable, "-c", _UPKEEP_CHILD, root,
+        sys.executable, "-c", _UPKEEP_CHILD, json.dumps([p for p in paths if p]),
         str(db_path), scope.agent_id, scope.person_id, scope.project_scope, token,
     ]
     options: dict[str, Any] = {
@@ -6207,7 +6207,9 @@ class MnemosRuntime:
         assert self._store is not None
         closest = "closest " if query else ""
         if action in _FORGET_ACTIONS:
-            if not note.get("active"):
+            # One crowded out still comes back to the session that wrote it,
+            # until it is forgotten; one replaced or forgotten never does.
+            if not note.get("active") and handoff_retirement(note) != "retired":
                 return f"Nothing was archived: note {note['id']} is no longer active."
             self._store.archive_hypomnema_entry(
                 note["id"],
