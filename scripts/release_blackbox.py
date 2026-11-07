@@ -349,7 +349,8 @@ def audit_hermes_connect(executable: Path, env: dict[str, str], root: Path) -> N
     written = config.read_text(encoding="utf-8")
     assert "their-model" in written, written
     assert "provider: mnemos" in written, written
-    assert "mcp_servers:" in written, written
+    # The provider carries the tools, on the same memory: no second door beside it.
+    assert "mcp_servers:" not in written, written
 
 
 def main() -> int:
