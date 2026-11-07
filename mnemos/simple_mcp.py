@@ -19,7 +19,7 @@ from mcp import types
 from mcp.server.fastmcp import FastMCP
 
 from .package_version import mnemos_version
-from .simple_runtime import MnemosRuntime, SIMPLE_TOOL_NAMES, format_health_card
+from .simple_runtime import MnemosRuntime, RECALL_RESULTS, SIMPLE_TOOL_NAMES, format_health_card
 
 logger = logging.getLogger("mnemos.simple_mcp")
 
@@ -33,6 +33,19 @@ MAX_CONTEXT_CHARS = 32_768
 MAX_REFLECTION_CHARS = 16_384
 MAX_ID_CHARS = 256
 MAX_RESULTS = 20
+# The most rows a recall may ask for: 45 and 5 handoffs, the longest mix the lab
+# tested (L20b, 2026-11-06). It's on request because every row is read on every
+# search: 50 rows found 9 to 16 more of 118 facts than 15, for about 27,400 more
+# characters a search (L20). mnemos_context keeps MAX_RESULTS: nothing tested it
+# longer.
+MAX_RECALL_RESULTS = 50
+# What recall declares it may answer with, in characters. Claude Code saves a
+# tool's answer to a file once it's over 50,000 unless the tool declares its own
+# limit, up to 500,000 (`anthropic/maxResultSizeChars`, in its MCP docs; added in
+# 2.1.91, and since 2.1.98 it holds against the token limit too). At 45 + 5, 59
+# of 165 answers on a copy of the real store went over 50,000, the longest
+# 61,474 (L20b), and the store is still growing.
+RECALL_RESULT_CHARS = 70_000
 MAX_TOOL_OUTPUT_CHARS = 131_072
 
 
@@ -535,11 +548,12 @@ def register_simple_tools(server: FastMCP) -> None:
             read_only=False,
             destructive=False,
             idempotent=False,
-        )
+        ),
+        meta={"anthropic/maxResultSizeChars": RECALL_RESULT_CHARS},
     )
     def mnemos_recall(
         query: str,
-        max_results: int = 10,
+        max_results: int = RECALL_RESULTS,
         include_archived: bool = False,
         standing: bool = False,
     ) -> str:
@@ -556,23 +570,25 @@ def register_simple_tools(server: FastMCP) -> None:
         reply to one of your notes, including the ids the packet shows
         (mnemos_recall("<id>")).
 
-        For a question about the past, ask for 15 (max_results=15), and
-        search more than once, in other words too: a name, a place, the
-        thing's own terms. A thin result isn't the memory saying no. When
-        two memories disagree, the newer one usually holds.
+        A recall returns 15 rows. When a result comes back thin or the
+        thing matters, ask for more, up to 50 (max_results=50), and search
+        more than once, in other words too: a name, a place, the thing's
+        own terms. A thin result isn't the memory saying no. When two
+        memories disagree, the newer one usually holds.
 
-        Handoffs are searched with the memories: the ones in use and the
-        older ones a newer handoff replaced, each marked with who left
-        it and when. Journal entries are searched too, marked as journal
-        with who wrote them and when. A capture comes back once, as its
-        memory. max_results counts your own rows. Up to three shared memories
-        follow, marked with their author and day. A shared id returns it whole.
+        Handoffs have their own search and one row in ten (2 of 15, 5 of
+        50): the ones in use and the older ones a newer handoff replaced,
+        each marked with who left it and when. Journal entries are searched
+        with the memories, marked as journal with who wrote them and when.
+        A capture comes back once, as its memory. max_results counts your
+        own rows. Up to three shared memories follow, marked with their
+        author and day. A shared id returns it whole.
 
         A memory that has gone quiet comes back when the query matches it
         well, and wakes. One that faded further, into the archive, comes
         back only by its id, or when include_archived is true and the
-        query names it; either way it is restored. What you forgot or
-        replaced with a correction stays gone.
+        query names it (15 at most); either way it is restored. What you
+        forgot or replaced with a correction stays gone.
 
         Args:
             standing: True to list every memory marked standing, how the
@@ -583,7 +599,7 @@ def register_simple_tools(server: FastMCP) -> None:
 
         return _output(_get_runtime().recall(
             query=_text("query", query, MAX_QUERY_CHARS, required=not standing),
-            max_results=_count("max_results", max_results, minimum=1, maximum=MAX_RESULTS),
+            max_results=_count("max_results", max_results, minimum=1, maximum=MAX_RECALL_RESULTS),
             include_archived=bool(include_archived),
             standing=bool(standing),
         ))

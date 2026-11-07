@@ -1559,9 +1559,9 @@ class EmbeddingIndex:
 
         Only the candidates are scored, and only then is the top taken. Recall
         passes what it may return: the memories live in the caller's scope and
-        the handoffs. ``search`` takes its top over every stored vector; on a
-        real store 3,746 of them, 202 in scope, so across twelve cues 14 of 240
-        meaning hits survived the scope check afterwards.
+        its notes, or its handoffs alone. ``search`` takes its top over every
+        stored vector; on a real store 3,746 of them, 202 in scope, so across
+        twelve cues 14 of 240 meaning hits survived the scope check afterwards.
 
         Each candidate counts by its best vector from this model: its passages
         (``passages``: its sentence windows and its whole text), or its

@@ -347,9 +347,10 @@ class TestThePacketStaysSmall:
                 runtime.handoff(f"Handoff {index} about the release and the durable facts.")
             monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
 
-            recalled = runtime.recall("release durable facts")
-            assert "Handoff 0 about" not in recalled
-            assert sum(fact in recalled for fact in facts) >= 3
+            # A list too short for all of them keeps its rows for the memories.
+            recalled = runtime.recall("release durable facts", max_results=8)
+            assert all(fact in recalled for fact in facts), recalled
+            assert recalled.count("kind=handoff") == 2, recalled
 
             store_packet = build_context_packet(runtime._store, "release", **SCOPE)
             assert all(row["entry_kind"] != "handoff" for row in store_packet["hypomnema"])

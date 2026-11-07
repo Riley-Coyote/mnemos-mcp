@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Recall: a longer list, with handoffs in their own rows
+
+The lab replayed recorded searches at each length, with no model runs. A replay reads nothing, so
+it can't say how much slower an agent gets, or how much of what comes back it uses.
+
+- **A recall returns 15 rows, not 10, and an agent can ask for up to 50, not 20.** 10 to 15 was the
+  best step on every set of searches: the right memory came back for 47 of 118 facts at 10 rows and
+  59 at 15 on one set, 45 and 51 on another, for about 4,500 more characters a search. Past 15 each
+  row costs more than it finds, so a longer list is on request, and the tool says when to ask: a
+  thin result, or something that matters.
+- **Handoffs have their own search and one row in ten: 2 of 15, 5 of 50.** On a copy of a real store
+  a 15-row list was about 8 memories and 7 handoffs, most of those old drafts, and handoffs also
+  took places a search by meaning starts from. With 13 + 2 the fact shows on the page for 47 of 118
+  facts rather than 39 on one set of searches and 44 rather than 40 on another, for about 2,500 more
+  characters a search. Every old draft can still be found. A row one side can't fill goes to the
+  other. Those two mixes are the ones tested; other lengths follow the same rule untested.
+- **`include_archived` restores at most 15 memories at a time.** It restored as many as the list's
+  length, and at 50 rows an answer could be cut after memories had been restored that it never showed.
+- **Recall declares a limit of 70,000 characters for its answers.** Claude Code saves a tool's answer
+  to a file once it's over 50,000 characters, unless the tool declares a higher limit, and long
+  lists run past that. Recall is the only tool that declares one, and an answer over it is still
+  saved to a file. We ran this through Claude Code 2.1.318.
+
 ### Hermes: many conversations at once
 
 Someone running many Telegram topics on one Hermes agent asked how Mnemos handles

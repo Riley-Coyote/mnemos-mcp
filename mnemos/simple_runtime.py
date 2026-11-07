@@ -19,7 +19,7 @@ import secrets
 import sqlite3
 import subprocess
 import sys
-from collections.abc import Callable, Collection, Iterator, Mapping
+from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -146,11 +146,22 @@ ROW_OPENING_CHARS = 120
 # ``ROW_CHARS``: their words reach the briefing whole, and fetched by id.
 MEMORY_ROW_CHARS = 2000
 # How many rows a recall returns when it isn't told. In the lab every call
-# said how many it wanted (8, mostly), and that choice was what mattered: the
-# right memory came back for 42 of the 118 facts at the calls' own lengths
-# and for 59 at 15 or 20 (L18b). So the tool asks for 15 on a question about
-# the past (its description), and gives 10 to a call that doesn't say.
-RECALL_RESULTS = 10
+# said how many it wanted, so the tool's description says the same number.
+# Replaying M4's 165 recall calls and M5's 219 (L20, 2026-11-06), 10 rows to 15
+# was the best step on every set of searches: the right memory came back for 47
+# of 118 facts at 10 and 59 at 15 on M4's searches, 45 and 51 on M5's, for about
+# 4,500 more characters a search. Past 15 each row costs more than it finds (9
+# to 16 more facts at 50, for about 27,400 more characters on every search), so
+# more than 15 is for the agent to ask for. A replay reads nothing, so none of
+# this says how much slower an agent gets, or how much of it the agent uses.
+RECALL_RESULTS = 15
+# How many of a recall's rows are handoffs: one in this many, rounded up, from a
+# search of their own (``_recall_rows``). 2 of 15 and 5 of 50 are the mixes the
+# lab tested (L20b); every other length follows the same rule untested.
+HANDOFF_ROW_SHARE = 10
+# How many results a person's search gives when it isn't told, as `mnemos search`
+# does. Not recall's number: a person looking isn't an agent paying to read rows.
+SEARCH_RESULTS = 10
 
 # Passages recall's meaning index may embed in one automatic maintenance (the
 # one a capture or a correction runs): at most a few seconds, so a store whose
@@ -5537,11 +5548,12 @@ class MnemosRuntime:
         handoffs and journal entries it finds, by their words and by their
         meaning, best first.
 
-        One ranking (``ReactiveRetriever``): memories and handoffs matched by
+        Two rankings (``_recall_rows``): memories and the journal, matched by
         words and by meaning, fused by reciprocal rank, then resonance among
-        the memories; filtered, then cut to ``max_results``. It is shown by
-        kind, each group in that order with its scores. A capture's note and
-        memory are one object, so a capture comes back once, as its memory.
+        the memories, and handoffs among themselves; each filtered, then cut,
+        ``max_results`` rows in all. It is shown by kind, each group in its
+        ranking's order. A capture's note and memory are one object, so a
+        capture comes back once, as its memory.
         A memory's row carries its own words whole, up to
         ``MEMORY_ROW_CHARS``, and the day it was kept; a handoff's, journal
         entry's or note's, up to ``ROW_CHARS``, enough to use without fetching
@@ -5551,14 +5563,16 @@ class MnemosRuntime:
         ones a newer handoff replaced, which say so and who left them when.
         One the agent forgot stays gone. A handoff is never a memory: it is
         not reinforced, linked, or given resonance. The journal's entries are
-        searched the same way, as their own group, marked as journal and
+        searched with the memories, as their own group, marked as journal and
         signed: they are the agent's own words, never memories either.
 
         A dormant memory comes back when the query matches it well, and
         wakes. With ``include_archived``, memories that faded into the
-        archive and that the query names come back too, restored; one the
-        agent forgot, or replaced with a correction, never does. A faded
-        memory's id reaches it without the flag.
+        archive and that the query names come back too, restored, at most
+        ``RECALL_RESULTS`` of them: restoring is a change, so it stays within
+        what the longest answer can show. One the agent forgot, or replaced
+        with a correction, never does. A faded memory's id reaches it without
+        the flag.
 
         With ``standing``, every memory marked standing in this scope comes
         back instead, however many: see ``_recall_standing``.
@@ -5580,7 +5594,7 @@ class MnemosRuntime:
             self._traced_read(query.strip())
             return whole
 
-        found = self._retrieve(query, max_results=max_results, notes=self._recallable_notes())
+        found = self._recall_rows(query, max_results)
         memories = [result for result in found if result.engram is not None]
         handoffs = [
             result for result in found
@@ -5595,7 +5609,7 @@ class MnemosRuntime:
             if result.note is not None
             and result.note.get("entry_kind") not in ("handoff", "journal")
         ]
-        faded = self._faded_matches(query, max_results) if include_archived else []
+        faded = self._faded_matches(query, min(max_results, RECALL_RESULTS)) if include_archived else []
 
         words_only = self._searched_by_words_only()
         if not found and not faded:
@@ -5655,6 +5669,41 @@ class MnemosRuntime:
         self._reinforce_returned(query, returned)
         return "\n".join(lines)
 
+    def _recall_rows(self, query: str, max_results: int) -> list[RetrievalResult]:
+        """What a recall shows for ``query``, at most ``max_results`` rows:
+        everything but handoffs from one search, and ``_handoff_rows`` of them
+        from a search of the handoffs alone. What one side can't fill goes to
+        the other, so a list comes back short only when the searches find no
+        more (each starts from 30 by words and 30 by meaning, and links light
+        more).
+
+        On a copy of the real store (L20b, 2026-11-06), one ranking gave a
+        15-row list of about 8 memories and 7 handoffs, 87% of those old drafts
+        a newer handoff had replaced, and handoffs also took places among the
+        30 a search by meaning starts from. A handoff's row is cut short, so
+        with 13 + 2 the fact shows on the page for 47 of 118 facts rather than
+        39 on M4's searches and 44 rather than 40 on M5's, for about 2,500 more
+        characters a search. Every old draft stays searchable: dropping them
+        frees nearly as much room, but 6 facts the store holds only there could
+        then never be found.
+
+        The cue is embedded once, for both searches."""
+        assert self._retriever is not None
+        max_results = max(1, max_results)
+        notes = self._recallable_notes()
+        handoffs = [note for note in notes if note.get("entry_kind") == "handoff"]
+        others = [note for note in notes if note.get("entry_kind") != "handoff"]
+        embedded = {"query_vector": self._retriever.cue_vector(query), "embed": False}
+        ranked = (
+            self._retrieve(query, max_results=max_results, notes=handoffs, only_notes=True, **embedded)
+            if handoffs else []
+        )
+        share = _handoff_rows(max_results)
+        found = self._retrieve(
+            query, max_results=max_results - len(ranked[:share]), notes=others, **embedded,
+        )
+        return [*found, *ranked[:max(share, max_results - len(found))]]
+
     def _searched_by_words_only(self) -> str:
         """The line recall adds when meaning search is off in this session
         though the store holds vectors it could have searched; ``""``
@@ -5689,11 +5738,11 @@ class MnemosRuntime:
         )
 
     def _recallable_notes(self) -> list[dict[str, Any]]:
-        """What recall ranks beside the memories that is not a memory: every
-        handoff in this scope, in use or older (never one forgotten), any live
-        note with no memory of its own, and every journal entry, shaped as the
-        retriever reads a note (``entry_kind`` 'journal'). The ranking itself
-        does not know the difference."""
+        """What recall searches that is not a memory: every handoff in this
+        scope, in use or older (never one forgotten), any live note with no
+        memory of its own, and every journal entry, shaped as the retriever
+        reads a note (``entry_kind`` 'journal'). A ranking itself does not know
+        the difference; ``_recall_rows`` ranks the handoffs apart."""
         assert self._store is not None
         scope = self._scope_args()
         journal = [
@@ -6701,7 +6750,7 @@ class MnemosRuntime:
     # correction is.
 
     def search_memories(
-        self, query: str, max_results: int = RECALL_RESULTS,
+        self, query: str, max_results: int = SEARCH_RESULTS,
     ) -> list[RetrievalResult]:
         """The memories recall finds for ``query``, best first, at most
         ``max_results``: recall's own ranking (``_retrieve``), by meaning and
@@ -7423,9 +7472,14 @@ class MnemosRuntime:
         *,
         notes: list[dict[str, Any]] | None = None,
         exclude: Collection[str] = (),
+        only_notes: bool = False,
+        query_vector: Sequence[float] | None = None,
+        embed: bool = True,
     ) -> list[RetrievalResult]:
         """What recall finds for ``query``, best first, at most
-        ``max_results``: memories, and ``notes`` ranked with them.
+        ``max_results``: memories, and ``notes`` ranked with them, or the
+        ``notes`` alone with ``only_notes``. ``query_vector`` and ``embed`` are
+        the retriever's: for a caller that searches one query twice.
 
         Filtered, then cut. The retriever drops what is not this scope's, or
         is in ``exclude`` (already shown), before it takes the first
@@ -7461,6 +7515,9 @@ class MnemosRuntime:
             reconsolidate_results=False,
             keep=keep,
             notes=notes,
+            only_notes=only_notes,
+            query_vector=query_vector,
+            embed=embed,
         )
 
     def _reinforce_returned(self, query: str, memories: list[Any]) -> None:
@@ -7745,6 +7802,12 @@ def _found_by_meaning(result: Any) -> bool:
 def _found_by_words(result: Any) -> bool:
     """Whether ``result`` matched by its words (``how_found``)."""
     return "words_rank" in (result.score_breakdown or {})
+
+
+def _handoff_rows(rows: int) -> int:
+    """How many of a recall's ``rows`` go to handoffs (``HANDOFF_ROW_SHARE``);
+    none of a single row, which goes to the best memory."""
+    return math.ceil(rows / HANDOFF_ROW_SHARE) if rows > 1 else 0
 
 
 def how_found(result: Any) -> str:

@@ -160,7 +160,7 @@ Simple mode exposes twelve user-facing tools:
 | `mnemos_context` | Startup continuity packet. Creates local storage if there's none, records what it delivered, and can optionally include an identity graph artifact. It runs no maintenance. |
 | `mnemos_handoff` | Leave an exact, signed note in the agent's own words for whoever works in this scope next — possibly a different model. Each session keeps its own note: a new one replaces only what that session left before (history is kept), so parallel sessions no longer overwrite each other (Claude Code says which session is which; in Hermes Provider Mode, `mnemos_identity_handoff` does the same for each chat or topic; a client that can't say shares one note). Remove one with `mnemos_correct`. |
 | `mnemos_capture` | Capture durable preferences, decisions, project state, workflows, and context. |
-| `mnemos_recall` | Search scoped continuity and durable memory with natural language. |
+| `mnemos_recall` | Search scoped continuity and durable memory with natural language. 15 rows unless the agent asks for up to 50: handoffs have their own search and one row in ten, and the other rows are memories and journal entries. |
 | `mnemos_correct` | Update, supersede, or archive stale memory. |
 | `mnemos_reflect` | Answer a reflection the packet raised — what a memory changed, or what a fading one taught — in the agent's own words. Mnemos never calls a model to write this; the agent's memory is maintained by its own mind or not at all. |
 | `mnemos_maintain` | Run the best available maintenance without requiring setup. |
