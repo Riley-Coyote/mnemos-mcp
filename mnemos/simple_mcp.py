@@ -34,17 +34,19 @@ MAX_REFLECTION_CHARS = 16_384
 MAX_ID_CHARS = 256
 MAX_RESULTS = 20
 # The most rows a recall may ask for: 45 and 5 handoffs, the longest mix the lab
-# tested (L20b, 2026-11-06, with the top 5 by match). It's on request because
-# every row is read on every search: 50 rows found 9 to 16 more of 118 facts than
-# 15, for about 27,400 more characters a search (L20). mnemos_context keeps
-# MAX_RESULTS: nothing tested it longer.
+# tested (L20c, 2026-11-06). It's on request because every row is read on every
+# search: 50 rows found 9 to 16 more of 118 facts than 15, for about 27,400 more
+# characters a search (L20). mnemos_context keeps MAX_RESULTS: nothing tested it
+# longer.
 MAX_RECALL_RESULTS = 50
 # What recall declares it may answer with, in characters. Claude Code saves a
 # tool's answer to a file once it's over 50,000 unless the tool declares its own
 # limit, up to 500,000 (`anthropic/maxResultSizeChars`, in its MCP docs; added in
-# 2.1.91, and since 2.1.98 it holds against the token limit too). At 45 + 5, 59
-# of 165 answers on a copy of the real store went over 50,000, the longest
-# 61,474 (L20b), and the store is still growing.
+# 2.1.91, and since 2.1.98 it holds against the token limit too). At 45 + 5, 58
+# of 165 answers on a copy of the real store went over 50,000 and none of 575 over
+# 70,000, the longest 61,724, or 62,631 as JSON with non-ASCII escaped (L20c), and
+# the store is still growing. 45 long memories could pass it, and that answer goes
+# to a file.
 RECALL_RESULT_CHARS = 70_000
 MAX_TOOL_OUTPUT_CHARS = 131_072
 

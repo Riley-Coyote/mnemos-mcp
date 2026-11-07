@@ -159,7 +159,7 @@ MEMORY_ROW_CHARS = 2000
 # much slower an agent gets, or how much of it the agent uses.
 RECALL_RESULTS = 16
 # Past 30 rows, handoffs get one row in this many, rounded up. 5 of 50 is the mix
-# the lab tested (L20b), though with the top 5 by match.
+# the lab tested (L20c).
 HANDOFF_ROW_SHARE = 10
 # How far down its ranking a search of handoffs looks for the newest from another
 # session (``_handoffs_chosen_first``).
@@ -5696,7 +5696,8 @@ class MnemosRuntime:
         a newer handoff had replaced, and handoffs also took places among the
         30 a search by meaning starts from. A handoff's row is cut short, so
         with 13 memories in the list the fact shows on the page for 47 of 118
-        facts rather than 39 on M4's searches (L20c). Every old draft stays
+        facts rather than 39 on M4's searches and 44 rather than 40 on M5's, for
+        about 3,000 more characters a search (L20c). Every old draft stays
         searchable: dropping them frees nearly as much room, but 6 facts the
         store holds only there could then never be found.
 
@@ -7833,8 +7834,8 @@ def _handoff_rows(rows: int) -> int:
     most often (L20c, 2026-11-06). Three up to 30, then one row in
     ``HANDOFF_ROW_SHARE``.
 
-    The lab ran 13 + 3 and 12 + 3 (L20c), and 45 + 5 as the top 5 by match
-    (L20b). Every other mix here is untested."""
+    The lab counted facts at 13 + 3, 12 + 3 and 45 + 5 (L20c). Every other mix
+    here is untested for facts."""
     if rows <= 1:
         return 0
     if rows <= 4:
@@ -7882,7 +7883,7 @@ def _handoffs_chosen_first(
     about 6, against about 10 for one long list, and on 47 of 179 real searches
     both came from one session. So the second row says where that session got
     to, whether or not it matched, and the third is another thread that did.
-    These rows held it for about 10 as well.
+    These rows held it for 10.
 
     A session's newest may not match at all, so it comes only when handoffs have
     a second row for it, never in a row the memories happened to leave free."""

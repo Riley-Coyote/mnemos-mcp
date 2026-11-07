@@ -15,8 +15,8 @@ But the best two matches are often old drafts, so asked to pick up work (L20c, 1
 questions on a copy of the real store) that list held where the work had got to
 for about 6, against about 10 for today's one long list. So handoffs get 3 rows of
 the 16: the best match as it is, that session's newest draft, and the newest of
-the ten closest from another session. Then about 10 land there, and the fact still
-shows for 47 on M4's searches.
+the ten closest from another session. Then 10 land there, and the fact still shows
+for 47 on M4's searches and 44 on M5's.
 """
 
 from __future__ import annotations

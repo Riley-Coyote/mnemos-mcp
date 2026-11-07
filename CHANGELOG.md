@@ -15,16 +15,17 @@ it can't say how much slower an agent gets, or how much of what comes back it us
 - **Handoffs have their own search and their own rows: 3 of 16, 5 of 50.** On a copy of a real store
   a 15-row list was about 8 memories and 7 handoffs, most of those old drafts, and handoffs also
   took places a search by meaning starts from. With 13 memories in the list the fact shows on the
-  page for 47 of 118 facts rather than 39 on one set of searches. Every old draft can still be
-  found. A row one side can't fill goes to the other.
+  page for 47 of 118 facts rather than 39 on one set of searches and 44 rather than 40 on another,
+  for about 3,000 more characters a search. Every old draft can still be found. A row one side can't
+  fill goes to the other.
 - **Those rows are chosen, because the best matches are often old drafts.** The best match as it
   is; that session's newest handoff, marked so, whether or not it matched; and the newest of the ten
   closest from another session. On 12 questions about picking up work, read on a copy of a real
-  store, the two best matches held where the work had got to for about 6 and these rows for about
-  10, the same as one long list. The rule was chosen after reading those questions, and no agent has
-  worked with it yet. Lists of 5 to 10 rows have 2 handoffs, 2 to 4 rows have 1, and a single row
-  goes to the best memory; those shorter mixes are untested. A handoff that didn't match only ever
-  comes in a row of its own, so Hermes's 4-row recall on every message never gets one.
+  store, the two best matches held where the work had got to for about 6 and these rows for 10,
+  about the same as one long list. The rule was chosen after reading those questions, and no agent
+  has worked with it yet. Lists of 5 to 10 rows have 2 handoffs, 2 to 4 rows have 1, and a single row
+  goes to the best memory; those shorter mixes are untested for facts. A handoff that didn't match
+  only ever comes in a row of its own, so Hermes's 4-row recall on every message never gets one.
 - **`include_archived` restores at most 16 memories at a time, and fewer on a list past 39 rows.** It
   restored as many as the list's length, and at 50 rows an answer could be cut after memories had
   been restored that it never showed.
