@@ -50,20 +50,60 @@ def cron(kind: str) -> str:
     return f"{minute} {hour} * * *"
 
 
-def message(kind: str, mnemos: str, flags: list[str]) -> str:
+def message(kind: str, mnemos: str, flags: list[str], key: str = "") -> str:
     """What the job tells the agent when it wakes it."""
     command = shlex.join([mnemos, "life", "--hour", kind, "--handoff", *flags])
-    return (
+    words = (
         f"It is time for your quiet hour ({kind}). Run this in your shell:\n\n{command}\n\n"
         "What it prints is your hour. Take it as yourself, as it says, with your memory's own "
         "tools (mnemos_reflect, mnemos_capture, mnemos_journal), or answer nothing. If it "
         "prints nothing there is nothing to do: stop. Your reply to this job goes nowhere and "
         "no one reads it, so write no summary and message no one."
     )
+    if key == "hermes":
+        # Hermes from before September 2026 runs a job without its memory provider,
+        # which carries these tools in Provider Mode. It does give a job a shell.
+        tool = shlex.join([mnemos, "hermes", "tool", "mnemos_capture", *flags])
+        words += (
+            "\n\nIf those tools aren't offered to you in this job, the same ones run from your "
+            f"shell, by name, with their arguments as JSON:\n\n{tool} <<'EOF'\n"
+            '{"content": "...", "signed_as": "your exact model id"}\nEOF'
+        )
+    return words
+
+
+def _hermes_prompts() -> dict[str, str]:
+    """What Hermes' jobs say, by name, from its own file; nothing if it can't be read."""
+    from ..integrations.hermes.scope import default_hermes_home
+
+    try:
+        data = json.loads((default_hermes_home() / "cron" / "jobs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    jobs = data.get("jobs") if isinstance(data, dict) else data
+    if not isinstance(jobs, list):
+        return {}
+    return {
+        str(job.get("name")): str(job.get("prompt") or "")
+        for job in jobs if isinstance(job, dict)
+    }
+
+
+def out_of_date(key: str, mnemos: str, flags: list[str]) -> list[str]:
+    """Which of Mnemos's hour jobs say something other than this Mnemos would: from
+    an older one, or another place it was installed. Hermes' only: it's the one whose
+    jobs can be read, and whose words have changed."""
+    if key != "hermes":
+        return []
+    prompts = _hermes_prompts()
+    return [
+        job_name(kind) for kind in KINDS
+        if job_name(kind) in prompts and prompts[job_name(kind)] != message(kind, mnemos, flags, key)
+    ]
 
 
 def create_command(key: str, binary: str, kind: str, mnemos: str, flags: list[str]) -> list[str]:
-    text = message(kind, mnemos, flags)
+    text = message(kind, mnemos, flags, key)
     name = job_name(kind)
     if key == "hermes":
         return [binary, "cron", "create", "--name", name, "--deliver", "local", cron(kind), text]
@@ -127,7 +167,10 @@ def listed(key: str, binary: str) -> dict[str, str] | None:
     """Mnemos's hour jobs the agent's scheduler holds, name to id, or None when
     it can't be read (the agent isn't answering)."""
     if key == "hermes":
-        ok, text = _raw(binary, ["cron", "list"])
+        # Hermes 0.17 leaves paused jobs out of a plain listing.
+        ok, text = _raw(binary, ["cron", "list", "--all"])
+        if not ok:
+            ok, text = _raw(binary, ["cron", "list"])
         return {n: i for n, i in _hermes_jobs(text).items() if n.startswith(PREFIX)} if ok else None
     if key == "openclaw":
         ok, text = _raw(binary, ["cron", "list", "--json"])
@@ -154,16 +197,28 @@ def install(key: str, mnemos: str, flags: list[str]) -> tuple[bool, str]:
     if held is None:
         return False, f"I couldn't read {key}'s scheduled jobs, so I scheduled nothing."
     lines: list[str] = []
+    stale = out_of_date(key, mnemos, flags)
     for kind in KINDS:
-        if job_name(kind) in held:
-            lines.append(f"{job_name(kind)}: already scheduled")
+        name = job_name(kind)
+        if name not in held:
+            ok, said = _run(create_command(key, binary, kind, mnemos, flags))
+            done = f"scheduled at {cron(kind)}"
+        elif name in stale:
+            # In place, so a job someone paused or changed stays as they left it.
+            ok, said = _run([binary, "cron", "edit", held[name], "--prompt", message(kind, mnemos, flags, key)])
+            done = "what it says brought up to date"
+        else:
+            lines.append(f"{name}: already scheduled")
             continue
-        ok, said = _run(create_command(key, binary, kind, mnemos, flags))
         if not ok:
-            lines.append(f"{job_name(kind)}: failed ({said[:200]})")
+            lines.append(f"{name}: failed ({said[:200]})")
             return False, "\n".join(lines)
-        lines.append(f"{job_name(kind)}: scheduled at {cron(kind)}")
+        lines.append(f"{name}: {done}")
     return True, "\n".join(lines)
+
+
+def _remove_command(key: str, binary: str, ident: str) -> list[str]:
+    return [binary, "cron", "remove", ident] if key == "hermes" else [binary, "cron", "rm", ident]
 
 
 def remove(key: str) -> tuple[bool, str]:
@@ -176,8 +231,7 @@ def remove(key: str) -> tuple[bool, str]:
         return False, f"I couldn't read {key}'s scheduled jobs, so I removed nothing."
     lines: list[str] = []
     for name, ident in sorted(held.items()):
-        command = [binary, "cron", "remove", ident] if key == "hermes" else [binary, "cron", "rm", ident]
-        ok, said = _run(command)
+        ok, said = _run(_remove_command(key, binary, ident))
         lines.append(f"{name}: " + ("removed" if ok else f"failed ({said[:200]})"))
         if not ok:
             return False, "\n".join(lines)

@@ -623,6 +623,36 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
+def open_page(scope: dict[str, str | None], page: LogServer | None = None) -> tuple[str, LogServer | None]:
+    """What ``mnemos_page`` answers, and the page now open: ``page`` when one is, or
+    a new one for ``scope``, started in a thread of its own on 127.0.0.1. One that
+    can't start, or can't read the memory, isn't opened: it says why in a sentence."""
+    opened = page
+    if opened is None:
+        try:
+            opened = LogServer(Exporter.for_scope(**scope))
+        except OSError as exc:
+            return f"The page couldn't start: {exc}", None
+    try:
+        # What the page will show, read now: one that can't be read isn't opened.
+        missing = bool(json.loads(opened.documents()[0]).get("missing"))
+    except Exception as exc:
+        if opened is not page:
+            opened.server_close()
+        return f"The page couldn't read this memory just now: {type(exc).__name__}: {exc}", page
+    if opened is not page:
+        threading.Thread(target=opened.serve_forever, name="mnemos-page", daemon=True).start()
+    lines = [
+        f"Your page is open: {opened.url}",
+        "Open it for them: in your own browser pane if you have one, with the system's open "
+        "command if you have a shell, or give them the link. It runs on this machine only, "
+        "until this session ends.",
+    ]
+    if missing:
+        lines.append("Nothing is kept here yet, so the page says so.")
+    return "\n".join(lines), opened
+
+
 def serve(*, db_path: str | None = None, agent_id: str | None = None, person_id: str | None = None,
           project_scope: str | None = None, person: str | None = None, open_browser: bool = True,
           out: TextIO | None = None, err: TextIO | None = None) -> int:

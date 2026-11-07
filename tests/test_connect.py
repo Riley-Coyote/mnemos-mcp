@@ -52,7 +52,7 @@ def agents(tmp_path, monkeypatch):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok"))
     monkeypatch.setenv("GEMINI_CLI_HOME", str(tmp_path / "gemini"))
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setenv("HERMES_HOME", str(Path.home() / ".hermes"))
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path / "openclaw"))
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(tmp_path / "openclaw" / "openclaw.json"))
     return log
@@ -273,7 +273,7 @@ def test_connect_hermes_respects_the_memory_provider_slot(
     from mnemos.integrations.hermes import installer
 
     monkeypatch.setitem(sys.modules, "yaml", None)
-    home = tmp_path / "hermes"
+    home = Path.home() / ".hermes"
     home.mkdir()
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n" + memory_block)
     seen = {}
@@ -295,7 +295,8 @@ def test_connect_hermes_respects_the_memory_provider_slot(
         assert "memory provider is honcho" in capsys.readouterr().out
     else:
         assert seen["mode"] == "provider" and seen["activate"] is activates
-    assert seen["configure_mcp"] is True and seen["agent_id"] == "hermes"
+    # A provider carries its tools; only with another in the slot is a server how it has them.
+    assert seen["configure_mcp"] is (mode == "sidecar") and seen["agent_id"] == "hermes"
 
 
 def test_agent_safe_leaves_the_hermes_provider_alone(agents, tmp_path, monkeypatch):
@@ -315,13 +316,23 @@ def test_agent_safe_leaves_the_hermes_provider_alone(agents, tmp_path, monkeypat
 
 
 def test_hermes_wake_counts_only_for_the_memory_its_provider_names(agents, tmp_path):
-    home = tmp_path / "hermes"
+    from mnemos.integrations.hermes import installer
+
+    home = Path.home() / ".hermes"
     home.mkdir()
     (home / "config.yaml").write_text("memory:\n  provider: mnemos\n")
     (home / "mnemos.json").write_text(json.dumps({"agent_id": "hermes", "db_path": str(tmp_path / "h.db")}))
+    plugin = installer.provider_plugin_dirs(home)[0]
+    plugin.mkdir(parents=True)
+    (plugin / "__init__.py").write_text(installer.render_plugin_shim())
     here = cn.status(hs.get("hermes"), "hermes", str(tmp_path / "h.db"))
     other = cn.status(hs.get("hermes"), "someone-else", str(tmp_path / "x.db"))
     assert here.wake == "set" and other.wake == "missing"
+    assert here.mcp == "provider" and other.mcp == "elsewhere"
+
+    # Named in the config, with no plugin there to load, nothing wakes it.
+    (plugin / "__init__.py").unlink()
+    assert cn.status(hs.get("hermes"), "hermes", str(tmp_path / "h.db")).wake == "missing"
 
 
 # ── The retired OpenClaw cron jobs ──

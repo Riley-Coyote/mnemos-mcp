@@ -401,6 +401,24 @@ class TestThePacketStaysSmall:
         # A session that never left a note doesn't get it.
         assert "Thread 0 note." not in _hook(db_path, tmp_path, _start(FRESH))
 
+    def test_back_after_a_long_time_it_also_gets_the_newest_thread(self, tmp_path):
+        # Its own note was crowded out, and everyone else's has gone quiet too. The
+        # newest here is still what a session starting here would have been handed.
+        db_path = tmp_path / "shared.db"
+        sessions = [f"{index:08d}-4444-4444-8444-444444444444" for index in range(9)]
+        store = EngramStore(db_path)
+        try:
+            for index, session in enumerate(sessions):
+                store.write_handoff(f"Thread {index} note.", author_session=session, **SCOPE)
+            conn = store._get_conn()
+            conn.execute("UPDATE hypomnema_entries SET created_at = '2026-01-01T00:00:00+00:00'")
+            conn.commit()
+            handed = [note["content"] for note in store.live_handoffs(reader_session=sessions[0], **SCOPE)]
+        finally:
+            store.close()
+        assert handed[0] == "Thread 0 note." and len(handed) == 2
+        assert handed[1] != "Thread 0 note."
+
     def test_every_note_shown_counts_as_delivered(self, tmp_path):
         db_path = tmp_path / "shared.db"
         _handoff_from(LIGHTS, LIGHTS_NOTE, db_path, tmp_path)

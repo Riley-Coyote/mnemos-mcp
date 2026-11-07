@@ -42,7 +42,7 @@ def test_mirrored_replace_cannot_retire_unrelated_native_capture(provider):
     """Hermes holds an old image-service entry not previously mirrored.
     Its old_text selects that native entry; it is not an identity in Mnemos.
     """
-    provider.handle_tool_call("mnemos_identity_capture", {
+    provider.handle_tool_call("mnemos_capture", {
         "content": "The billing service deploys to Vercel.",
     })
     store = provider._runtime._store
@@ -87,9 +87,9 @@ def test_reverse_reclassification_preserves_direction(tmp_path, monkeypatch):
 
 
 def test_review_note_write_invalidates_prefetch(provider):
-    provider.handle_tool_call("mnemos_identity_capture", {"content": "Cobalt1234 mailbox routes to Ingrid."})
+    provider.handle_tool_call("mnemos_capture", {"content": "Cobalt1234 mailbox routes to Ingrid."})
     before = provider.prefetch("Cobalt1234 mailbox")
-    provider.handle_tool_call("mnemos_identity_capture", {
+    provider.handle_tool_call("mnemos_capture", {
         "content": "Cobalt1234 mailbox also routes to Soren.", "review": True,
     })
     fresh = provider._runtime.recall("Cobalt1234 mailbox", max_results=4)

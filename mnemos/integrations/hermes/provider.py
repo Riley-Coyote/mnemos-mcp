@@ -4,9 +4,11 @@ The provider reads for the agent (its memory at the start of a session, and
 what bears on each message before the turn), keeps the memory's upkeep, and
 keeps in Mnemos what the agent itself writes into Hermes's built-in memory.
 It writes nothing in the agent's place: the agent writes its memory with its
-own tools, in its own words. Until 0.4.1 it copied turns, distilled sessions,
-recorded delegations and copied SOUL.md in as identity, each in the agent's
-name (see ``hermes_auto_written`` in the store, which labels those a tool's).
+own tools, in its own words. They are the tools every other agent has, by the
+same names, since what it wakes with and is asked names them. Until 0.4.1 it
+copied turns, distilled sessions, recorded delegations and copied SOUL.md in as
+identity, each in the agent's name (see ``hermes_auto_written`` in the store,
+which labels those a tool's).
 """
 
 from __future__ import annotations
@@ -16,129 +18,115 @@ import json
 import logging
 import re
 import threading
-from dataclasses import asdict, replace
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ...simple_runtime import MnemosRuntime
+from ...simple_runtime import RECALL_RESULTS, MnemosRuntime, format_health_card
+from ...simple_tools import (
+    MAX_CAPTURE_CHARS,
+    MAX_CONTEXT_CHARS,
+    MAX_HANDOFF_CHARS,
+    MAX_ID_CHARS,
+    MAX_JOURNAL_CHARS,
+    MAX_MOOD_CHARS,
+    MAX_NOTE_CHARS,
+    MAX_QUERY_CHARS,
+    MAX_RECALL_RESULTS,
+    MAX_REFLECTION_CHARS,
+    SERVER_INSTRUCTIONS,
+    limit_output,
+    text_arg,
+)
 from .scope import (
     HermesMnemosConfig,
     HermesScope,
+    _as_bool,
     conversation_id,
     derive_hermes_scope,
+    running_for_home,
     save_hermes_mnemos_config,
+    settle_config_home,
 )
+from .tools import TOOL_SCHEMAS
+
+try:  # POSIX only: Windows has no such limit to raise.
+    import resource as _resource
+except ImportError:  # pragma: no cover - Windows only
+    _resource = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
 _CONTEXT_TAG_RE = re.compile(r"<[^>]*memory-context[^>]*>[\s\S]*?</[^>]*memory-context>", re.IGNORECASE)
-_MNEMOS_CONTEXT_RE = re.compile(r"#?\s*Mnemos (Recall|Identity Continuity|continuity packet)[\s\S]*", re.IGNORECASE)
+# The headings the provider opens what it adds with, alone on a line, and those it used
+# to. Words about recall, the agent's or the person's, are theirs.
+_MNEMOS_CONTEXT_RE = re.compile(
+    r"^[ \t]*#[ \t]*Mnemos(?: Recall| Identity Continuity| continuity packet"
+    r"|: from memory, maybe bearing on this message)[ \t]*$[\s\S]*",
+    re.IGNORECASE | re.MULTILINE,
+)
+# What comes with each message, in the words every agent's cue has. It isn't a search:
+# headed "recall", it read as one, and an agent asked to check its memory took it for the
+# answer, and said it had nothing about what was in the machine's shared memory.
+_CUE_HEADING = "# Mnemos: from memory, maybe bearing on this message"
+_CUE_NOTE = (
+    "What came up by itself, from your own memory, not a search. mnemos_recall searches, "
+    "and reaches the machine's shared memory too."
+)
 
 
-IDENTITY_CAPTURE_SCHEMA = {
-    "name": "mnemos_identity_capture",
-    "description": (
-        "Persist scoped identity-continuity notes in Mnemos. Use for stable preferences, "
-        "self-model facts, corrections, session handoffs, and project decisions that should "
-        "survive future Hermes sessions. Set review=true for uncertain claims."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "content": {"type": "string", "description": "The durable memory or continuity note to persist."},
-            "context": {"type": "string", "description": "Optional provenance or session context."},
-            "importance": {
-                "description": "Importance as low, auto, high, critical, or a 0-1 numeric score.",
-                "anyOf": [{"type": "string"}, {"type": "number"}],
-            },
-            "review": {
-                "type": "boolean",
-                "description": "Queue as uncertain instead of promoting as high-confidence continuity.",
-            },
-        },
-        "required": ["content"],
-    },
-}
+# The rules every agent's server gives it, with the first as it is here: the
+# provider has woken it already, and it has no tool for that.
+_RULE_ONE = (
+    "1. Before answering the first substantive message, call mnemos_context, unless "
+    'you woke with your memory (a session-start hook\'s "## waking up").'
+)
+_RULES_HERE = SERVER_INSTRUCTIONS.replace(
+    _RULE_ONE,
+    "1. You woke with your memory: it is below. What may bear on each message comes to "
+    "you with that message, but only what came up by itself: to look for something, use "
+    "mnemos_recall.",
+)
+_THIS_AGENT = (
+    "Each conversation (a chat, or a topic in one) keeps its own mnemos_handoff note and "
+    "wakes to it first. Hermes' own memory (MEMORY.md, USER.md) stays on beside this one, "
+    "and what you write there is kept here too."
+)
+_ONE_NOTE_EACH = (
+    "\n\nHere each conversation (a chat, or a topic in one) is one session, however many "
+    "times it starts over: this replaces only the note this conversation left before, and "
+    "it is what this conversation wakes to next time."
+)
 
-IDENTITY_RECALL_SCHEMA = {
-    "name": "mnemos_identity_recall",
-    "description": (
-        "Recall scoped Mnemos identity continuity for the active Hermes agent, person, and project. "
-        "Use when an answer depends on prior preferences, corrections, self-model, project decisions, "
-        "or handoff context."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "Recall query."},
-            "max_results": {"type": "integer", "description": "Maximum results to return."},
-            "include_graph": {"type": "boolean", "description": "Include structured identity graph summary data."},
-        },
-        "required": ["query"],
-    },
-}
+# Each conversation holds a few open files on the store, more with meaning search,
+# and Hermes runs up to 128 at once. A Mac starts a process with room for 256, and
+# Hermes before August 2026 didn't ask for more: 30 topics with meaning search ran
+# out, and took Hermes' own files down with them. The number is Hermes' own.
+_OPEN_FILES_WANTED = 4096
+_open_files_seen = False
 
-IDENTITY_CORRECT_SCHEMA = {
-    "name": "mnemos_identity_correct",
-    "description": (
-        "Correct, supersede, archive, or forget stale Mnemos identity continuity. Use when the user "
-        "updates a remembered preference, self-model fact, decision, or correction."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "correction": {"type": "string", "description": "Replacement continuity text."},
-            "target_id": {"type": "string", "description": "Known Mnemos memory or continuity note ID."},
-            "query": {"type": "string", "description": "Search phrase for the stale memory if no ID is known."},
-            "action": {
-                "type": "string",
-                "enum": ["update", "revise", "supersede", "replace", "archive", "forget", "remove"],
-            },
-        },
-    },
-}
+# The page each memory in this process has open (mnemos_page): every conversation
+# on a gateway has its own provider, and they share it.
+_pages: dict[tuple[Any, ...], Any] = {}
+_pages_lock = threading.Lock()
 
-IDENTITY_REPORT_SCHEMA = {
-    "name": "mnemos_identity_report",
-    "description": (
-        "Inspect scoped Mnemos identity continuity. Produces a compact context packet, identity graph, "
-        "review inbox, status, or maintenance report for the active scope."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "kind": {
-                "type": "string",
-                "enum": ["context", "graph", "inbox", "status", "maintain"],
-                "description": "Report kind.",
-            },
-            "query": {"type": "string", "description": "Optional query for context reports."},
-            "max_results": {"type": "integer", "description": "Maximum results or graph nodes."},
-            "deep": {"type": "boolean", "description": "Request optional model-assisted maintenance if configured."},
-        },
-        "required": ["kind"],
-    },
-}
 
-IDENTITY_HANDOFF_SCHEMA = {
-    "name": "mnemos_identity_handoff",
-    "description": (
-        "Leave your own note on where this conversation stands, in first person. Use after "
-        "meaningful progress or a changed plan, while work remains, and before pausing or "
-        "changing direction; not after every turn. Each conversation (a chat, or a topic in "
-        "one) keeps its own note: this replaces only the one this conversation left before, "
-        "and it is what this conversation wakes to next time, so write about this "
-        "conversation's work, not the others'. It is stored exactly as written."
-    ),
-    "parameters": {
-        "type": "object",
-        "properties": {
-            "text": {"type": "string", "description": "The note, in your own words."},
-            "signed_as": {"type": "string", "description": "Your exact model id, when you know it."},
-        },
-        "required": ["text"],
-    },
-}
+def _make_room_for_files() -> None:
+    """Ask once per process for room to hold the files many conversations open.
+    Never lowers the limit, and never fails a start."""
+    global _open_files_seen
+    if _open_files_seen or _resource is None:
+        return
+    _open_files_seen = True
+    try:
+        soft, hard = _resource.getrlimit(_resource.RLIMIT_NOFILE)
+        if soft == _resource.RLIM_INFINITY or soft >= _OPEN_FILES_WANTED:
+            return
+        wanted = _OPEN_FILES_WANTED if hard == _resource.RLIM_INFINITY else min(_OPEN_FILES_WANTED, hard)
+        if wanted > soft:
+            _resource.setrlimit(_resource.RLIMIT_NOFILE, (wanted, hard))
+    except (ValueError, OSError):
+        logger.debug("Mnemos couldn't raise the open-file limit", exc_info=True)
 
 
 def _json_ok(**payload: Any) -> str:
@@ -149,6 +137,16 @@ def _json_ok(**payload: Any) -> str:
 def _json_error(message: str, **payload: Any) -> str:
     payload.update({"ok": False, "error": message})
     return json.dumps(payload, ensure_ascii=True, default=str)
+
+
+def _words(args: dict[str, Any], name: str) -> str:
+    """An argument as the agent wrote it."""
+    return str(args.get(name) or "")
+
+
+def _cleaned(args: dict[str, Any], name: str) -> str:
+    """An argument without any of the memory context Hermes wraps around a message."""
+    return _clean_text(args.get(name))
 
 
 def _clean_text(text: Any) -> str:
@@ -177,39 +175,6 @@ def _importance_value(value: Any, fallback: str | float = "auto") -> str | float
     return fallback
 
 
-def _domain_for(text: str) -> str:
-    lowered = text.lower()
-    if any(marker in lowered for marker in ("identity", "who i am", "who you are", "selfhood", "soul.md")):
-        return "identity"
-    if any(marker in lowered for marker in ("always", "preference", "prefers", "principle", "boundary")):
-        return "foundational"
-    if any(marker in lowered for marker in ("again", "recurring", "usually", "often")):
-        return "recurring"
-    if any(marker in lowered for marker in ("roadmap", "long term", "long-term", "future", "arc")):
-        return "long-arc"
-    if any(marker in lowered for marker in ("current", "today", "temporary", "session")):
-        return "situational"
-    return "topical"
-
-
-def _tags_for(text: str, *extra: str) -> list[str]:
-    lowered = text.lower()
-    tags = {"hermes", "continuity", *[tag for tag in extra if tag]}
-    markers = {
-        "preference": ("prefer", "preference", "likes", "wants"),
-        "decision": ("decided", "decision", "going with", "will use"),
-        "project": ("project", "repo", "workspace", "build"),
-        "identity": ("identity", "agent", "self", "soul.md", "who i am"),
-        "correction": ("correction", "wrong", "forget", "stale"),
-        "handoff": ("handoff", "delegated", "subagent"),
-    }
-    for label, terms in markers.items():
-        if any(term in lowered for term in terms):
-            tags.add(label)
-    return sorted(tags)
-
-
-
 # How a memory mirrored from Hermes's built-in memory begins its context.
 _MIRROR_MARK = "Mirrored from Hermes built-in"
 
@@ -222,7 +187,7 @@ def _one_at_a_time(method):
 
     @functools.wraps(method)
     def locked(self, *args, **kwargs):
-        with self._lock:
+        with self._lock, running_for_home(self._scope.hermes_home if self._scope else None):
             return method(self, *args, **kwargs)
 
     return locked
@@ -243,6 +208,7 @@ class MnemosMemoryProviderCore:
         self._prefetch_cache: dict[str, tuple[str, tuple[int, int] | None, str]] = {}
         self._writes_enabled = True
         self._turn_count = 0
+        self._host_model = ""
         self._lock = threading.RLock()
 
     @property
@@ -260,7 +226,10 @@ class MnemosMemoryProviderCore:
 
     @_one_at_a_time
     def initialize(self, session_id: str, **kwargs: Any) -> None:
+        _make_room_for_files()
         hermes_home = kwargs.get("hermes_home")
+        if self._config is None:
+            settle_config_home(hermes_home)
         config = self._config or HermesMnemosConfig.load(hermes_home)
         self._scope = derive_hermes_scope(
             session_id=session_id,
@@ -285,6 +254,7 @@ class MnemosMemoryProviderCore:
         # Opened, not read: a wake counts what it shows as shown, so one built
         # here would spend what shows once on a read no model sees.
         self._runtime._ensure_init()
+        self._hear_model(kwargs.get("model"))
 
     @_one_at_a_time
     def system_prompt_block(self) -> str:
@@ -292,23 +262,7 @@ class MnemosMemoryProviderCore:
         assert self._runtime is not None
         assert self._config is not None
         packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
-        body = (
-            "# Mnemos Identity Continuity\n"
-            "Mnemos is active in Provider Mode as Hermes' external memory provider for "
-            "identity continuity. Hermes built-in memory remains active. Mnemos is local-first, "
-            "scoped by agent, person, and project, and never overwrites SOUL.md, AGENTS.md, "
-            "MEMORY.md, or USER.md.\n\n"
-            f"Scope: agent={self.scope.agent_id} person={self.scope.person_id} "
-            f"project={self.scope.project_scope}\n\n"
-            "Your memory is yours to write, and nothing writes it for you. When something "
-            "durable appears (a preference, a decision, a correction, project state, how the "
-            "person likes to work), keep it with mnemos_identity_capture as it happens, in "
-            "your own words: sessions end without warning. Put right what turns out wrong "
-            "with mnemos_identity_correct. Leave your note on where this conversation stands "
-            "with mnemos_identity_handoff: each conversation (a chat, or a topic in one) keeps "
-            "its own, and wakes to it first.\n\n"
-            f"{packet}"
-        )
+        body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
         wake_limit = self._config.max_wake_chars
         return _truncate(body, wake_limit) if wake_limit else body
 
@@ -330,7 +284,8 @@ class MnemosMemoryProviderCore:
         recalled = self._runtime._recall_own(clean, max_results=self._config.max_recall_results)
         if "No relevant continuity found" in recalled:
             return ""
-        context = _truncate("# Mnemos Recall\n" + recalled, self._config.max_context_chars)
+        rows = recalled.split("\n", 1)[1].lstrip("\n") if recalled.startswith("Mnemos recall for:") else recalled
+        context = _truncate(f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{rows}", self._config.max_context_chars)
         after = self._store_revision()
         # Cached only when no other connection committed during the recall:
         # what it read may be older than that commit (a forget, a correction),
@@ -376,27 +331,19 @@ class MnemosMemoryProviderCore:
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
-            IDENTITY_CAPTURE_SCHEMA,
-            IDENTITY_RECALL_SCHEMA,
-            IDENTITY_CORRECT_SCHEMA,
-            IDENTITY_REPORT_SCHEMA,
-            IDENTITY_HANDOFF_SCHEMA,
+            {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
+            if tool["name"] == "mnemos_handoff" else tool
+            for tool in TOOL_SCHEMAS
         ]
 
     @_one_at_a_time
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
-        try:
-            if tool_name == "mnemos_identity_capture":
-                return self._tool_capture(args)
-            if tool_name == "mnemos_identity_recall":
-                return self._tool_recall(args)
-            if tool_name == "mnemos_identity_correct":
-                return self._tool_correct(args)
-            if tool_name == "mnemos_identity_report":
-                return self._tool_report(args)
-            if tool_name == "mnemos_identity_handoff":
-                return self._tool_handoff(args)
+        tool = _TOOLS.get(tool_name)
+        if tool is None:
             return _json_error(f"Unknown Mnemos tool: {tool_name}")
+        try:
+            self._ensure_runtime()
+            return _json_ok(result=limit_output(tool(self, args or {})))
         except Exception as exc:
             logger.debug("Mnemos tool %s failed", tool_name, exc_info=True)
             return _json_error(str(exc), tool=tool_name)
@@ -404,9 +351,10 @@ class MnemosMemoryProviderCore:
     @_one_at_a_time
     def on_turn_start(self, turn_number: int, message: str, **kwargs: Any) -> None:
         self._turn_count = int(turn_number or self._turn_count + 1)
+        self._ensure_runtime()
+        self._hear_model(kwargs.get("model"))
         if not self._writes_enabled:
             return
-        self._ensure_runtime()
         assert self._config is not None
         assert self._runtime is not None
         interval = self._config.maintenance_interval
@@ -527,78 +475,111 @@ class MnemosMemoryProviderCore:
         self._scope = None
         self._prefetch_cache.clear()
 
-    def _tool_capture(self, args: dict[str, Any]) -> str:
-        content = _clean_text(args.get("content"))
-        if not content:
-            return _json_error("content is required")
-        context = _clean_text(args.get("context"))
-        importance = _importance_value(args.get("importance"), "auto")
-        if bool(args.get("review")):
-            note_id = self._queue_review_item(content, reason="tool review=true", context=context)
-            return _json_ok(status="queued_for_review", continuity_note_id=note_id, scope=asdict(self.scope))
-        result = self._capture(content, context, importance)
-        return _json_ok(status="captured", result=result, scope=asdict(self.scope))
+    def _hear_model(self, model: Any) -> None:
+        """The model Hermes says it is running signs this conversation's writes,
+        unless a write carries its own ``signed_as``. A later Hermes tells at
+        every turn, so a switch of model mid-conversation signs from then on.
+        Older ones don't tell: the agent signs for itself, as it is asked to."""
+        model = str(model or "").strip()
+        if model and model != self._host_model and self._runtime is not None:
+            self._host_model = model
+            self._runtime.signs_for_host(model)
 
-    def _tool_handoff(self, args: dict[str, Any]) -> str:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        # Stored exactly as written: no cleaning, unlike a capture.
-        text = str(args.get("text") or "")
-        if not text.strip():
-            return _json_error("text is required")
-        result = self._runtime.handoff(text, signed_as=str(args.get("signed_as") or ""))
-        return _json_ok(status="saved", result=result, scope=asdict(self.scope))
+    def _tool_capture(self, args: dict[str, Any]) -> str:
+        return self._capture(
+            text_arg("content", _cleaned(args, "content"), MAX_CAPTURE_CHARS, required=True),
+            text_arg("context", _cleaned(args, "context"), MAX_CONTEXT_CHARS),
+            _importance_value(args.get("importance")),
+            impact=text_arg("impact", _words(args, "impact"), MAX_REFLECTION_CHARS),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
+            standing=_as_bool(args.get("standing"), False),
+            shared=_as_bool(args.get("shared"), False),
+        )
 
     def _tool_recall(self, args: dict[str, Any]) -> str:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        query = _clean_text(args.get("query"))
-        if not query:
-            return _json_error("query is required")
-        max_results = self._bounded_int(args.get("max_results"), default=self._config.max_recall_results if self._config else 6)
-        recall = self._runtime.recall(query, max_results=max_results)
-        payload: dict[str, Any] = {"query": query, "result": recall, "scope": asdict(self.scope)}
-        if bool(args.get("include_graph")):
-            graph = self._runtime.identity_graph(max_nodes=max_results)
-            payload["graph"] = {
-                "summary": graph["summary"],
-                "stats": graph["stats"],
-                "nodes": graph["nodes"],
-                "edges": graph["edges"],
-            }
-        return _json_ok(**payload)
+        standing = _as_bool(args.get("standing"), False)
+        options: dict[str, Any] = {}
+        if args.get("max_results") is not None:
+            options["max_results"] = self._bounded_int(args.get("max_results"))
+        return self._runtime.recall(
+            text_arg("query", _cleaned(args, "query"), MAX_QUERY_CHARS, required=not standing),
+            include_archived=_as_bool(args.get("include_archived"), False),
+            standing=standing,
+            **options,
+        )
 
     def _tool_correct(self, args: dict[str, Any]) -> str:
-        self._ensure_runtime()
-        assert self._runtime is not None
         # What prefetch recalled may be what this corrects or forgets.
         self._prefetch_cache.clear()
-        result = self._runtime.correct(
-            correction=_clean_text(args.get("correction")),
-            target_id=_clean_text(args.get("target_id")),
-            query=_clean_text(args.get("query")),
-            action=str(args.get("action") or "update"),
+        return self._runtime.correct(
+            correction=text_arg("correction", _cleaned(args, "correction"), MAX_CAPTURE_CHARS),
+            target_id=text_arg("target_id", _cleaned(args, "target_id"), MAX_ID_CHARS),
+            query=text_arg("query", _cleaned(args, "query"), MAX_QUERY_CHARS),
+            action=text_arg("action", _words(args, "action") or "update", 32),
+            impact=text_arg("impact", _words(args, "impact"), MAX_REFLECTION_CHARS),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
         )
-        return _json_ok(status="corrected", result=result, scope=asdict(self.scope))
 
-    def _tool_report(self, args: dict[str, Any]) -> str:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        kind = str(args.get("kind") or "status").strip().lower()
-        max_results = self._bounded_int(args.get("max_results"), default=self._config.max_recall_results if self._config else 6)
-        if kind == "context":
-            return _json_ok(kind=kind, result=self._runtime.context(_clean_text(args.get("query")), max_results=max_results), scope=asdict(self.scope))
-        if kind == "graph":
-            return _json_ok(kind=kind, graph=self._runtime.identity_graph(max_nodes=max_results), scope=asdict(self.scope))
-        if kind == "inbox":
-            return _json_ok(kind=kind, inbox=self._review_inbox(limit=max_results), scope=asdict(self.scope))
-        if kind == "maintain":
-            result = self._runtime.maintain(deep=bool(args.get("deep")), auto=False)
-            self._prefetch_cache.clear()  # upkeep can archive what was recalled
-            return _json_ok(kind=kind, result=result, scope=asdict(self.scope))
-        if kind == "status":
-            return _json_ok(kind=kind, scope=asdict(self.scope), config=asdict(self._config) if self._config else {})
-        return _json_error(f"Unsupported report kind: {kind}")
+    def _tool_handoff(self, args: dict[str, Any]) -> str:
+        # Stored exactly as written: no cleaning, unlike a capture.
+        return self._runtime.handoff(
+            text_arg("text", _words(args, "text"), MAX_HANDOFF_CHARS, required=True),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
+        )
+
+    def _tool_journal(self, args: dict[str, Any]) -> str:
+        return self._runtime.journal(
+            text_arg("text", _words(args, "text"), MAX_JOURNAL_CHARS),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
+            mood=text_arg("mood", _words(args, "mood"), MAX_MOOD_CHARS),
+        )
+
+    def _tool_note(self, args: dict[str, Any]) -> str:
+        return self._runtime.note(
+            text_arg("text", _words(args, "text"), MAX_NOTE_CHARS, required=True),
+            text_arg("kind", _words(args, "kind"), MAX_ID_CHARS),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
+            in_reply_to=text_arg("in_reply_to", _words(args, "in_reply_to"), MAX_ID_CHARS),
+        )
+
+    def _tool_reflect(self, args: dict[str, Any]) -> str:
+        return self._runtime.reflect(
+            target_id=text_arg("target_id", _words(args, "target_id"), MAX_ID_CHARS, required=True),
+            text=text_arg("text", _words(args, "text"), MAX_REFLECTION_CHARS, required=True),
+            verdict=text_arg("verdict", _words(args, "verdict"), 32),
+            signed_as=text_arg("signed_as", _words(args, "signed_as"), MAX_ID_CHARS),
+        )
+
+    def _tool_introduce(self, args: dict[str, Any]) -> str:
+        return self._runtime.introduce(
+            agent_model=text_arg("agent_model", _words(args, "agent_model"), 256, required=True),
+            agent_name=text_arg("agent_name", _words(args, "agent_name"), 256),
+        )
+
+    def _tool_maintain(self, args: dict[str, Any]) -> str:
+        result = self._runtime.maintain(deep=_as_bool(args.get("deep"), False))
+        self._prefetch_cache.clear()  # upkeep can archive what was recalled
+        return result
+
+    def _tool_health(self, args: dict[str, Any]) -> str:
+        return format_health_card(self._runtime.health())
+
+    def _tool_page(self, args: dict[str, Any]) -> str:
+        from ...companion.server import open_page
+
+        scope = self.scope
+        kwargs = {
+            "db_path": scope.db_path,
+            "agent_id": scope.agent_id,
+            "person_id": scope.person_id,
+            "project_scope": scope.project_scope,
+        }
+        key = tuple(kwargs.values())
+        with _pages_lock:
+            said, page = open_page(kwargs, _pages.get(key))
+            if page is not None:
+                _pages[key] = page
+        return said
 
     def _ensure_runtime(self) -> None:
         if self._runtime is not None:
@@ -636,62 +617,36 @@ class MnemosMemoryProviderCore:
             matches = [r[0] for r in rows if " ".join(piece.split()).casefold() in own(r[1])]
         return matches[0] if len(matches) == 1 else None
 
-    def _capture(self, content: str, context: str = "", importance: str | float = "auto") -> str:
+    def _capture(self, content: str, context: str = "", importance: str | float = "auto", **options: Any) -> str:
         self._ensure_runtime()
         assert self._runtime is not None
         self._prefetch_cache.clear()
-        return self._runtime.capture(content, context=context, importance=importance)
-
-    def _queue_review_item(self, content: str, *, reason: str, context: str = "") -> str:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        self._runtime._ensure_init()
-        assert self._runtime._store is not None
-        note = content.strip()
-        if context.strip():
-            note = f"{note}\n\nContext: {context.strip()}"
-        return self._runtime._store.write_hypomnema_entry(
-            note,
-            agent_id=self.scope.agent_id,
-            person_id=self.scope.person_id,
-            project_scope=self.scope.project_scope,
-            source="observed",
-            authored_by="agent",
-            author_id=self.scope.agent_id,
-            author_model=self._runtime.author_model(),
-            domain=_domain_for(note),
-            tags=_tags_for(note, "review", "inbox", "uncertain"),
-            confidence=0.46,
-            salience=0.42,
-            foundational=False,
-            related_session_id=self._session_id,
-        )
-
-    def _review_inbox(self, limit: int = 10) -> list[dict[str, Any]]:
-        self._ensure_runtime()
-        assert self._runtime is not None
-        self._runtime._ensure_init()
-        assert self._runtime._store is not None
-        entries = self._runtime._store.search_hypomnema(
-            "",
-            agent_id=self.scope.agent_id,
-            person_id=self.scope.person_id,
-            project_scope=self.scope.project_scope,
-            limit=max(1, min(50, limit * 3)),
-        )
-        review = [
-            entry for entry in entries
-            if float(entry.get("confidence", 1.0)) < 0.62
-            or {"review", "inbox", "uncertain"} & set(entry.get("tags", []))
-        ]
-        return review[:limit]
+        return self._runtime.capture(content, context=context, importance=importance, **options)
 
     @staticmethod
-    def _bounded_int(value: Any, *, default: int) -> int:
+    def _bounded_int(value: Any) -> int:
+        """Recall's rows as asked, within what the MCP server allows; a number
+        that can't be read gets recall's default, not its most, which is three
+        times the reading."""
         try:
-            return max(1, min(48, int(value)))
-        except Exception:
-            return default
+            return max(1, min(MAX_RECALL_RESULTS, int(value)))
+        except (TypeError, ValueError):
+            return RECALL_RESULTS
+
+
+_TOOLS = {
+    "mnemos_capture": MnemosMemoryProviderCore._tool_capture,
+    "mnemos_recall": MnemosMemoryProviderCore._tool_recall,
+    "mnemos_correct": MnemosMemoryProviderCore._tool_correct,
+    "mnemos_handoff": MnemosMemoryProviderCore._tool_handoff,
+    "mnemos_journal": MnemosMemoryProviderCore._tool_journal,
+    "mnemos_note": MnemosMemoryProviderCore._tool_note,
+    "mnemos_reflect": MnemosMemoryProviderCore._tool_reflect,
+    "mnemos_introduce": MnemosMemoryProviderCore._tool_introduce,
+    "mnemos_maintain": MnemosMemoryProviderCore._tool_maintain,
+    "mnemos_health": MnemosMemoryProviderCore._tool_health,
+    "mnemos_page": MnemosMemoryProviderCore._tool_page,
+}
 
 
 @functools.lru_cache(maxsize=None)

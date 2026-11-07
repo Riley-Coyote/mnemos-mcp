@@ -42,7 +42,11 @@ from ..core.identity import AgentIdentity
 # person (see JOURNAL_WRITTEN and NOTE_KINDS). v18: lived_days, the days the
 # agent lived (see consolidation/lived.py).
 SCHEMA_VERSION = 19
-OPENING_PATIENCE_SECONDS = 30
+# How long opening a store waits for anyone in its way, all told. Sixteen sessions
+# opening a new store together take a fraction of a second; a store someone is
+# holding for longer won't free up in time for what's waiting, and a session-start
+# hook has fifteen seconds.
+OPENING_PATIENCE_SECONDS = 5
 
 # The lowest maintenance code version still allowed to maintain this store,
 # raised by each newer version that opens it (see mnemos/code_version.py).
@@ -903,12 +907,11 @@ def handoff_retirement(note: dict[str, Any]) -> str | None:
     return None
 
 
-def _turn_wal_on(conn: sqlite3.Connection) -> None:
+def _turn_wal_on(conn: sqlite3.Connection, deadline: float) -> None:
     """Turn write-ahead logging on, waiting out anyone else doing the same. The
     switch needs the file to itself and SQLite doesn't wait for that: whoever
     loses is told "locked" at once, whatever the busy timeout says. Several
     connections meet here when several sessions open a new store together."""
-    deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
     while True:
         try:
             conn.execute("PRAGMA journal_mode=WAL")
@@ -919,7 +922,7 @@ def _turn_wal_on(conn: sqlite3.Connection) -> None:
             time.sleep(0.05)
 
 
-def _create_tables(conn: sqlite3.Connection) -> None:
+def _create_tables(conn: sqlite3.Connection, deadline: float) -> None:
     """Run the schema script. On a new store, all of it at once: anyone opening
     the store while it is being made would otherwise find it half made, take it
     for an older store to back up, and fail checking it. (Only there: the lock it
@@ -932,7 +935,6 @@ def _create_tables(conn: sqlite3.Connection) -> None:
         f"INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');\n"
         "COMMIT;"
     ) if new else SQL_CREATE_TABLES
-    deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
     while True:
         try:
             conn.executescript(script)
@@ -1147,7 +1149,7 @@ class EngramStore:
             had_lived_days = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'lived_days'"
             ).fetchone() is not None
-            _create_tables(conn)
+            _create_tables(conn, self._opening_deadline)
             self._classify_legacy_hypomnema(conn)
             self._backfill_engram_scopes(conn)
             self._label_engram_authors(conn)
@@ -1667,7 +1669,9 @@ class EngramStore:
             try:
                 conn.row_factory = sqlite3.Row
                 conn.execute("PRAGMA busy_timeout=5000")
-                _turn_wal_on(conn)
+                # Shared by every step of opening: each waiting its own would add up.
+                self._opening_deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
+                _turn_wal_on(conn, self._opening_deadline)
                 conn.execute("PRAGMA synchronous=NORMAL")
                 conn.execute("PRAGMA foreign_keys=ON")
                 conn.set_trace_callback(
@@ -3758,8 +3762,9 @@ class EngramStore:
             (note for note in notes if reader and note.get("author_session") == reader),
             None,
         )
+        crowded_out = None
         if own is None and reader:
-            own = self._crowded_out_handoff(
+            own = crowded_out = self._crowded_out_handoff(
                 reader, agent_id=agent_id, person_id=person_id, project_scope=project_scope,
             )
         if not notes and own is None:
@@ -3772,9 +3777,13 @@ class EngramStore:
         by_place = sorted(notes, key=lambda note: -near[note["id"]])
         first = own if own is not None else by_place[0]
         cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
+        # Back after long enough to be crowded out, it still gets the thread it
+        # would have had: the newest here, however long ago that was left.
+        kept_anyway = by_place[0]["id"] if crowded_out is not None and by_place else None
         others = [
             note for note in by_place
-            if note["id"] != first["id"] and _written_since(note.get("created_at"), cutoff)
+            if note["id"] != first["id"]
+            and (note["id"] == kept_anyway or _written_since(note.get("created_at"), cutoff))
         ]
         return [first, *others[: max(0, int(limit) - 1)]]
 

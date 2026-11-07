@@ -136,6 +136,23 @@ class Server:
         """The agent id and store this server was started for."""
         return _flags(self.args, self.env)
 
+    def person_and_project(self) -> tuple[str | None, str | None]:
+        """Whose memory it opens, and which part of it."""
+        return (
+            _flag(self.args, "--person-id") or self.env.get("MNEMOS_PERSON_ID"),
+            _flag(self.args, "--project-scope") or self.env.get("MNEMOS_PROJECT_SCOPE"),
+        )
+
+
+def _flag(args: list[str], name: str) -> str | None:
+    found = None
+    for index, part in enumerate(args):
+        if part == name and index + 1 < len(args):
+            found = args[index + 1]
+        elif part.startswith(f"{name}="):
+            found = part.split("=", 1)[1]
+    return found
+
 
 def _flags(args: list[str], env: dict[str, str]) -> tuple[str | None, str | None]:
     agent = db = None
@@ -305,6 +322,7 @@ class Found:
     wake: bool | None = None
     cue: bool | None = None
     hermes_provider: str = ""
+    hermes_elsewhere: bool = False  # Mnemos holds Hermes' slot, for another memory
 
 
 def find(harness: table.Harness, agent_id: str, db_path: str) -> Verdict:
@@ -316,16 +334,18 @@ def find(harness: table.Harness, agent_id: str, db_path: str) -> Verdict:
     if harness.cue_event:
         found.cue = has_hook(harness, "cue", agent_id, db_path)
     if harness.key == "hermes":
-        from ..integrations.hermes.installer import _read_active_provider
+        from ..integrations.hermes.installer import _read_active_provider, _wrote_this_folder, provider_plugin_dirs
+        from ..integrations.hermes.scope import HermesMnemosConfig
 
-        found.hermes_provider = _read_active_provider(hermes_home() / "config.yaml")
-        # The provider wakes the memory its own config names, which must be this one.
-        kept = _read_json(hermes_home() / "mnemos.json")
-        kept = kept if isinstance(kept, dict) else {}
-        theirs = (kept.get("agent_id") or None, kept.get("db_path") or None)
-        found.wake = found.cue = found.hermes_provider == "mnemos" and (
-            _same_store(theirs, agent_id, db_path)
-        )
+        home = hermes_home()
+        found.hermes_provider = _read_active_provider(home / "config.yaml")
+        # The provider wakes the memory its own config names, which must be this
+        # one, and only if the plugin it loads is there.
+        kept = HermesMnemosConfig.load(home)
+        here = _same_store((kept.agent_id, kept.db_path), agent_id, db_path)
+        holds = found.hermes_provider == "mnemos"
+        found.wake = found.cue = holds and here and _wrote_this_folder(provider_plugin_dirs(home)[0])
+        found.hermes_elsewhere = holds and not here and bool(kept.agent_id or kept.db_path)
     return Verdict(found)
 
 
@@ -357,20 +377,57 @@ class Verdict:
         return _same_store(server.scope(), agent_id, db_path)
 
 
+def _hermes_config():
+    from ..integrations.hermes.scope import HermesMnemosConfig
+
+    return HermesMnemosConfig.load(hermes_home())
+
+
+def _hermes_goes_by_its_config() -> bool:
+    """Whether the memory Hermes' own Mnemos settings name is this agent's, over one a
+    server in its config opens. A copy's server opens the memory of the one it was
+    copied from. And where Mnemos is the provider, what the agent wakes from is its
+    memory; a server beside it opening another is the one that goes, and connect names it."""
+    from ..integrations.hermes.installer import _read_active_provider
+    from ..integrations.hermes.scope import config_copied_from_elsewhere
+
+    kept = _hermes_config()
+    if not (kept.agent_id or kept.db_path):
+        return False
+    home = hermes_home()
+    return config_copied_from_elsewhere(home) or _read_active_provider(home / "config.yaml") == "mnemos"
+
+
+def existing_person_and_project(harness: table.Harness) -> tuple[str | None, str | None]:
+    """Whose memory this is and which part of it, where connecting rewrites the setup
+    around them: Hermes', whose plugin goes stale as Mnemos moves on. Recall looks only
+    there, so losing them cuts the agent off from what it has."""
+    if harness.key != "hermes":
+        return None, None
+    own = [s for s in servers(harness) if not s.inherited]
+    if own and not _hermes_goes_by_its_config() and any(own[0].person_and_project()):
+        return own[0].person_and_project()
+    kept = _hermes_config()
+    return kept.person_id, kept.project_scope
+
+
 def existing_scope(harness: table.Harness) -> tuple[str | None, str | None] | None:
     """The agent id and store this harness already uses for its own Mnemos
     server or hook, so connecting again keeps the memory where it is: None
     when it has none; (None, None) when it has one that names neither, which
     keeps the defaults it was set up with."""
     own = [s for s in servers(harness) if not s.inherited]
+    if harness.key == "hermes" and _hermes_goes_by_its_config():
+        kept = _hermes_config()
+        return kept.agent_id, kept.db_path
     for server in own:
         agent, db = server.scope()
         if agent or db:
             return agent, db
     if harness.key == "hermes":
-        data = _read_json(hermes_home() / "mnemos.json")
-        if isinstance(data, dict) and (data.get("agent_id") or data.get("db_path")):
-            return data.get("agent_id") or None, data.get("db_path") or None
+        kept = _hermes_config()
+        if kept.agent_id or kept.db_path:
+            return kept.agent_id, kept.db_path
     for event, subcommand in (
         (harness.wake_event, "session-start"), (harness.cue_event, "prompt"),
     ):
@@ -391,7 +448,9 @@ class Status:
     harness: table.Harness
     agent_id: str
     db_path: str
-    mcp: str  # "set", "missing", "borrowed", "elsewhere" (a server for another memory)
+    # "set", "missing", "borrowed", "elsewhere" (a server for another memory), or,
+    # for Hermes, "provider": the memory provider carries the tools.
+    mcp: str
     wake: str  # "set", "missing", "cannot"
     cue: str
     upkeep: bool
@@ -405,7 +464,11 @@ def status(harness: table.Harness, agent_id: str, db_path: str) -> Status:
 
     verdict = find(harness, agent_id, db_path)
     found = verdict.found
-    if verdict.has_mcp_for(agent_id, db_path):
+    if harness.key == "hermes" and found.wake:
+        mcp = "provider"
+    elif found.hermes_elsewhere:
+        mcp = "elsewhere"
+    elif verdict.has_mcp_for(agent_id, db_path):
         mcp = "set"
     elif verdict.own_server is not None:
         mcp = "elsewhere"

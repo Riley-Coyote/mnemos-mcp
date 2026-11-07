@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shlex
 import shutil
@@ -51,6 +52,9 @@ def _scope(h: hs.Harness, args: argparse.Namespace):
     project = getattr(args, "project_scope", None)
     explicit_agent = getattr(args, "agent_id", None)
     explicit_db = getattr(args, "db_path", None)
+    if not explicit_agent and not explicit_db:
+        kept_person, kept_project = cn.existing_person_and_project(h)
+        person, project = person or kept_person, project or kept_project
     existing = cn.existing_scope(h)
     if not explicit_agent and not explicit_db and existing is not None:
         agent, db = existing
@@ -60,11 +64,20 @@ def _scope(h: hs.Harness, args: argparse.Namespace):
             agent_id=agent, db_path=db or (f"~/.mnemos/{_slugify(agent, h.key)}.db" if agent else None),
             person_id=person, project_scope=project,
         ), "kept"
-    agent = _slugify(explicit_agent or h.key, h.key)
+    agent = _slugify(explicit_agent or _own_agent_id(h), h.key)
     db = explicit_db or f"~/.mnemos/{agent}.db"
     return resolve_scope(agent_id=agent, db_path=db, person_id=person, project_scope=project), (
         "chosen" if explicit_agent or explicit_db else "own"
     )
+
+
+def _own_agent_id(h: hs.Harness) -> str:
+    """The agent's own name. Each Hermes profile is an agent of its own."""
+    if h.key == "hermes":
+        from .integrations.hermes.scope import profile_agent_id
+
+        return profile_agent_id(cn.hermes_home())
+    return h.key
 
 
 def _db(scope) -> str:
@@ -88,6 +101,18 @@ def run(args: argparse.Namespace) -> int:
         names = ", ".join(x.key for x in hs.HARNESSES)
         print(f"I don't know an agent called {key!r}. The ones I know: {names}.", file=sys.stderr)
         return 1
+    profile = getattr(args, "profile", None)
+    if profile:
+        if h.key != "hermes":
+            print("--profile is Hermes' own.", file=sys.stderr)
+            return 1
+        from .integrations.hermes.scope import profile_home
+
+        try:
+            os.environ["HERMES_HOME"] = str(profile_home(profile))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
     return _one(h, args)
 
 
@@ -110,15 +135,85 @@ def _list(args: argparse.Namespace) -> int:
         for line in _status_lines(h, status):
             _say(f"  {line}")
         _say(f"  Set it up: mnemos connect {h.key} --write")
+        if h.key == "hermes":
+            for line in _other_profiles():
+                _say(f"  {line}")
     _say()
     _say("Add an agent's name to see exactly what connecting it does: mnemos connect grok")
     return 0
+
+
+def _other_profiles() -> list[str]:
+    """Hermes' other profiles, each an agent of its own, connected one at a time."""
+    from .integrations.hermes.installer import known_hermes_homes
+
+    here = cn.hermes_home().resolve()
+    names = [home.name for home in known_hermes_homes() if home.resolve() != here and home.parent.name == "profiles"]
+    if not names:
+        return []
+    return [
+        f"Hermes also has these profiles: {', '.join(names)}. Each is an agent of its own, with its "
+        f"own memory: mnemos connect hermes --profile {names[0]} --write"
+    ]
+
+
+def _other_homes_on(store: str | Path) -> list[Path]:
+    """The other Hermes homes whose Mnemos settings name this store."""
+    from .integrations.hermes.installer import known_hermes_homes
+    from .integrations.hermes.scope import HermesMnemosConfig
+
+    here = cn.hermes_home().resolve()
+    mine = Path(store).expanduser().resolve()
+
+    def on_it(home: Path) -> bool:
+        named = HermesMnemosConfig.load(home).db_path
+        return bool(named) and Path(named).expanduser().resolve() == mine
+
+    return [home for home in known_hermes_homes() if home.resolve() != here and on_it(home)]
+
+
+def _can_leave_a_shared_memory(h: hs.Harness) -> bool:
+    """A Hermes home on another's memory may be pointed at one of its own: nothing is
+    moved out from under anyone, and that memory stays in use there."""
+    if h.key != "hermes":
+        return False
+    existing = cn.existing_scope(h)
+    return bool(existing and existing[1] and _other_homes_on(existing[1]))
+
+
+def _sharing_a_memory(scope) -> list[str]:
+    """Other Hermes homes on this same memory. A copy from before 0.6.4 has nothing to
+    say it's a copy, and someone may have wanted this, so it's left as it is, as any two
+    agents pointed at one memory are, and this says how to part them."""
+    from .integrations.hermes.scope import profile_agent_id
+
+    here = cn.hermes_home()
+    others = _other_homes_on(_db(scope))
+    if not others:
+        return []
+    lines = []
+    for home in [here, *others]:
+        own = profile_agent_id(home)
+        if own == scope.agent_id:
+            continue
+        if home.parent.name == "profiles":
+            lines.append(
+                f"The profile {home.name} is on this same memory, so the two are one agent. "
+                f"For one of its own: mnemos connect hermes --profile {home.name} --agent-id {own} --write"
+            )
+        else:
+            lines.append(
+                f"Hermes at {home} is on this same memory, so the two are one agent. "
+                f"For one of its own: HERMES_HOME={home} mnemos connect hermes --agent-id {own} --write"
+            )
+    return lines
 
 
 def _status_lines(h: hs.Harness, st: cn.Status) -> list[str]:
     lines: list[str] = []
     mcp = {
         "set": "the Mnemos server is in its config",
+        "provider": "the memory provider carries them",
         "missing": "no Mnemos server yet",
         "elsewhere": "it has a Mnemos server, for another memory",
         "borrowed": "no server of its own; it has borrowed Claude Code's (see below)",
@@ -188,13 +283,20 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
     from .shared_memory import enabled
     _say("Shared memory: this agent can read and add to the machine's shared memory."
          if enabled() else "Shared memory: off for this server (MNEMOS_SHARED_MEMORY=off).")
+    if h.key == "hermes":
+        for line in [*_other_profiles(), *_sharing_a_memory(scope)]:
+            _say(line)
     _say()
 
     if h.level == hs.PRINTS:
         return _print_only(h, scope)
 
     st = cn.status(h, scope.agent_id, scope.db_path)
-    if st.mcp == "elsewhere" and (getattr(args, "agent_id", None) or getattr(args, "db_path", None)):
+    if (
+        st.mcp == "elsewhere"
+        and (getattr(args, "agent_id", None) or getattr(args, "db_path", None))
+        and not _can_leave_a_shared_memory(h)
+    ):
         _say(
             f"{h.label} already has a Mnemos server, for another memory. I don't move a memory "
             "that is already in use. To change it: mnemos uninstall --write, then connect again."
@@ -317,9 +419,16 @@ def _hours_gaps(h: hs.Harness) -> list[str]:
 
 
 def _hours_steps(h: hs.Harness, scope, args) -> list[tuple[str, object]]:
-    """The quiet hours step, only when asked for (--hours) or turned off (--no-hours)."""
+    """The quiet hours step, only when asked for (--hours) or turned off (--no-hours),
+    or when the jobs already there need newer words."""
     if getattr(args, "hours", False) and getattr(args, "no_hours", False):
         return []
+    if (
+        not getattr(args, "no_hours", False)
+        and not getattr(args, "hours", False)
+        and ah.out_of_date(h.key, cli_mnemos(), _flags(scope))
+    ):
+        return [("update what the quiet hours' jobs say: they're from an older Mnemos", lambda: _hours_on(h, scope))]
     if getattr(args, "hours", False):
         if h.hours is None or not ah.AGENTS.get(h.key):
             return []
@@ -363,7 +472,7 @@ def _plan(h: hs.Harness, st: cn.Status, args) -> list[tuple[str, object]]:
     name = getattr(args, "name", None) or cn.SERVER_NAME
     upkeep = not st.upkeep and not getattr(args, "no_upkeep", False)
     if h.key == "hermes":
-        if st.mcp != "set" or st.wake == "missing":
+        if _hermes_step_needed(st, args):
             steps.append((_hermes_text(st, args), lambda: _hermes(scope, st, args)))
         if upkeep:
             steps.append(("schedule upkeep between sessions", lambda: _upkeep(h, scope, args)))
@@ -391,13 +500,21 @@ def cli_mnemos() -> str:
     return cli._mnemos_command()
 
 
+def _hermes_step_needed(st: cn.Status, args) -> bool:
+    if (st.provider and st.provider != "mnemos") or getattr(args, "agent_safe", False):
+        return st.mcp not in {"set", "provider"}
+    from .integrations.hermes.installer import connect_would_change
+
+    return st.wake == "missing" or connect_would_change(cn.hermes_home())
+
+
 def _hermes_text(st: cn.Status, args) -> str:
     if st.provider and st.provider != "mnemos":
         return (f"add the tools only: Hermes' memory provider is {st.provider}, and Hermes has one "
                 "slot, so I leave it")
     if getattr(args, "agent_safe", False):
         return "add the tools only (--agent-safe: memory.provider is not changed)"
-    return "make Mnemos Hermes' memory provider (wake and per-message recall) and add the tools"
+    return "make Mnemos Hermes' memory provider (its wake, per-message recall and tools)"
 
 
 def _run(command: list[str], env_note: str = "") -> tuple[bool, str]:
@@ -492,7 +609,7 @@ def _hermes(scope, st: cn.Status, args) -> tuple[bool, str]:
         db_path=_db(scope), agent_id=scope.agent_id, person_id=scope.person_id,
         project_scope=scope.project_scope,
         mode=SIDECAR_MODE if sidecar else PROVIDER_MODE,
-        configure_mcp=True, activate=not sidecar, agent_safe=sidecar,
+        configure_mcp=sidecar, activate=not sidecar, agent_safe=sidecar,
     )
     return not result.warnings, result.summary() + "\nRestart Hermes to load it."
 

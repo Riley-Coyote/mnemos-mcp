@@ -182,3 +182,29 @@ def test_the_recall_tool_asks_for_more_than_one_search_and_says_newer_usually_ho
     assert "When two memories disagree, the newer one usually holds." in described
     assert "the day it was kept" in described
     assert simple_runtime.MEMORY_ROW_CHARS == MEMORY_ROW_CHARS >= 1500
+
+
+def test_a_day_is_the_one_on_this_machines_calendar(monkeypatch):
+    # In the evening west of Greenwich the stored day is tomorrow, beside a wake saying what time it is here.
+    import time as clock
+
+    from mnemos import cue
+
+    monkeypatch.setenv("TZ", "America/Chicago")
+    clock.tzset()
+    try:
+        assert cue.local_day("2026-11-07T05:30:00+00:00") == "2026-11-06"
+        assert cue.local_day("2026-11-07T05:30:00Z") == "2026-11-06"
+        assert cue.line_parts("The kiln fires on Tuesdays.", "2026-11-07T05:30:00+00:00")[0] == "2026-11-06"
+        assert cue.local_day("") == "" and cue.local_day(None) == ""
+
+        # And the day a dream is told a memory was kept.
+        from types import SimpleNamespace
+
+        from mnemos import life
+
+        store = SimpleNamespace(get_engram=lambda _id: SimpleNamespace(content="The kiln.", created_at="2026-11-07T05:30:00+00:00"))
+        assert life._words_of(store, "any") == ("The kiln.", "2026-11-06")
+    finally:
+        monkeypatch.undo()
+        clock.tzset()

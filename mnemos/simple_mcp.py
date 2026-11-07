@@ -7,7 +7,7 @@ agent-friendly tool set. Advanced/admin tools remain in ``mnemos.mcp_server``.
 from __future__ import annotations
 
 import base64
-import json
+import inspect
 import logging
 import signal
 import sys
@@ -20,25 +20,27 @@ from mcp.server.fastmcp import FastMCP
 
 from .package_version import mnemos_version
 from .simple_runtime import MnemosRuntime, RECALL_RESULTS, SIMPLE_TOOL_NAMES, format_health_card
+from .simple_tools import (
+    MAX_CAPTURE_CHARS,
+    MAX_CONTEXT_CHARS,
+    MAX_HANDOFF_CHARS,
+    MAX_ID_CHARS,
+    MAX_JOURNAL_CHARS,
+    MAX_MOOD_CHARS,
+    MAX_NOTE_CHARS,
+    MAX_QUERY_CHARS,
+    MAX_RECALL_RESULTS,
+    MAX_REFLECTION_CHARS,
+    MAX_RESULTS,
+    MAX_TOOL_OUTPUT_CHARS,
+    SERVER_INSTRUCTIONS,
+    count_arg as _count,
+    limit_output as _output,
+    text_arg as _text,
+)
 
 logger = logging.getLogger("mnemos.simple_mcp")
 
-MAX_CAPTURE_CHARS = 65_536
-MAX_HANDOFF_CHARS = 16_384
-MAX_JOURNAL_CHARS = 16_384
-MAX_NOTE_CHARS = 8_192
-MAX_MOOD_CHARS = 200
-MAX_QUERY_CHARS = 4_096
-MAX_CONTEXT_CHARS = 32_768
-MAX_REFLECTION_CHARS = 16_384
-MAX_ID_CHARS = 256
-MAX_RESULTS = 20
-# The most rows a recall may ask for: 45 and 5 handoffs, the longest mix the lab
-# tested (L20c, 2026-11-06). It's on request because every row is read on every
-# search: 50 rows found 9 to 16 more of 118 facts than 15, for about 27,400 more
-# characters a search (L20). mnemos_context keeps MAX_RESULTS: nothing tested it
-# longer.
-MAX_RECALL_RESULTS = 50
 # What recall declares it may answer with, in characters. Claude Code saves a
 # tool's answer to a file once it's over 50,000 unless the tool declares its own
 # limit, up to 500,000 (`anthropic/maxResultSizeChars`, in its MCP docs; added in
@@ -46,51 +48,8 @@ MAX_RECALL_RESULTS = 50
 # of 165 answers on a copy of the real store went over 50,000 and none of 575 over
 # 70,000, the longest 61,724, or 62,631 as JSON with non-ASCII escaped (L20c), and
 # the store is still growing. 45 long memories could pass it, and that answer goes
-# to a file.
+# to a file. Only Claude Code reads it, so it stays with this door.
 RECALL_RESULT_CHARS = 70_000
-MAX_TOOL_OUTPUT_CHARS = 131_072
-
-
-def _text(name: str, value: str, limit: int, *, required: bool = False) -> str:
-    if required and not value.strip():
-        raise ValueError(f"{name} cannot be empty")
-    if len(value) > limit:
-        raise ValueError(f"{name} is too large (maximum {limit:,} characters)")
-    return value
-
-
-def _count(name: str, value: int, *, minimum: int, maximum: int) -> int:
-    if not minimum <= value <= maximum:
-        raise ValueError(f"{name} must be between {minimum} and {maximum}")
-    return value
-
-
-def _output(value: str) -> str:
-    if len(value) <= MAX_TOOL_OUTPUT_CHARS:
-        return value
-    return value[:MAX_TOOL_OUTPUT_CHARS] + "\n\n[Output limited by Mnemos.]"
-
-# Claude Code shows a model only the first 2,048 characters of a server's
-# instructions; the rest never reaches it. So the rules come first and the
-# whole stays under that (tests/test_what_every_session_carries.py). Details
-# live in the tool descriptions, which models see in full.
-SERVER_INSTRUCTIONS = """\
-Mnemos gives you memory that survives between sessions. Use it without being asked, as part of how you work.
-
-Never narrate the machinery: don't mention tools, databases, scopes, engrams or memory ids to the human. Just be someone who remembers.
-
-1. Before answering the first substantive message, call mnemos_context, unless you woke with your memory (a session-start hook's "## waking up").
-2. Call mnemos_capture as soon as something durable appears (a preference, a decision, a correction, project state, how the human likes to work): sessions end without warning. If you can say what it changed in how you understand things, pass that as impact; if nothing true comes, leave it empty: an invented lesson is worse than none.
-3. When the human corrects something you remembered, call mnemos_correct, not a capture beside the stale note.
-4. Call mnemos_recall when you need something you didn't wake with.
-5. When your memory asks you a question about itself, answer with mnemos_reflect in your own words, or leave it. Nothing else writes your memory for you.
-6. Refresh mnemos_handoff after real progress or a changed plan, and before pausing, ending, delegating or changing context. Write it in first person, as your own memory: the next one to read it is most likely you.
-7. Your journal is yours: write in it when something's there, in your own words. Nothing else writes it.
-8. Leave the human a note only when it passes the room test: you'd say it if they walked in now. Never to check in.
-
-Several models may share this memory. Sign every write with signed_as: your exact model id, as your system prompt gives it; if it changes, call mnemos_introduce again. Your earlier versions are you; another kind of model is a colleague: use its work, don't claim it. Never ask the human what model you are.
-
-Storage is local. Nothing leaves unless the human has a provider or quiet hours on."""
 
 simple_mcp = FastMCP("mnemos", instructions=SERVER_INSTRUCTIONS)
 simple_mcp._mcp_server.version = mnemos_version()
@@ -155,35 +114,11 @@ def _open_page() -> str:
     the same page until the server stops; or one plain sentence saying why it
     couldn't start. Never a word on stdout, which carries the protocol."""
     global _page
-    from .companion.export import Exporter
-    from .companion.server import LogServer
+    from .companion.server import open_page
 
     with _page_lock:
-        page = _page
-        if page is None:
-            try:
-                page = LogServer(Exporter.for_scope(**_runtime_kwargs))
-            except OSError as exc:
-                return f"The page couldn't start: {exc}"
-        try:
-            # What the page will show, read now: one that can't be read isn't opened.
-            missing = bool(json.loads(page.documents()[0]).get("missing"))
-        except Exception as exc:
-            if page is not _page:
-                page.server_close()
-            return f"The page couldn't read this memory just now: {type(exc).__name__}: {exc}"
-        if page is not _page:
-            threading.Thread(target=page.serve_forever, name="mnemos-page", daemon=True).start()
-            _page = page
-    lines = [
-        f"Your page is open: {page.url}",
-        "Open it for them: in your own browser pane if you have one, with the system's open "
-        "command if you have a shell, or give them the link. It runs on this machine only, "
-        "until this session ends.",
-    ]
-    if missing:
-        lines.append("Nothing is kept here yet, so the page says so.")
-    return "\n".join(lines)
+        said, _page = open_page(_runtime_kwargs, _page)
+    return said
 
 
 def _close_page() -> None:
@@ -804,6 +739,35 @@ def register_simple_tools(server: FastMCP) -> None:
 
 
 register_simple_tools(simple_mcp)
+
+
+def plain_tool_schemas() -> list[dict[str, Any]]:
+    """The simple tools as plain JSON schemas, for a door that isn't MCP: their
+    names, what they say and what they take. The Hermes provider keeps a copy,
+    since it can't count on this library inside Hermes
+    (``integrations/hermes/tools.py``, written by
+    ``scripts/generate_hermes_tools.py``, and held to this by a test)."""
+
+    def plain(node: Any) -> Any:
+        if isinstance(node, dict):
+            return {
+                key: {name: plain(part) for name, part in value.items()}
+                if key == "properties" else plain(value)
+                for key, value in node.items()
+                if key != "title"
+            }
+        if isinstance(node, list):
+            return [plain(part) for part in node]
+        return node
+
+    return [
+        {
+            "name": tool.name,
+            "description": inspect.cleandoc(tool.description or ""),
+            "parameters": plain(tool.parameters),
+        }
+        for tool in simple_mcp._tool_manager.list_tools()
+    ]
 
 
 def _with_card_line(card: str, line: str) -> str:

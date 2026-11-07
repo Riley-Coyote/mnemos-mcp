@@ -4,6 +4,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -49,11 +50,29 @@ def test_two_processes_defaults():
     found = process("reader", "print(r.recall('telescope lenses'))")
     assert WORDS in found
     assert "[shared]" in found and "writer | test-model | " in found
-    assert datetime.now(timezone.utc).date().isoformat() in found
+    assert datetime.now().astimezone().date().isoformat() in found
     assert memory_id in found
     assert not (Path.home() / ".mnemos/writer.db").exists()
     assert not (Path.home() / ".mnemos/shared.db").exists()
     assert rows("SELECT access_count FROM engrams WHERE id=?", (memory_id,))[0][0] > 0
+
+
+def test_it_is_dated_on_this_machines_calendar(monkeypatch):
+    # Written in the evening in Honolulu, it's already tomorrow in UTC. A real agent
+    # reading that took a note written minutes before for one with a wrong date.
+    monkeypatch.setenv("TZ", "Pacific/Honolulu")
+    time.tzset()
+    try:
+        r = runtime(monkeypatch, "writer")
+        memory_id = share_id(r.capture(WORDS, shared=True))
+        with sqlite3.connect(os.environ["MNEMOS_SHARED_MEMORY_DB"]) as conn:
+            conn.execute("UPDATE engrams SET created_at = '2026-11-07T02:00:00+00:00' WHERE id = ?", (memory_id,))
+        found = r.recall("telescope lenses")
+        r.close()
+    finally:
+        monkeypatch.undo()
+        time.tzset()
+    assert "| 2026-11-06\n" in found and "2026-11-07" not in found
 
 
 def test_sharing_leaves_own_file_unchanged_and_own_rows_first(monkeypatch):

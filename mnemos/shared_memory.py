@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .core.engram import Engram
+from .cue import local_day
 from .store.sqlite_store import EngramStore
 
 PERSON_OWNER = "person:local"  # Agent ids are slugs; a colon cannot occur in one.
@@ -169,7 +170,7 @@ def _recall_locked(store, index, query, agent_id, session):
         memory = result.engram
         author = "the person" if memory.author_kind == "person" else memory.owner_agent_id
         signature = author + (f" | {memory.author_model}" if memory.author_model else "")
-        rows.append(f"- [shared] {memory.id} | {signature} | {memory.created_at[:10]}\n{memory.content}")
+        rows.append(f"- [shared] {memory.id} | {signature} | {local_day(memory.created_at)}\n{memory.content}")
     return "\n".join(rows)
 
 

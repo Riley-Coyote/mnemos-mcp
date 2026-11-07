@@ -6,6 +6,9 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -39,11 +42,98 @@ def slugify(value: str | None, fallback: str) -> str:
     return clean or fallback
 
 
-def default_hermes_home() -> Path:
-    """Resolve the active Hermes home without importing Hermes."""
+# The home Hermes told a provider it's running for, while one of its calls is under way.
+_HOME_TOLD: ContextVar[Path | None] = ContextVar("mnemos_hermes_home_told", default=None)
 
+
+def default_hermes_home() -> Path:
+    """Resolve the active Hermes home without importing Hermes: the one Hermes told the
+    provider, inside a provider's call, and otherwise the environment's. They can differ:
+    recent Hermes can run a profile with ``HERMES_HOME`` still naming its root, and hands
+    the provider the profile's home to go by."""
+
+    told = _HOME_TOLD.get()
+    if told is not None:
+        return told
     raw = os.environ.get("HERMES_HOME", "").strip()
     return Path(raw).expanduser() if raw else Path.home() / ".hermes"
+
+
+@contextmanager
+def running_for_home(home: str | Path | None) -> Iterator[None]:
+    """A provider's call, for the home Hermes told it."""
+
+    token = _HOME_TOLD.set(Path(home).expanduser() if home else None)
+    try:
+        yield
+    finally:
+        _HOME_TOLD.reset(token)
+
+
+def _same_home(one: str | Path, other: str | Path) -> bool:
+    return Path(one).expanduser().resolve() == Path(other).expanduser().resolve()
+
+
+def profile_home(name: str) -> Path:
+    """Where Hermes keeps a profile, or an error naming how to make one."""
+
+    home = Path.home() / ".hermes" / "profiles" / name
+    if not home.is_dir():
+        raise ValueError(f"Hermes has no profile called {name!r} here ({home}). To make one: hermes profile create {name}")
+    return home
+
+
+def profile_agent_id(hermes_home: str | Path) -> str:
+    """The agent a Hermes home is, when nobody has named one: each profile is an
+    agent of its own, with its own memory, as any two agents are. ``hermes`` for
+    Hermes' default home, ``hermes-<name>`` for a profile, and for a home kept
+    anywhere else its folder's name and a few letters of its path, since two
+    folders elsewhere can share a name."""
+
+    home = Path(hermes_home).expanduser()
+    default = Path.home() / ".hermes"
+    if _same_home(home, default):
+        return "hermes"
+    if _same_home(home.parent, default / "profiles"):
+        return f"hermes-{slugify(home.name, 'profile')}"
+    place = hashlib.sha256(str(home.resolve()).encode("utf-8")).hexdigest()[:6]
+    name = slugify(home.name, "hermes")
+    return f"hermes-{place}" if name == "hermes" else f"hermes-{name}-{place}"
+
+
+def profile_store(hermes_home: str | Path) -> str:
+    """Where that agent's memory is kept, as any agent's is."""
+
+    return str(Path.home() / ".mnemos" / f"{profile_agent_id(hermes_home)}.db")
+
+
+def config_copied_from_elsewhere(hermes_home: str | Path) -> bool:
+    """Whether this home's ``mnemos.json`` was written for another home that is still
+    there, so it, and the server in its config, came with a copied profile. A home
+    that has gone was moved or renamed (``hermes profile rename``), and it's the same
+    agent, with the same memory."""
+
+    written_for = str(_load_json_config(Path(hermes_home).expanduser()).get("hermes_home") or "").strip()
+    return bool(written_for) and not _same_home(written_for, hermes_home) and Path(written_for).expanduser().is_dir()
+
+
+def settle_config_home(hermes_home: str | Path | None = None) -> None:
+    """Write down, the first time a copied or moved home is used, that its config is
+    its own now. Until then only the home it came from says which it is: if that goes
+    a copy would take the original's memory, and if a new one takes a renamed profile's
+    old name, that profile would lose its own."""
+
+    home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
+    written_for = str(_load_json_config(home).get("hermes_home") or "").strip()
+    if not written_for or _same_home(written_for, home):
+        return
+    updates = {"hermes_home": str(home)}
+    if config_copied_from_elsewhere(home):
+        updates.update(agent_id=profile_agent_id(home), db_path=profile_store(home))
+    try:
+        save_hermes_mnemos_config(home, updates)
+    except OSError:
+        pass  # A home it can't write to: it goes on as it was.
 
 
 def _as_bool(value: Any, default: bool) -> bool:
@@ -100,6 +190,11 @@ class HermesMnemosConfig:
     which the provider no longer does (0.4.1); a file that still has them is
     read without them.
 
+    A copied profile is its own agent: ``hermes profile create --clone-all`` copies
+    this file with the rest, and two profiles must not share a memory by accident.
+    The file says which home it was written for, and elsewhere its agent and store
+    don't hold.
+
     ``max_context_chars`` bounds what recall adds to each message.
     ``max_wake_chars`` bounds the memory a session wakes with; 0 leaves that to
     the wake's own budget, the one every agent's wake has (``PACKET_MAX_CHARS``,
@@ -121,6 +216,8 @@ class HermesMnemosConfig:
     def load(cls, hermes_home: str | Path | None = None) -> "HermesMnemosConfig":
         home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
         raw = _load_json_config(home)
+        if config_copied_from_elsewhere(home):
+            raw = {**raw, "agent_id": profile_agent_id(home), "db_path": profile_store(home)}
         return cls(
             db_path=str(raw.get("db_path") or "").strip() or None,
             agent_id=str(raw.get("agent_id") or "").strip() or None,
@@ -234,6 +331,8 @@ def save_hermes_mnemos_config(
     path = _config_path(home)
     existing = _load_json_config(home)
     merged = {**existing, **{k: v for k, v in updates.items() if v not in (None, "")}}
+    if merged == existing and path.exists():
+        return path
     atomic_write_text(
         path, json.dumps(merged, indent=2, sort_keys=True) + "\n",
         backup_existing=True,

@@ -40,7 +40,7 @@ def provider(tmp_path):
 
 def test_external_forget_during_recall_does_not_pin_stale_cache(provider, monkeypatch):
     token = "CEDARVAULT7741"
-    provider.handle_tool_call("mnemos_identity_capture", {
+    provider.handle_tool_call("mnemos_capture", {
         "content": f"The studio door code is {token}.",
     })
     memory = provider._runtime._store.get_active_engrams(agent_id="review")[0]

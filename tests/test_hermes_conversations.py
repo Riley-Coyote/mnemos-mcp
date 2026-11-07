@@ -23,6 +23,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Timer
@@ -95,7 +96,7 @@ def _cli(home: Path, session: str) -> MnemosMemoryProviderCore:
 
 
 def _leave(provider: MnemosMemoryProviderCore, text: str) -> None:
-    reply = json.loads(provider.handle_tool_call("mnemos_identity_handoff", {"text": text}))
+    reply = json.loads(provider.handle_tool_call("mnemos_handoff", {"text": text}))
     assert reply.get("ok"), reply
 
 
@@ -197,7 +198,7 @@ class TestTheQuestionWeWereAsked:
         row = health._runtime._store._get_conn().execute(
             "SELECT id FROM hypomnema_entries WHERE content = ?", (HEALTH,),
         ).fetchone()
-        health.handle_tool_call("mnemos_identity_correct", {"target_id": row["id"], "action": "forget"})
+        health.handle_tool_call("mnemos_correct", {"target_id": row["id"], "action": "forget"})
 
         wake = _topic(home, 7, session="fresh-7").system_prompt_block()
         assert "pre-op bloodwork" not in wake
@@ -215,7 +216,7 @@ class TestForgettingACrowdedOutNote:
             "SELECT id FROM hypomnema_entries WHERE content = ?", (HEALTH,),
         ).fetchone()
 
-        reply = again.handle_tool_call("mnemos_identity_correct", {"target_id": row["id"], "action": "forget"})
+        reply = again.handle_tool_call("mnemos_correct", {"target_id": row["id"], "action": "forget"})
 
         assert "no longer active" not in reply, reply
         assert "pre-op bloodwork" not in _topic(home, 7, session="fresh-7b").system_prompt_block()
@@ -227,7 +228,7 @@ class TestForgettingACrowdedOutNote:
         row = topic._runtime._store._get_conn().execute(
             "SELECT id FROM hypomnema_entries WHERE content = ?", ("The first note.",),
         ).fetchone()
-        reply = topic.handle_tool_call("mnemos_identity_correct", {"target_id": row["id"], "action": "forget"})
+        reply = topic.handle_tool_call("mnemos_correct", {"target_id": row["id"], "action": "forget"})
         assert "no longer active" in reply, reply
 
 
@@ -285,7 +286,7 @@ class TestWhatTheIdIs:
         # (a recall's reinforcement, among others) must not become once per
         # conversation, or a long-lived topic would stop strengthening memories.
         topic = _topic(home, 7)
-        topic.handle_tool_call("mnemos_identity_capture", {"content": "The knee surgery is on March 3."})
+        topic.handle_tool_call("mnemos_capture", {"content": "The knee surgery is on March 3."})
         rows = topic._runtime._store._get_conn().execute("SELECT author_session FROM engrams").fetchall()
         assert rows and all(not row["author_session"] for row in rows)
 
@@ -310,7 +311,7 @@ class TestWhatTheIdIs:
         _leave(topic, "Pre-op bloodwork still to book, says this thread.")
         other = _topic(home, 9)
         _leave(other, "Pre-op bloodwork is another thread's worry here.")
-        reply = json.loads(topic.handle_tool_call("mnemos_identity_recall", {"query": "pre-op bloodwork"}))["result"]
+        reply = json.loads(topic.handle_tool_call("mnemos_recall", {"query": "pre-op bloodwork"}))["result"]
         lines = reply.splitlines()
         own = next(index for index, line in enumerate(lines) if "says this thread" in line)
         theirs = next(index for index, line in enumerate(lines) if "another thread's" in line)
@@ -323,7 +324,7 @@ class TestWhatTheIdIs:
         row = topic._runtime._store._get_conn().execute(
             "SELECT id FROM hypomnema_entries WHERE content = ?", (HEALTH,),
         ).fetchone()
-        reply = json.loads(topic.handle_tool_call("mnemos_identity_recall", {"query": row["id"]}))
+        reply = json.loads(topic.handle_tool_call("mnemos_recall", {"query": row["id"]}))
         assert "this session" in reply["result"], reply["result"]
 
 
@@ -345,7 +346,7 @@ class TestTheWakeIsWhole:
     def test_what_recall_adds_to_a_message_stays_small(self, home):
         topic = _topic(home, 7)
         for index in range(8):
-            topic.handle_tool_call("mnemos_identity_capture", {
+            topic.handle_tool_call("mnemos_capture", {
                 "content": f"Knee note {index}: the surgery recovery plan, week by week. " * 8,
             })
         recalled = topic.prefetch("knee surgery recovery plan")
@@ -458,7 +459,7 @@ class TestANewStoreOpenedTogether:
         holder.execute("BEGIN EXCLUSIVE")
         Timer(0.3, holder.rollback).start()
         waiter = sqlite3.connect(db, timeout=0)
-        sqlite_store._turn_wal_on(waiter)
+        sqlite_store._turn_wal_on(waiter, time.monotonic() + 5)
         assert waiter.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         waiter.close()
         holder.close()
@@ -473,7 +474,7 @@ class TestANewStoreOpenedTogether:
         store = store._store
         store.close()
 
-        def locked(conn):
+        def locked(conn, deadline):
             raise sqlite3.OperationalError("database is locked")
 
         monkeypatch.setattr(sqlite_store, "_turn_wal_on", locked)
@@ -500,7 +501,7 @@ class TestOneTopicsOwnThreads:
             "p = MnemosMemoryProviderCore()\n"
             "p.initialize('s1', hermes_home=str(home), platform='telegram', gateway_session_key='k:7')\n"
             "for i in range(20):\n"
-            "    p.handle_tool_call('mnemos_identity_capture', {'content': f'Fact {i} about the knee surgery.'})\n"
+            "    p.handle_tool_call('mnemos_capture', {'content': f'Fact {i} about the knee surgery.'})\n"
             "end = time.time() + 4\n"
             "errors = []\n"
             "def run(work):\n"
@@ -514,7 +515,7 @@ class TestOneTopicsOwnThreads:
             "work = [\n"
             "    lambda n: p.queue_prefetch(f'knee question {n}', session_id='s1'),\n"
             "    lambda n: p.prefetch(f'surgery detail {n}', session_id='s1'),\n"
-            "    lambda n: p.handle_tool_call('mnemos_identity_capture', {'content': f'More fact {n} on the deck.'}),\n"
+            "    lambda n: p.handle_tool_call('mnemos_capture', {'content': f'More fact {n} on the deck.'}),\n"
             "]\n"
             "threads = [threading.Thread(target=run, args=(w,), daemon=True) for w in work]\n"
             "for t in threads:\n"
@@ -683,7 +684,7 @@ class TestHermesOwnEnvironment:
         report = installer.build_diagnostics(home)
         assert report["mode"] == "sidecar"
         # The name a person can act on, in the home the server really uses.
-        where = tmp_path / ".mnemos" / "mnemos-agent.db"
+        where = Path(installer.profile_store(home))
         assert report["db_path"] == str(where)
         assert report["db_exists"] is False
         where.parent.mkdir(parents=True)
@@ -750,33 +751,6 @@ class TestHermesOwnEnvironment:
         home = tmp_path / "hermes"
         install_hermes_plugin(hermes_home=home, mode=PROVIDER_MODE, configure_mcp=True, activate=True)
         assert "tools" not in installer._read_mcp_server(home, "mnemos")
-
-    def test_provider_mode_leaves_out_what_the_provider_replaces(self, tmp_path, monkeypatch):
-        # The MCP server can't tell topics apart: its wake would lead with
-        # whichever topic wrote last, and spend what shows once.
-        monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
-        home = tmp_path / "hermes"
-        install_hermes_plugin(hermes_home=home, mode=PROVIDER_MODE, configure_mcp=True, activate=True)
-        assert set(installer._read_mcp_server(home, "mnemos")["tools"]["exclude"]) == {"mnemos_handoff", "mnemos_context"}
-
-    def test_moving_to_sidecar_gives_the_tools_back(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
-        home = tmp_path / "hermes"
-        install_hermes_plugin(hermes_home=home, mode=PROVIDER_MODE, configure_mcp=True, activate=True)
-        assert installer._read_mcp_server(home, "mnemos")["tools"]
-        result = install_hermes_plugin(hermes_home=home, mode=SIDECAR_MODE, configure_mcp=True, agent_safe=True)
-        assert "tools" not in installer._read_mcp_server(home, "mnemos")
-        assert not result.warnings
-
-    def test_someones_own_exclusions_stay(self, tmp_path, monkeypatch):
-        home = tmp_path / "hermes"
-        home.mkdir()
-        (home / "config.yaml").write_text(
-            "mcp_servers:\n  mnemos:\n    command: mnemos\n    tools:\n"
-            "      exclude:\n      - mnemos_handoff\n      - mnemos_journal\n"
-        )
-        install_hermes_plugin(hermes_home=home, mode=SIDECAR_MODE, configure_mcp=True, agent_safe=True)
-        assert installer._read_mcp_server(home, "mnemos")["tools"]["exclude"] == ["mnemos_journal"]
 
     def test_connect_says_so_when_hermes_cant_load_it(self, tmp_path, monkeypatch):
         monkeypatch.setattr(installer, "_mnemos_import_paths", lambda: [])
@@ -877,24 +851,36 @@ class TestTheDocumentedCommand:
         assert (first.person_id, first.project_scope) == (second.person_id, second.project_scope)
         assert (first.person_id, first.project_scope) == (third.person_id, third.project_scope)
 
-        args = installer._read_mcp_server(home, "mnemos")["args"]
-        assert args[args.index("--agent-id") + 1] == first.agent_id
-        assert args[args.index("--db-path") + 1] == first.db_path
-        assert args[args.index("--person-id") + 1] == first.person_id
-        assert args[args.index("--project-scope") + 1] == first.project_scope
+        # The provider carries the tools, on the same memory: no second door to another.
+        assert not installer._read_mcp_server(home, "mnemos")
 
     def test_quickstart_after_the_sidecar_keeps_the_sidecars_memory(self, tmp_path, monkeypatch):
         monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
         monkeypatch.setenv("HOME", str(tmp_path))
         home = tmp_path / ".hermes"
         installer.quickstart_hermes(hermes_home=home, agent_safe=True)
-        sidecar = resolve_scope()
+        sidecar = installer._sidecar_scope(installer._read_mcp_server(home, "mnemos"))
 
         installer.quickstart_hermes(hermes_home=home, provider=True)
 
         scope = derive_hermes_scope(session_id="s", hermes_home=home, runtime_context={"user_name": "Leo"})
         assert (scope.agent_id, scope.db_path) == (sidecar.agent_id, sidecar.db_path)
         assert (scope.person_id, scope.project_scope) == (sidecar.person_id, sidecar.project_scope)
+
+    def test_a_sidecar_from_before_keeps_the_memory_it_never_named(self, tmp_path, monkeypatch):
+        # Before 0.6.4 a sidecar's server named nothing, and opened the defaults.
+        monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("MNEMOS_AGENT_ID", raising=False)
+        monkeypatch.delenv("MNEMOS_DB_PATH", raising=False)
+        home = tmp_path / ".hermes"
+        home.mkdir()
+        (home / "config.yaml").write_text(
+            "mcp_servers:\n  mnemos:\n    command: mnemos\n    args: [serve, --mode, simple]\n"
+        )
+        installer.quickstart_hermes(hermes_home=home, provider=True)
+        scope = derive_hermes_scope(session_id="s", hermes_home=home, runtime_context={"user_name": "Leo"})
+        assert (scope.agent_id, Path(scope.db_path).name) == ("mnemos-agent", "mnemos-agent.db")
 
     def test_quickstart_leaves_a_store_already_there(self, tmp_path, monkeypatch):
         monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
@@ -919,12 +905,12 @@ class TestTheOtherDoor:
     """All topics reach an MCP tool through one server, which can't tell them
     apart: a note left there would land in the one slot they'd all share."""
 
-    def test_provider_mode_leaves_the_mcp_handoff_out(self, tmp_path):
+    def test_provider_mode_has_no_such_door(self, tmp_path, monkeypatch):
         yaml = pytest.importorskip("yaml")
+        monkeypatch.setattr(installer, "_hermes_load_check", lambda home: ("yes", ""))
         home = tmp_path / "hermes"
-        install_hermes_plugin(hermes_home=home, mode=PROVIDER_MODE, configure_mcp=True, activate=True)
-        server = yaml.safe_load((home / "config.yaml").read_text())["mcp_servers"]["mnemos"]
-        assert server["tools"]["exclude"] == ["mnemos_handoff", "mnemos_context"]
+        install_hermes_plugin(hermes_home=home, mode=PROVIDER_MODE, activate=True)
+        assert "mcp_servers" not in yaml.safe_load((home / "config.yaml").read_text())
 
     def test_sidecar_mode_keeps_it_because_it_has_no_other(self, tmp_path):
         yaml = pytest.importorskip("yaml")
@@ -935,4 +921,4 @@ class TestTheOtherDoor:
 
     def test_the_wake_says_which_tool_to_use(self, home):
         wake = _topic(home, 7).system_prompt_block()
-        assert "mnemos_identity_handoff" in wake
+        assert "mnemos_handoff" in wake

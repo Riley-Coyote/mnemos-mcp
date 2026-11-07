@@ -91,8 +91,8 @@ macOS or Linux.
 | Codex | Simple MCP Mode, printed add command, then the hook and upkeep | `mnemos mcp install codex`, then `mnemos hooks install codex --write` |
 | Cursor or another MCP client | Simple MCP Mode, printed JSON | `mnemos mcp install cursor` or `mnemos mcp install generic` |
 | Experimental research prototypes | Source imports only | Not production-supported |
-| Hermes agent with another memory provider | Hermes Sidecar Mode | `mnemos hermes quickstart --agent-safe` |
-| Hermes agent using Mnemos as its provider | Hermes Provider Mode | `mnemos hermes quickstart --provider` |
+| Hermes agent | Hermes Provider Mode, or the tools alone if another memory provider holds the slot | `mnemos connect hermes --write` |
+| Hermes agent installing Mnemos for itself | Hermes Sidecar Mode, leaving `memory.provider` alone | `mnemos hermes quickstart --agent-safe` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
 | The agent's quiet hours, on your Claude plan | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
 
@@ -104,8 +104,8 @@ than simple mode. The prototype modules remain importable for research, but
 unfinished operations fail clearly and they are not production-supported. The
 CLI contains the supported administrative operations.
 
-Hermes users should start with **Hermes Sidecar Mode** unless they explicitly
-want Mnemos to occupy Hermes' single external `memory.provider` slot.
+Hermes users should start with `mnemos connect hermes --write`. It takes Hermes'
+single external `memory.provider` slot if that's free, and leaves it if it isn't.
 
 ---
 
@@ -323,6 +323,8 @@ Two things worth knowing:
 - **Hermes has one memory slot.** If another provider holds `memory.provider`,
   `connect hermes` leaves it and adds only the tools (no wake or cue); to run
   it from inside Hermes without switching providers, use `--agent-safe`.
+- **Each Hermes profile is an agent of its own**, with its own memory:
+  `mnemos connect hermes --profile work --write`.
 
 Pi and Muse Code were not installed on the machine this was written on, and
 `connect` writes nothing for them: it prints what their documentation says,
@@ -614,23 +616,27 @@ Simple mode is what most agents need.
 
 ## Hermes Agent Integration
 
-Mnemos can also install as a Hermes identity-continuity integration.
+```bash
+mnemos connect hermes --write
+mnemos hermes doctor
+```
 
-Hermes has one external `memory.provider` slot. Mnemos therefore supports two
-modes:
+Hermes has one external `memory.provider` slot. Connecting takes it if it's free,
+and if another provider holds it, leaves it and adds the tools alone:
 
 | Mode | Use when | What it changes |
 |---|---|---|
-| Sidecar Mode | Hermes already uses Honcho, Supermemory, Mem0, Hindsight, or another provider. | Preserves `memory.provider` and adds Mnemos through Hermes MCP/tools. |
-| Provider Mode | Mnemos should be the active Hermes external memory provider. | Sets `memory.provider=mnemos` and writes the provider shim. |
+| Provider Mode | The slot is free. | Sets `memory.provider=mnemos`, writes the provider shim and a gateway hook. The agent wakes with its memory, gets what bears on each message, and has the tools every agent has, by the same names. |
+| Sidecar Mode | Hermes already uses Honcho, Supermemory, Mem0, Hindsight, or another provider. | Preserves `memory.provider` and adds Mnemos through an MCP server: the tools, with no wake and no recall on each message. |
 
 Hermes built-in `MEMORY.md` and `USER.md` remain active in both modes. Mnemos
 never overwrites `SOUL.md`, `MEMORY.md`, `USER.md`, `AGENTS.md`, or project
-context files.
+context files. Each Hermes profile is an agent of its own, with its own memory, and
+they share the machine's shared memory as any two agents do (`--profile <name>`).
 
 ### Hermes Sidecar Mode
 
-This is the safe default:
+For an agent installing Mnemos for itself, this never touches `memory.provider`:
 
 ```bash
 mnemos hermes quickstart --agent-safe
@@ -643,14 +649,9 @@ changed and what was preserved. Restart Hermes after install.
 
 ### Hermes Provider Mode
 
-Use only when Mnemos should occupy Hermes' external memory-provider slot:
-
-```bash
-mnemos hermes quickstart --provider
-mnemos hermes doctor
-```
-
-This sets:
+What `mnemos connect hermes --write` sets up when the slot is free, and what
+`mnemos hermes quickstart --provider` does, except that it won't replace another
+provider. It sets:
 
 ```yaml
 memory:
@@ -658,9 +659,9 @@ memory:
 ```
 
 Provider Mode gives Hermes its memory at the start of each session and what
-bears on each message before the turn, tools for the agent to keep, correct
-and recall its memory, and a copy in Mnemos of what the agent writes into
-Hermes's built-in memory. It writes nothing in the agent's place.
+bears on each message before the turn, the tools every agent has for keeping,
+correcting and recalling its memory, and a copy in Mnemos of what the agent writes
+into Hermes's built-in memory. It writes nothing in the agent's place.
 
 ### Prompt For A Hermes Agent
 

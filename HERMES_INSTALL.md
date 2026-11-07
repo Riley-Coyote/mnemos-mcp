@@ -65,7 +65,7 @@ memory:
   provider: mnemos
 ```
 
-It also adds the tools and gives the agent one memory, in every chat and for everyone in them, the same setup `mnemos connect hermes --write` makes. What a sidecar already keeps stays kept. A store already at `$HERMES_HOME/mnemos/mnemos.db`, or a scope you pass, stays as it is.
+It also gives the agent the tools every agent has, through the provider, and one memory, in every chat and for everyone in them, the same setup `mnemos connect hermes --write` makes. What a sidecar already keeps stays kept. A store already at `$HERMES_HOME/mnemos/mnemos.db`, or a scope you pass, stays as it is.
 
 Use Provider Mode only when you want Mnemos to occupy Hermes' single external memory-provider slot. Hermes built-in `MEMORY.md` and `USER.md` remain active, but another external provider cannot also occupy `memory.provider` at the same time.
 
@@ -75,11 +75,19 @@ Hermes runs in its own Python environment, so the shim says where Mnemos is inst
 
 Run as many chats and Telegram topics as you like on one agent. They share one memory: what the agent keeps in one is there in the others, and each message brings up only what bears on it.
 
-In Provider Mode each conversation also keeps its own note on where it stands. The agent leaves it with `mnemos_identity_handoff`, and a topic that starts a fresh session (a `/new`, an idle reset) wakes to its own note first, with the other conversations' recent notes as short lines. Hermes' gateway says which conversation is which, so nothing needs setting up. Notes stay active for the eight most recent conversations; a topic left longer still gets its own back.
+In Provider Mode each conversation also keeps its own note on where it stands. The agent leaves it with `mnemos_handoff`, and a topic that starts a fresh session (a `/new`, an idle reset) wakes to its own note first, with the other conversations' recent notes as short lines. Hermes' gateway says which conversation is which, so nothing needs setting up. Notes stay active for the eight most recent conversations; a topic left longer still gets its own back.
 
 In Sidecar Mode the conversations share one note, the newest. All of them reach the tools through one MCP server, which can't tell them apart. The older notes are kept and recall finds them.
 
 There's no wall between conversations: the memory is one memory, and a topic can't yet be kept apart from the others.
+
+## Profiles
+
+Each Hermes profile is an agent of its own, with its own memory, and they share the machine's shared memory as any two agents do. Connect one at a time:
+
+```bash
+mnemos connect hermes --profile work --write
+```
 
 ## What Quickstart Reports
 

@@ -109,14 +109,14 @@ def test_what_the_agent_writes_is_still_kept(tmp_path):
     provider = _provider(tmp_path)
     try:
         captured = json.loads(provider.handle_tool_call(
-            "mnemos_identity_capture",
+            "mnemos_capture",
             {"content": "The staging box is wiped every Friday at six; the seed data stays."},
         ))
         provider.on_memory_write("add", "memory", "Riley's staging box keeps its seed data.")
     finally:
         provider.shutdown()
 
-    assert captured["status"] == "captured"
+    assert captured["ok"] is True
     assert _written(tmp_path) == (2, 2)
     kinds = {row["author_kind"] for row in _rows(tmp_path / "mnemos.db", "SELECT author_kind FROM engrams")}
     assert kinds == {"agent"}
@@ -232,7 +232,7 @@ def test_a_store_that_called_them_the_agents_is_put_right_once(tmp_path):
 def test_recall_says_a_tools_words_are_not_the_agents(tmp_path):
     provider = _provider(tmp_path)
     try:
-        provider.handle_tool_call("mnemos_identity_capture", {"content": "The staging box is wiped every Friday."})
+        provider.handle_tool_call("mnemos_capture", {"content": "The staging box is wiped every Friday."})
         # As the provider wrote it before 0.4.1: through the agent's own capture.
         provider._capture(f"Hermes project outcome: {FIXED}")
     finally:
