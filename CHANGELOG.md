@@ -37,11 +37,8 @@ that. Checking it through real Hermes turned up more than the question did.
   rest, and a topic starting a fresh session woke to another topic's thread. Hermes'
   gateway says which conversation is which, and it stays the same across `/new`, an idle
   reset and compression, so now a topic keeps its own note and wakes to it first, with the
-  others as short lines. Provider Mode has a new tool for this, `mnemos_identity_handoff`,
-  and `mnemos connect hermes` leaves the MCP `mnemos_handoff` and `mnemos_context` out of Provider
-  Mode, because every topic reaches an MCP tool through one server that can't tell them apart.
-  They come back when Provider Mode goes, or if Hermes can't load Mnemos. Sidecar Mode still
-  shares one note.
+  others as short lines. Sidecar Mode still shares one note, because every topic reaches an MCP
+  tool through one server that can't tell them apart.
 - **A wake is no longer spent before it's read.** Starting up built a whole wake and threw it
   away, and a wake counts what it shows as shown. So on Hermes a reply from the person, a quiet
   hour and the rest of what shows once were marked delivered and never reached the agent. Now
@@ -55,6 +52,70 @@ For everyone: a session whose note was pushed out because more than eight sessio
 notes since now still gets its own back when it returns, and can forget it. One it forgot stays
 gone. And several sessions opening a new store at the same moment all open it: they used to be
 told "database is locked", or to find it half made.
+
+### Hermes: the same tools as any agent
+
+- **In Provider Mode the agent has the tools every agent has, by the same names.** It had four of
+  its own under other names, while what it woke with and its first session's questions named the
+  real ones, which it didn't have. Those questions never finished, and its saves went unsigned.
+  `mnemos_identity_capture`, `_recall`, `_correct` and `_report` are gone, and with them
+  `review: true` and the review inbox. If you scripted those names, use the plain ones.
+- **"Always remember this" stays.** The provider's capture took no `standing`, `impact` or
+  `signed_as`, so what someone asked it to always remember faded like anything else.
+- **What the agent writes is signed.** Where Hermes says what model it's running (after September
+  2026), that signs the conversation's writes, and a change of model mid-conversation signs from then on.
+- **One memory, one way in.** A provider and an MCP server could open two different memories, the
+  agent saving to one and waking from the other. The provider now carries the tools, so connecting
+  adds no server and takes out one Mnemos wrote. This also saves a second copy of the search model:
+  about 385 MB. If Hermes can't load Mnemos, connect warns and keeps the server.
+- **Quiet hours keep their tools without the server.** Hermes from before September 2026 runs a
+  scheduled job without its memory provider, so a job's words now give it the same tools through its
+  shell (`mnemos hermes tool`). Connecting again updates jobs from an older Mnemos, in place, so a
+  job you paused stays paused.
+- **Each profile is an agent of its own**, with its own memory, and the machine's shared memory
+  between them, as any two agents have. `mnemos connect hermes --profile work --write`. A profile
+  copied with `--clone-all` is its own agent from its first turn. One copied before this release
+  has nothing to say it's a copy, so it stays on the memory it has, and connecting says so and
+  gives the command that parts them. `mnemos hermes install`, `quickstart` and `doctor` take
+  `--profile` too.
+- **Many topics on a Mac.** Each conversation holds a few open files, more with meaning search, and
+  a Mac starts a process with room for 256. On Hermes before August 2026, 30 topics with meaning
+  search ran out and took Hermes' own files down with them. The provider now asks for room, once,
+  and never lowers what's there. Run through real Hermes: 60 topics at that limit.
+- **Hermes' config is handled with care.** `quickstart --provider` no longer replaces another
+  provider without saying so. Someone else's plugin called mnemos stops it being made the provider,
+  where connect used to say it stopped and set it anyway. What you've added to the server's entry
+  stays. A run keeps one backup, of the file as it found it, and a linked config stays linked.
+- **Connecting again keeps your memory where it is.** It kept the store but wrote the default person
+  and project over yours, so recall found nothing. Where a provider and a server named different
+  memories, it now keeps the one the agent wakes from and names the other.
+- **Words about recall stay.** "We agreed the Mnemos recall threshold stays at 0.4" was saved as "We
+  agreed the". The same happened to messages and corrections.
+- **What comes with each message no longer reads as a search.** Headed "Mnemos Recall", it passed for
+  one: asked to check its memory, an agent could say it had nothing about what was in the machine's
+  shared memory. It now has the heading every agent's cue has, and says `mnemos_recall` is the search.
+- **A profile reads its own setup.** Recent Hermes can run `hermes -p work` with `HERMES_HOME` still
+  naming its root, so a profile's first session told the person its wake and its cue weren't set up
+  when they were.
+- **`mnemos uninstall` takes Mnemos out of Hermes**, in every profile, quiet-hour jobs included. It
+  used to leave Hermes pointing at a provider and a server that weren't coming back.
+- **The doctor says more.** A damaged memory file and two memories under one agent both show as not
+  ready, by name.
+- **The commands the agent is told to run work from Hermes' shell**, which may not have `mnemos` on
+  its path: they now use the full path, saved when connecting.
+
+### Every agent
+
+- **A memory's date is the day on this machine.** Dates were Greenwich's, so in the evening west of it
+  something written minutes ago read as tomorrow's, beside a wake saying what time it is here.
+- **A locked memory file no longer holds a session for 30 seconds.** Unreleased work on many
+  sessions opening one store at once made opening wait up to 30 seconds, twice, and a
+  session-start hook has 15. Opening now waits 5 seconds in all, and 24 sessions opening a new store
+  together still take under half a second.
+- **Background upkeep runs the same code as what started it.** From a checkout beside an older
+  install it could import the older install.
+- **A session back after a long time gets the newest thread too**, as well as its own crowded-out
+  note, however long ago that thread was left.
 
 ### Connecting Hermes from a plain install
 
@@ -116,7 +177,7 @@ already has a config.
   break recall or own upkeep. `MNEMOS_SHARED_MEMORY=off` opts a server out.
 - Connect previews explain shared memory access. Shared words are readable by
   every agent on the machine and therefore by the vendors running those agents.
-  Maintenance code version is 27; the twelve simple tools are unchanged.
+  Maintenance code version is 26; the twelve simple tools are unchanged.
 
 ## 0.6.1 (2026-11-04)
 
