@@ -1,5 +1,47 @@
 # Changelog
 
+## Unreleased
+
+### Recall: a longer list, with handoffs in their own rows
+
+The lab replayed recorded searches at each length, with no model runs. A replay reads nothing, so
+it can't say how much slower an agent gets, or how much of what comes back it uses.
+
+- **A recall returns 16 rows, not 10, and an agent can ask for up to 50, not 20.** 10 to 15 was the
+  best step on every set of searches: the right memory came back for 47 of 118 facts at 10 rows and
+  59 at 15 on one set, 45 and 51 on another, for about 4,500 more characters a search. Past 15 each
+  row costs more than it finds, so a longer list is on request, and the tool says when to ask: a
+  thin result, or something that matters. The 16th row is a third handoff.
+- **Handoffs have their own search and their own rows: 3 of 16, 5 of 50.** On a copy of a real store
+  a 15-row list was about 8 memories and 7 handoffs, most of those old drafts, and handoffs also
+  took places a search by meaning starts from. With 13 memories in the list the fact shows on the
+  page for 47 of 118 facts rather than 39 on one set of searches and 44 rather than 40 on another,
+  for about 3,000 more characters a search. Every old draft can still be found. A row one side can't
+  fill goes to the other.
+- **Those rows are chosen, because the best matches are often old drafts.** The best match as it
+  is; that session's newest handoff, marked so, whether or not it matched; and the newest of the ten
+  closest from another session. On 12 questions about picking up work, read on a copy of a real
+  store, the two best matches held where the work had got to for about 6 and these rows for 10,
+  about the same as one long list. The rule was chosen after reading those questions, and no agent
+  has worked with it yet. Lists of 5 to 10 rows have 2 handoffs, 2 to 4 rows have 1, and a single row
+  goes to the best memory; those shorter mixes are untested for facts. A handoff that didn't match
+  only ever comes in a row of its own, so Hermes's 4-row recall on every message never gets one.
+- **Only the first 15 memories a list shows are linked to each other.** Every memory shown is still
+  strengthened, and one past the 15th is linked to nothing. A month of real searches, replayed with
+  linking and the night's upkeep on, found that asking for 50 every time with every memory linked
+  wrote 599 links a search against 76 this way, and left searches 48% slower, the store 150 MB bigger
+  and 2 fewer facts found after the month. With the first 15 linked all of that stayed where the
+  default leaves it, and what fades was the same either way. At the default a list shows 13
+  memories, so nothing changes there, except that a list with no handoff in it can show 16, and the
+  16th isn't linked.
+- **`include_archived` restores at most 16 memories at a time, and fewer on a list past 39 rows.** It
+  restored as many as the list's length, and at 50 rows an answer could be cut after memories had
+  been restored that it never showed.
+- **Recall declares a limit of 70,000 characters for its answers.** Claude Code saves a tool's answer
+  to a file once it's over 50,000 characters, unless the tool declares a higher limit, and long
+  lists run past that. Recall is the only tool that declares one, and an answer over it is still
+  saved to a file. We ran this through Claude Code 2.1.318.
+
 ## 0.6.4 (2026-11-07)
 
 ### Hermes: many conversations at once

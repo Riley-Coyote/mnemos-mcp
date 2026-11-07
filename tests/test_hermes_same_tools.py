@@ -119,6 +119,20 @@ def test_a_bad_call_comes_back_as_an_answer(tmp_path):
     assert empty["ok"] is False and empty["tool"] == "mnemos_capture"
 
 
+@pytest.mark.parametrize(("asked", "rows"), [(30, 30), (99, 50), ("many", 16)])
+def test_recall_asks_for_as_many_rows_as_the_server_allows(tmp_path, monkeypatch, asked, rows):
+    """Up to 50, as the tool's own words say; a number that can't be read gets
+    the default, not the most."""
+    provider = _provider(tmp_path)
+    seen: dict = {}
+    try:
+        monkeypatch.setattr(provider._runtime, "recall", lambda query, **options: seen.update(options) or "")
+        _call(provider, "mnemos_recall", query="harbour tide", max_results=asked)
+    finally:
+        provider.shutdown()
+    assert seen["max_results"] == rows
+
+
 # ── What used to be dropped ──
 
 

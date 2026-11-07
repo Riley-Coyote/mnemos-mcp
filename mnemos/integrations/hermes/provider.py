@@ -22,7 +22,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from ...simple_runtime import MnemosRuntime, format_health_card
+from ...simple_runtime import RECALL_RESULTS, MnemosRuntime, format_health_card
 from ...simple_tools import (
     MAX_CAPTURE_CHARS,
     MAX_CONTEXT_CHARS,
@@ -32,8 +32,8 @@ from ...simple_tools import (
     MAX_MOOD_CHARS,
     MAX_NOTE_CHARS,
     MAX_QUERY_CHARS,
+    MAX_RECALL_RESULTS,
     MAX_REFLECTION_CHARS,
-    MAX_RESULTS,
     SERVER_INSTRUCTIONS,
     limit_output,
     text_arg,
@@ -625,10 +625,13 @@ class MnemosMemoryProviderCore:
 
     @staticmethod
     def _bounded_int(value: Any) -> int:
+        """Recall's rows as asked, within what the MCP server allows; a number
+        that can't be read gets recall's default, not its most, which is three
+        times the reading."""
         try:
-            return max(1, min(MAX_RESULTS, int(value)))
+            return max(1, min(MAX_RECALL_RESULTS, int(value)))
         except (TypeError, ValueError):
-            return MAX_RESULTS
+            return RECALL_RESULTS
 
 
 _TOOLS = {
