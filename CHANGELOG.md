@@ -15,6 +15,8 @@ that. Checking it through real Hermes turned up more than the question did.
   Run `mnemos connect hermes --write` again to replace an existing shim. We ran all of this
   through real Hermes (0.17 and today's main): its gateway, its Telegram adapter and its agent,
   with stand-ins for the Telegram servers and the model. Live Telegram wasn't in the loop.
+- **The doctor names the memory a sidecar really uses.** It named a file in Hermes' folder, "not
+  created yet", while the memories were in `~/.mnemos`, where the sidecar's server keeps them.
 - **A topic's own threads could stop the whole gateway.** Hermes runs a turn's queued recall on
   one thread and the next message on another, over one SQLite connection. Two at once could
   hang the whole process with no error, every topic with it. Calls to one provider now go one at

@@ -504,16 +504,29 @@ def _one_memory_scope(home: Path) -> tuple[str, str, str, str]:
     from ...simple_scope import resolve_scope
 
     server = _read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)
-    args = [str(arg) for arg in (server or {}).get("args") or []]
+    if server:
+        scope = _sidecar_scope(server)
+    else:
+        scope = resolve_scope(agent_id="hermes", db_path=str(Path.home() / ".mnemos" / "hermes.db"))
+    return str(scope.db_path), scope.agent_id, scope.person_id, scope.project_scope
+
+
+def _sidecar_scope(server: dict[str, Any]) -> Any:
+    """The memory a sidecar's MCP server opens, going by its own arguments."""
+
+    from ...simple_scope import resolve_scope
+
+    args = [str(arg) for arg in server.get("args") or []]
 
     def named(flag: str) -> str | None:
         return args[args.index(flag) + 1] if flag in args[:-1] else None
 
-    if server:
-        scope = resolve_scope(db_path=named("--db-path"), agent_id=named("--agent-id"))
-    else:
-        scope = resolve_scope(agent_id="hermes", db_path=str(Path.home() / ".mnemos" / "hermes.db"))
-    return str(scope.db_path), scope.agent_id, scope.person_id, scope.project_scope
+    return resolve_scope(
+        db_path=named("--db-path"),
+        agent_id=named("--agent-id"),
+        person_id=named("--person-id"),
+        project_scope=named("--project-scope"),
+    )
 
 
 def quickstart_hermes(
@@ -590,7 +603,6 @@ def build_diagnostics(hermes_home: str | Path | None = None) -> dict[str, Any]:
     plugin_dir = plugin_dirs[0]
     config_path = home / "config.yaml"
     mnemos_config = home / "mnemos.json"
-    db_path = _configured_db_path(home)
     command = shutil.which("mnemos") or "mnemos"
     active = _read_active_provider(config_path)
     mcp_server = _read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)
@@ -609,6 +621,8 @@ def build_diagnostics(hermes_home: str | Path | None = None) -> dict[str, Any]:
         mode = "provider-installed"
     else:
         mode = "not-configured"
+    # A sidecar's memory is wherever its server opens it, not a file in Hermes' folder.
+    db_path = Path(_sidecar_scope(mcp_server).db_path).expanduser() if mode == "sidecar" else _configured_db_path(home)
     return {
         "hermes_home": str(home),
         "plugin_dir": str(plugin_dir),

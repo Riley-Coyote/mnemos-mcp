@@ -659,6 +659,29 @@ class TestHermesOwnEnvironment:
         assert "Hermes can load it: NO" in text
         assert "Provider Mode: active" not in text
 
+    def test_doctor_names_the_store_a_sidecar_really_uses(self, tmp_path, monkeypatch):
+        # A sidecar's server opens what its own arguments say. The doctor used to
+        # name a file in Hermes' folder, "not created yet", beside fifty memories.
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.delenv("MNEMOS_AGENT_ID", raising=False)
+        monkeypatch.delenv("MNEMOS_DB_PATH", raising=False)
+        home = tmp_path / "hermes"
+        install_hermes_plugin(hermes_home=home, mode=SIDECAR_MODE, configure_mcp=True)
+        report = installer.build_diagnostics(home)
+        assert report["mode"] == "sidecar"
+        # The name a person can act on, in the home the server really uses.
+        where = tmp_path / ".mnemos" / "mnemos-agent.db"
+        assert report["db_path"] == str(where)
+        assert report["db_exists"] is False
+        where.parent.mkdir(parents=True)
+        where.touch()
+        assert installer.build_diagnostics(home)["db_exists"] is True
+
+        chosen = tmp_path / "theirs.db"
+        other = tmp_path / "hermes-chosen"
+        install_hermes_plugin(hermes_home=other, mode=SIDECAR_MODE, configure_mcp=True, db_path=str(chosen))
+        assert installer.build_diagnostics(other)["db_path"] == str(chosen)
+
     def test_doctor_tries_the_shim_that_is_there(self, tmp_path, monkeypatch):
         # Not where this Mnemos is now: the shim holds the path Hermes will use.
         monkeypatch.setattr(installer, "_hermes_python", lambda home: Path(sys.executable))
