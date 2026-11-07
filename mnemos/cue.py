@@ -691,9 +691,20 @@ def line_parts(text: str, created_at: str | None) -> tuple[str, str]:
     if match:
         date, words = match.group(1), words[match.end():]
     else:
-        date = (created_at or "")[:10] or "undated"
+        date = local_day(created_at) or "undated"
     cut, _ = cut_at_sentence(words, CUE_LINE_CHARS)
     return date, cut
+
+
+def local_day(moment: Any) -> str:
+    """The day a stored moment fell on, on this machine's calendar. Stored days are
+    Greenwich's, so in the evening west of it a note written minutes ago reads as
+    tomorrow's, beside a wake that says what time it is here."""
+    text = str(moment or "")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone().date().isoformat()
+    except ValueError:
+        return text[:10]
 
 
 def format_block(lines: Iterable[Mapping[str, Any]]) -> str:

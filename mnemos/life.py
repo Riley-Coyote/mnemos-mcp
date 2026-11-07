@@ -42,6 +42,7 @@ import sys
 import threading
 
 from .core.engram import _gen_ulid
+from .cue import local_day
 from .setup.state import hours_dir
 from .simple_scope import resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
@@ -331,8 +332,7 @@ def _words_of(store, engram_id) -> tuple[str, str]:
     text = " ".join((engram.content or "").split())
     if len(text) > DREAM_TEXT_CHARS:
         text = text[:DREAM_TEXT_CHARS - 1] + "…"
-    kept = engram.created_at.isoformat() if hasattr(engram.created_at, "isoformat") else str(engram.created_at or "")
-    return text, kept[:10]
+    return text, local_day(engram.created_at)
 
 
 def _dream_material(path, since, scope, model, said) -> dict:
@@ -429,7 +429,7 @@ def _rhymes(store, path, scope, since) -> list[dict]:
                 pairs.append({
                     "now": {"id": new["id"], "text": _words_of(store, new["id"])[0]},
                     "then": {"id": older_id, "text": _words_of(store, older_id)[0],
-                             "kept": str(then["created_at"])[:10]},
+                             "kept": local_day(then["created_at"])},
                     "similarity": round(similarity, 3),
                 })
                 used.add(older_id)

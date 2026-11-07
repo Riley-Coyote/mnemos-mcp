@@ -340,10 +340,9 @@ _UPKEEP_STALE = timedelta(minutes=15)
 # What went wrong with the last maintenance run in the background, until one
 # goes right: the next capture says so, since nothing else would.
 _UPKEEP_FAILED = "upkeep_failed"
-# The background process, at a low priority: the same code as the process
-# that started it, so the directory that process imported mnemos from comes
-# first when it isn't on the path already (a checkout run from its own
-# directory, say).
+# The background process, at a low priority: the same code as the process that
+# started it, so it imports from exactly where that process imports from, in the
+# same order (a checkout run from its own directory beside an older install, say).
 _UPKEEP_CHILD = (
     "import json, os, sys\n"
     "if hasattr(os, 'nice'):\n"
@@ -351,7 +350,7 @@ _UPKEEP_CHILD = (
     "        os.nice(10)\n"
     "    except OSError:\n"
     "        pass\n"
-    "sys.path.extend(p for p in json.loads(sys.argv[1]) if p not in sys.path)\n"
+    "sys.path[:] = json.loads(sys.argv[1])\n"
     "from mnemos.simple_runtime import run_background_upkeep\n"
     "sys.exit(run_background_upkeep(sys.argv[2:]))\n"
 )
@@ -451,10 +450,11 @@ def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
         return False
     db_path = Path(scope.db_path).expanduser()
     # Everything this process can import from. Inside Hermes this is Hermes'
-    # Python, with Mnemos and what it needs only on a path the plugin added.
-    paths = [*sys.path, str(Path(__file__).resolve().parent.parent)]
+    # Python, with Mnemos and what it needs only on a path the plugin added. An
+    # empty entry is the folder this process runs in, which the child doesn't.
+    paths = [*(entry or os.getcwd() for entry in sys.path), str(Path(__file__).resolve().parent.parent)]
     command = [
-        sys.executable, "-c", _UPKEEP_CHILD, json.dumps([p for p in paths if p]),
+        sys.executable, "-c", _UPKEEP_CHILD, json.dumps(paths),
         str(db_path), scope.agent_id, scope.person_id, scope.project_scope, token,
     ]
     options: dict[str, Any] = {
@@ -2981,7 +2981,7 @@ class MnemosRuntime:
             if status.cue == "missing":
                 missing.append("the memories that bear on each message")
             if not status.upkeep:
-                missing.append("upkeep between sessions")
+                missing.append("upkeep between sessions, the memory's own housekeeping")
             settle: list[str] = []
             if missing:
                 command = state.command_line(
@@ -7817,10 +7817,16 @@ def _format_memory(result: Any, query: str = "") -> str:
     )
 
 
+def _local_day(moment: Any) -> str:
+    from . import cue
+
+    return cue.local_day(moment)
+
+
 def _kept(engram: Any) -> str:
     """"; kept 2026-03-14": the day a memory was kept, as the cue dates its
     lines; ``""`` for one with no date."""
-    day = str(getattr(engram, "created_at", "") or "")[:10]
+    day = _local_day(getattr(engram, "created_at", ""))
     return f"; kept {day}" if day else ""
 
 
@@ -7837,7 +7843,7 @@ def _format_handoff(result: Any, reader: str, session: str, query: str = "") -> 
         kind = "older handoff, retired as newer sessions left theirs"
     else:
         kind = "handoff"
-    left = (note.get("created_at") or "")[:10]
+    left = _local_day(note.get("created_at"))
     return (
         f"- {how_found(result)} {_row_words(note.get('content') or '', query)}\n"
         f"  id={note.get('id')} kind={kind}; left {left}: {label}"
@@ -7972,7 +7978,7 @@ def _format_journal(result: Any, reader: str, session: str, query: str = "") -> 
     label, _whose = whose_handoff(_signed_row(entry), reader, session)
     return (
         f"- {how_found(result)} {_row_words(entry.get('content') or '', query)}\n"
-        f"  id={entry.get('id')} kind=journal; written {(entry.get('created_at') or '')[:10]} "
+        f"  id={entry.get('id')} kind=journal; written {_local_day(entry.get('created_at'))} "
         f"({entry.get('written') or 'in_conversation'}): {label}"
     )
 

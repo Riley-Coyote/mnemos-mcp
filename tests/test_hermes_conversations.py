@@ -23,6 +23,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Barrier, Timer
@@ -445,7 +446,7 @@ class TestANewStoreOpenedTogether:
         holder.execute("BEGIN EXCLUSIVE")
         Timer(0.3, holder.rollback).start()
         waiter = sqlite3.connect(db, timeout=0)
-        sqlite_store._turn_wal_on(waiter)
+        sqlite_store._turn_wal_on(waiter, time.monotonic() + 5)
         assert waiter.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal"
         waiter.close()
         holder.close()
@@ -460,7 +461,7 @@ class TestANewStoreOpenedTogether:
         store = store._store
         store.close()
 
-        def locked(conn):
+        def locked(conn, deadline):
             raise sqlite3.OperationalError("database is locked")
 
         monkeypatch.setattr(sqlite_store, "_turn_wal_on", locked)
