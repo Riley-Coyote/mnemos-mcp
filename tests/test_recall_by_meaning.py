@@ -514,7 +514,7 @@ def test_an_older_handoff_is_found_and_says_a_newer_one_replaced_it(tmp_path, mo
 
     assert "the lighthouse lamp was rewired on Tuesday" in out, out
     assert "kind=older handoff, replaced by a newer one from its session" in out
-    assert "ferry timetable" not in out
+    assert "[newest from the session above] Second pass: the ferry timetable" in out, out
 
 
 def test_a_handoff_is_found_by_its_meaning(tmp_path, meaning):

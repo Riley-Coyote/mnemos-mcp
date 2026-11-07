@@ -21,7 +21,7 @@ about the past, asks for more than one search, in other words too, and says the
 newer of two memories that disagree usually holds. Replayed on the same 165
 calls (L18b), rows showed the fact for 41 of the 42 facts recall reached
 (26 before), and at 15 rows the right memory came back for 59 and showed for
-57. A call that said no number got 10 then, and gets 15 since the lab's L20
+57. A call that said no number got 10 then, and gets 16 since the lab's L20
 (tests/test_handoffs_have_their_own_rows.py). Handoffs, the journal and notes
 keep their short rows.
 """
@@ -127,7 +127,7 @@ def test_every_memory_row_says_the_day_it_was_kept(tmp_path):
     assert "kept 2026-03-14" in _row(out, "The ferry to the island leaves at eight."), out
 
 
-def test_a_recall_that_says_no_number_returns_fifteen(tmp_path):
+def test_a_recall_that_says_no_number_returns_sixteen(tmp_path):
     rt = _runtime(tmp_path / "memory.db")
     try:
         for n in range(19):
@@ -137,17 +137,17 @@ def test_a_recall_that_says_no_number_returns_fifteen(tmp_path):
     finally:
         rt.close()
 
-    assert default.count("\n- [") == 15, default
+    assert default.count("\n- [") == 16, default
     assert twenty.count("\n- [") == 19, twenty
 
 
-def test_the_default_is_fifteen_at_the_tool_and_in_the_runtime():
+def test_the_default_is_sixteen_at_the_tool_and_in_the_runtime():
     from mnemos import simple_mcp
 
-    assert inspect.signature(MnemosRuntime.recall).parameters["max_results"].default == 15
+    assert inspect.signature(MnemosRuntime.recall).parameters["max_results"].default == 16
     tools = {tool.name: tool for tool in asyncio.run(simple_mcp.simple_mcp.list_tools())}
     schema = tools["mnemos_recall"].inputSchema["properties"]["max_results"]
-    assert schema["default"] == 15, schema
+    assert schema["default"] == 16, schema
 
 
 def test_handoff_rows_stay_short(tmp_path):
@@ -173,9 +173,11 @@ def test_the_recall_tool_asks_for_more_than_one_search_and_says_newer_usually_ho
 
     tools = {tool.name: tool for tool in asyncio.run(simple_mcp.simple_mcp.list_tools())}
     described = " ".join(tools["mnemos_recall"].description.split())
-    assert "A recall returns 15 rows." in described
+    assert "A recall returns 16 rows." in described
     assert "When a result comes back thin or the thing matters, ask for more, up to 50 (max_results=50)" in described
-    assert "Handoffs have their own search and one row in ten (2 of 15, 5 of 50)" in described
+    assert "Handoffs have their own search and 3 of the 16 rows: the best match" in described
+    assert "the newest from that session" in described
+    assert "the newest close match from another session" in described
     assert "search more than once, in other words too" in described
     assert "When two memories disagree, the newer one usually holds." in described
     assert "the day it was kept" in described

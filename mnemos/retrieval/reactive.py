@@ -174,12 +174,15 @@ class RetrievalResult:
 
     ``retrieval_path`` says how it was reached: "fts" for a match by words
     (whether or not its meaning matched too), "embedding" for one found by
-    meaning alone, "resonance" for a memory reached only through connections.
+    meaning alone, "resonance" for a memory reached only through connections,
+    "session" for a handoff recall added as its session's newest, which the
+    search never reached.
     ``score_breakdown`` holds its ranks in the lists it was fused from
     (``words_rank``, ``meaning_rank``), its ``similarity``, its ``fused``
     score, and ``matched_words``: the words searched for that its own text
     holds (a memory's words and its lesson, a note's words), in the cue's
-    order, at most ``MATCHED_WORDS``.
+    order, at most ``MATCHED_WORDS``. Recall marks a handoff it lists as its
+    session's newest ``newest_of_session``, whether the search reached it or not.
     """
 
     engram: Engram | None

@@ -7,6 +7,7 @@ operations, including agent-written handoff, reflection, journal and notes.
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import json
 import hashlib
@@ -145,20 +146,30 @@ ROW_OPENING_CHARS = 120
 # words, as a short row does. Handoffs, the journal and notes keep
 # ``ROW_CHARS``: their words reach the briefing whole, and fetched by id.
 MEMORY_ROW_CHARS = 2000
-# How many rows a recall returns when it isn't told. In the lab every call
-# said how many it wanted, so the tool's description says the same number.
-# Replaying M4's 165 recall calls and M5's 219 (L20, 2026-11-06), 10 rows to 15
-# was the best step on every set of searches: the right memory came back for 47
-# of 118 facts at 10 and 59 at 15 on M4's searches, 45 and 51 on M5's, for about
-# 4,500 more characters a search. Past 15 each row costs more than it finds (9
-# to 16 more facts at 50, for about 27,400 more characters on every search), so
-# more than 15 is for the agent to ask for. A replay reads nothing, so none of
-# this says how much slower an agent gets, or how much of it the agent uses.
-RECALL_RESULTS = 15
-# How many of a recall's rows are handoffs: one in this many, rounded up, from a
-# search of their own (``_recall_rows``). 2 of 15 and 5 of 50 are the mixes the
-# lab tested (L20b); every other length follows the same rule untested.
+# How many rows a recall returns when it isn't told: 13 memories and 3 handoffs
+# (``_handoff_rows``). In the lab every call said how many it wanted, so the
+# tool's description says the same number. Replaying M4's 165 recall calls and
+# M5's 219 (L20, 2026-11-06), 10 rows to 15 was the best step on every set of
+# searches: the right memory came back for 47 of 118 facts at 10 and 59 at 15 on
+# M4's searches, 45 and 51 on M5's, for about 4,500 more characters a search.
+# Past 15 each row costs more than it finds (9 to 16 more facts at 50, for about
+# 27,400 more characters on every search), so a longer list is for the agent to
+# ask for. The 16th row is the third handoff (``_handoffs_chosen_first``), for
+# about 500 more characters. A replay reads nothing, so none of this says how
+# much slower an agent gets, or how much of it the agent uses.
+RECALL_RESULTS = 16
+# Past 30 rows, handoffs get one row in this many, rounded up. 5 of 50 is the mix
+# the lab tested (L20b), though with the top 5 by match.
 HANDOFF_ROW_SHARE = 10
+# How far down its ranking a search of handoffs looks for the newest from another
+# session (``_handoffs_chosen_first``).
+HANDOFF_NEAR_RANKS = 10
+# The most rows of its own a recall's answer can have when it restores from the
+# archive: 55 as long as a row can be (about 2,300 characters) and the longest
+# query fit in what the tool returns (``MAX_TOOL_OUTPUT_CHARS``). Restoring is a
+# change, so what's restored has to be on the page. Shared memories follow an
+# answer's own rows, so a cut reaches them first.
+RECALL_ROWS_WITH_ARCHIVE = 55
 # How many results a person's search gives when it isn't told, as `mnemos search`
 # does. Not recall's number: a person looking isn't an agent paying to read rows.
 SEARCH_RESULTS = 10
@@ -5552,8 +5563,9 @@ class MnemosRuntime:
         words and by meaning, fused by reciprocal rank, then resonance among
         the memories, and handoffs among themselves; each filtered, then cut,
         ``max_results`` rows in all. It is shown by kind, each group in its
-        ranking's order. A capture's note and memory are one object, so a
-        capture comes back once, as its memory.
+        ranking's order, except that some handoffs are chosen to come first
+        (``_handoffs_chosen_first``). A capture's note and memory are one
+        object, so a capture comes back once, as its memory.
         A memory's row carries its own words whole, up to
         ``MEMORY_ROW_CHARS``, and the day it was kept; a handoff's, journal
         entry's or note's, up to ``ROW_CHARS``, enough to use without fetching
@@ -5569,7 +5581,7 @@ class MnemosRuntime:
         A dormant memory comes back when the query matches it well, and
         wakes. With ``include_archived``, memories that faded into the
         archive and that the query names come back too, restored, at most
-        ``RECALL_RESULTS`` of them: restoring is a change, so it stays within
+        ``_archive_rows`` of them: restoring is a change, so it stays within
         what the longest answer can show. One the agent forgot, or replaced
         with a correction, never does. A faded memory's id reaches it without
         the flag.
@@ -5609,7 +5621,8 @@ class MnemosRuntime:
             if result.note is not None
             and result.note.get("entry_kind") not in ("handoff", "journal")
         ]
-        faded = self._faded_matches(query, min(max_results, RECALL_RESULTS)) if include_archived else []
+        restoring = _archive_rows(max_results) if include_archived else 0
+        faded = self._faded_matches(query, restoring) if restoring else []
 
         words_only = self._searched_by_words_only()
         if not found and not faded:
@@ -5672,7 +5685,8 @@ class MnemosRuntime:
     def _recall_rows(self, query: str, max_results: int) -> list[RetrievalResult]:
         """What a recall shows for ``query``, at most ``max_results`` rows:
         everything but handoffs from one search, and ``_handoff_rows`` of them
-        from a search of the handoffs alone. What one side can't fill goes to
+        from a search of the handoffs alone, the ones
+        ``_handoffs_chosen_first`` puts first. What one side can't fill goes to
         the other, so a list comes back short only when the searches find no
         more (each starts from 30 by words and 30 by meaning, and links light
         more).
@@ -5681,11 +5695,10 @@ class MnemosRuntime:
         15-row list of about 8 memories and 7 handoffs, 87% of those old drafts
         a newer handoff had replaced, and handoffs also took places among the
         30 a search by meaning starts from. A handoff's row is cut short, so
-        with 13 + 2 the fact shows on the page for 47 of 118 facts rather than
-        39 on M4's searches and 44 rather than 40 on M5's, for about 2,500 more
-        characters a search. Every old draft stays searchable: dropping them
-        frees nearly as much room, but 6 facts the store holds only there could
-        then never be found.
+        with 13 memories in the list the fact shows on the page for 47 of 118
+        facts rather than 39 on M4's searches (L20c). Every old draft stays
+        searchable: dropping them frees nearly as much room, but 6 facts the
+        store holds only there could then never be found.
 
         The cue is embedded once, for both searches."""
         assert self._retriever is not None
@@ -5695,14 +5708,18 @@ class MnemosRuntime:
         others = [note for note in notes if note.get("entry_kind") != "handoff"]
         embedded = {"query_vector": self._retriever.cue_vector(query), "embed": False}
         ranked = (
-            self._retrieve(query, max_results=max_results, notes=handoffs, only_notes=True, **embedded)
+            self._retrieve(
+                query, max_results=max(max_results, HANDOFF_NEAR_RANKS), notes=handoffs,
+                only_notes=True, **embedded,
+            )
             if handoffs else []
         )
         share = _handoff_rows(max_results)
+        chosen = _handoffs_chosen_first(ranked, handoffs, share)
         found = self._retrieve(
-            query, max_results=max_results - len(ranked[:share]), notes=others, **embedded,
+            query, max_results=max_results - len(chosen[:share]), notes=others, **embedded,
         )
-        return [*found, *ranked[:max(share, max_results - len(found))]]
+        return [*found, *chosen[:max(share, max_results - len(found))]]
 
     def _searched_by_words_only(self) -> str:
         """The line recall adds when meaning search is off in this session
@@ -7805,14 +7822,105 @@ def _found_by_words(result: Any) -> bool:
 
 
 def _handoff_rows(rows: int) -> int:
-    """How many of a recall's ``rows`` go to handoffs (``HANDOFF_ROW_SHARE``);
-    none of a single row, which goes to the best memory."""
-    return math.ceil(rows / HANDOFF_ROW_SHARE) if rows > 1 else 0
+    """How many of a recall's ``rows`` go to handoffs, in the order
+    ``_handoffs_chosen_first`` gives them.
+
+    None of a single row, which goes to the best memory. One up to 4 rows: 4 is
+    Hermes's own recall on every message, and its wake already leads with its
+    conversation's handoff, so a note that doesn't match stays out of it. Two up
+    to 10, so a short list still has the best match and where its session got
+    to: of 149 real searches that named a number, 113 named less than 15, 8 the
+    most often (L20c, 2026-11-06). Three up to 30, then one row in
+    ``HANDOFF_ROW_SHARE``.
+
+    The lab ran 13 + 3 and 12 + 3 (L20c), and 45 + 5 as the top 5 by match
+    (L20b). Every other mix here is untested."""
+    if rows <= 1:
+        return 0
+    if rows <= 4:
+        return 1
+    if rows <= 10:
+        return 2
+    return max(3, math.ceil(rows / HANDOFF_ROW_SHARE))
+
+
+def _archive_rows(rows: int) -> int:
+    """How many memories a recall of ``rows`` may restore from the archive: as
+    many as its rows, up to ``RECALL_RESULTS``, within what one answer can show
+    (``RECALL_ROWS_WITH_ARCHIVE``)."""
+    return max(0, min(rows, RECALL_RESULTS, RECALL_ROWS_WITH_ARCHIVE - rows))
+
+
+def _handoff_session(note: Mapping[str, Any]) -> str:
+    """The thread of work a handoff belongs to: its session, or itself when it
+    has none. Writers that can't say which session they are share the empty
+    session and replace each other, so nothing says two of them are one
+    thread."""
+    return str(note.get("author_session") or note.get("id"))
+
+
+def _handoff_left(note: Mapping[str, Any]) -> str:
+    """When a handoff was left, in a form that sorts as the store sorts it."""
+    return str(note.get("created_at") or "")
+
+
+def _handoffs_chosen_first(
+    ranked: list[RetrievalResult], handoffs: list[dict[str, Any]], rows: int,
+) -> list[RetrievalResult]:
+    """A search's handoffs in the order recall gives them their ``rows``
+    (``_handoff_rows``), and then any the memories leave free: the best match
+    as it is, that session's newest handoff, the newest of the
+    ``HANDOFF_NEAR_RANKS`` closest from another session (of two left at one
+    moment, the closer), then the rest by rank. ``ranked`` is the search's
+    ranking of ``handoffs``, which are as the store lists them, the one in use
+    and then the newest first, so a session's first is its newest.
+
+    The best match stays first because an old draft may alone hold the words,
+    and must stay findable (L20b). But it's often an old draft, and so is the
+    next best: asked to pick up work (L20c, 2026-11-06, 12 questions on a copy
+    of the real store), the two best matches held where the work had got to for
+    about 6, against about 10 for one long list, and on 47 of 179 real searches
+    both came from one session. So the second row says where that session got
+    to, whether or not it matched, and the third is another thread that did.
+    These rows held it for about 10 as well.
+
+    A session's newest may not match at all, so it comes only when handoffs have
+    a second row for it, never in a row the memories happened to leave free."""
+    if not ranked:
+        return []
+    best = ranked[0]
+    session = _handoff_session(best.note or {})
+    chosen = [best]
+    newest = next(note for note in handoffs if _handoff_session(note) == session)
+    if rows > 1 and newest["id"] != best.item_id:
+        chosen.append(_as_sessions_newest(newest, ranked))
+    near = [
+        result for result in ranked[:HANDOFF_NEAR_RANKS]
+        if _handoff_session(result.note or {}) != session
+    ]
+    if near:
+        chosen.append(max(near, key=lambda result: _handoff_left(result.note or {})))
+    taken = {result.item_id for result in chosen}
+    return [*chosen, *(result for result in ranked if result.item_id not in taken)]
+
+
+def _as_sessions_newest(note: dict[str, Any], ranked: list[RetrievalResult]) -> RetrievalResult:
+    """The row for a session's newest handoff: as the search found it if it did,
+    and marked either way, so its bracket says why it's here (``how_found``).
+    One the search didn't reach may not match at all, and never borrows a
+    bracket that says it does."""
+    mark = {"newest_of_session": True}
+    found = next((result for result in ranked if result.item_id == note["id"]), None)
+    if found is None:
+        return RetrievalResult(engram=None, note=note, score_breakdown=mark, retrieval_path="session")
+    return dataclasses.replace(found, score_breakdown={**found.score_breakdown, **mark})
 
 
 def how_found(result: Any) -> str:
     """The bracket in front of a recalled row: how recall found it, by meaning
-    and how close, by which of the query's words, or through a link.
+    and how close, by which of the query's words, or through a link; and for a
+    handoff that's its session's newest, added after the row above whether or
+    not it matched, that it is (``_as_sessions_newest``).
 
     It used to be the result's score, which is relative to the best seed, so
     the top row always read 1.00, on one shared word or on everything ("what
@@ -7826,6 +7934,8 @@ def how_found(result: Any) -> str:
         # matched by rank and names none.
         words = detail.get("matched_words") or []
         found.append(f"words: {', '.join(words)}" if words else "words")
+    if detail.get("newest_of_session"):
+        found.append("newest from the session above")
     return f"[{'; '.join(found) or 'linked'}]"
 
 
@@ -7895,7 +8005,12 @@ def _format_handoff(result: Any, reader: str, session: str, query: str = "") -> 
     label, _whose = whose_handoff(note, reader, session)
     retired = handoff_retirement(note)
     if retired == "superseded":
-        kind = "older handoff, replaced by a newer one from its session"
+        # Its session's newest, yet replaced: the one that replaced it is gone.
+        kind = (
+            "older handoff, the newest its session still has"
+            if (result.score_breakdown or {}).get("newest_of_session")
+            else "older handoff, replaced by a newer one from its session"
+        )
     elif retired == "retired":
         kind = "older handoff, retired as newer sessions left theirs"
     else:

@@ -8,9 +8,15 @@ and handoffs also took places among the 30 a search by meaning starts from. With
 alone, the fact shows on the page for 47 of 118 facts rather than 39 on M4's
 searches, and 44 rather than 40 on M5's.
 
-So every list length here follows that mix, and what the lab said to keep stays:
-every old draft can still be found. Simply dropping them would make 6 facts that
-live only in old drafts unfindable.
+What the lab said to keep stays: every old draft can still be found. Simply
+dropping them would make 6 facts that live only in old drafts unfindable.
+
+But the best two matches are often old drafts, so asked to pick up work (L20c, 12
+questions on a copy of the real store) that list held where the work had got to
+for about 6, against about 10 for today's one long list. So handoffs get 3 rows of
+the 16: the best match as it is, that session's newest draft, and the newest of
+the ten closest from another session. Then about 10 land there, and the fact still
+shows for 47 on M4's searches.
 """
 
 from __future__ import annotations
@@ -23,8 +29,8 @@ import mnemos.store.embedding_index as ei
 from mnemos.core.engram import Engram
 from mnemos.interface.person import search_view
 from mnemos.retrieval.reactive import ReactiveRetriever
-from mnemos.simple_mcp import MAX_TOOL_OUTPUT_CHARS, _output
-from mnemos.simple_runtime import MnemosRuntime
+from mnemos.simple_mcp import MAX_QUERY_CHARS, MAX_TOOL_OUTPUT_CHARS, _output
+from mnemos.simple_runtime import MnemosRuntime, RECALL_RESULTS, _handoff_rows
 from mnemos.store.fts import COMMON_MIN_MEMORIES
 from mnemos.store.sqlite_store import HANDOFF_SESSIONS_KEPT
 from tests.test_recall_by_meaning import meaning  # noqa: F401  (a fixture)
@@ -51,6 +57,33 @@ def _counted(out: str) -> tuple[int, int]:
     )
 
 
+def _rows(out: str, heading: str = "Handoffs") -> list[str]:
+    """Each row under one heading, its two lines together."""
+    return [f"- {row}" for row in _section(out, heading).removeprefix("- ").split("\n- ") if row]
+
+
+def _leave(rt: MnemosRuntime, session: int, words: str, **scope) -> str:
+    """A handoff left by one numbered session; its id."""
+    rt._ensure_init()
+    return rt._store.write_handoff(
+        words, author_session=f"{session:08d}-4444-4444-8444-444444444444", **{**SCOPE, **scope},
+    )
+
+
+# Twelve sessions, each matching fewer of these words and left later than the one
+# before: the closest match is the oldest, and the newest is ranked last.
+SHIP_WORDS = "lantern anchor compass sextant barometer tiller rudder keel mast sail halyard winch".split()
+
+
+def _twelve_sessions(rt: MnemosRuntime) -> None:
+    for n in range(12):
+        _leave(rt, n, f"Session {n} checked the {' '.join(SHIP_WORDS[:12 - n])}.")
+
+
+def _sessions_listed(out: str) -> list[str]:
+    return [re.search(r"Session (\d+) checked", row).group(1) for row in _rows(out)]
+
+
 def _fill(rt: MnemosRuntime, memories: int, handoffs: int) -> None:
     """Memories and handoffs that all hold the same words."""
     for n in range(memories):
@@ -65,7 +98,7 @@ QUERY = "harbour tide gauge reading"
 # ── The mix the lab tested ──
 
 
-def test_fifteen_rows_are_thirteen_memories_and_two_handoffs(tmp_path):
+def test_the_default_is_thirteen_memories_and_three_handoffs(tmp_path):
     rt = _runtime(tmp_path / "memory.db")
     try:
         _fill(rt, memories=20, handoffs=20)
@@ -73,7 +106,8 @@ def test_fifteen_rows_are_thirteen_memories_and_two_handoffs(tmp_path):
     finally:
         rt.close()
 
-    assert _counted(out) == (13, 2), out
+    assert RECALL_RESULTS == 16
+    assert _counted(out) == (13, 3), out
 
 
 def test_fifty_rows_are_forty_five_memories_and_five_handoffs(tmp_path, meaning):  # noqa: F811
@@ -95,12 +129,310 @@ def test_fifty_rows_are_forty_five_memories_and_five_handoffs(tmp_path, meaning)
 
 @pytest.mark.parametrize(
     ("rows", "handoffs"),
-    [(1, 0), (2, 1), (4, 1), (10, 1), (11, 2), (15, 2), (20, 2), (21, 3), (30, 3), (45, 5), (50, 5)],
+    [
+        (1, 0), (2, 1), (3, 1), (4, 1), (5, 2), (8, 2), (10, 2), (11, 3), (15, 3), (16, 3),
+        (30, 3), (31, 4), (40, 4), (41, 5), (45, 5), (50, 5),
+    ],
 )
-def test_handoffs_get_one_row_in_ten_rounded_up(rows, handoffs):
-    from mnemos.simple_runtime import _handoff_rows
-
+def test_how_many_rows_go_to_handoffs_at_each_length(rows, handoffs):
     assert _handoff_rows(rows) == handoffs
+
+
+def test_a_list_has_that_mix_at_every_length_and_never_runs_past_its_rows(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _fill(rt, memories=40, handoffs=8)
+        for n in range(4):
+            _leave(rt, n, f"Harbour tide gauge reading, session {n}: still checking the noon figures.")
+        mixes = {rows: _counted(rt.recall(QUERY, max_results=rows)) for rows in range(1, 51)}
+    finally:
+        rt.close()
+
+    for rows, (memories, handoffs) in mixes.items():
+        assert memories + handoffs <= rows, (rows, memories, handoffs)
+    for rows in range(1, 31):
+        assert mixes[rows] == (rows - _handoff_rows(rows), _handoff_rows(rows)), rows
+
+
+def test_the_added_row_counts_against_the_list(tmp_path):
+    """The search found one handoff and the list shows two, so the memories get
+    what's left after the two, not after the one."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _fill(rt, memories=20, handoffs=0)
+        _leave(rt, 1, "Harbour tide gauge reading: still checking the noon figures.")
+        _leave(rt, 1, "Everything on the boat is finished.")
+        out = rt.recall(QUERY)
+    finally:
+        rt.close()
+
+    assert _counted(out) == (14, 2), out
+
+
+# ── Which handoffs get the rows ──
+
+
+def test_an_old_draft_keeps_its_row_and_its_sessions_newest_follows_it(tmp_path):
+    """The words live only in the old draft, so it has to stay listed. Where the
+    work got to doesn't match at all, and its row says what it is instead."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    old, newest = _rows(out)
+    assert old.startswith("- [words: lantern] Where I was: the lantern still needs checking"), out
+    assert "kind=older handoff, replaced by a newer one from its session" in old
+    assert newest.startswith("- [newest from the session above] Where I was: everything on the boat is finished"), out
+    assert "kind=handoff;" in newest
+
+
+def test_the_added_row_was_never_reached_and_says_so_to_the_code_too(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        newest = _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        rows = rt._recall_rows("lantern", 16)
+    finally:
+        rt.close()
+
+    assert [(row.retrieval_path, row.score) for row in rows if row.item_id == newest] == [("session", 0.0)]
+
+
+def test_a_newest_draft_that_matched_says_how_as_well(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern and the anchor still need checking.")
+        _leave(rt, 1, "Where I was: the lantern is done.")
+        out = rt.recall("lantern anchor")
+    finally:
+        rt.close()
+
+    old, newest = _rows(out)
+    assert old.startswith("- [words: lantern, anchor] "), out
+    assert newest.startswith("- [words: lantern; newest from the session above] "), out
+
+
+def test_a_best_match_that_is_its_sessions_newest_is_listed_once(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert [row.split("\n")[0] for row in _rows(out)] == ["- [words: lantern] Where I was: the lantern still needs checking."]
+
+
+def test_the_newest_close_match_from_another_session_comes_before_a_closer_one(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "The lantern, the anchor and the compass still need checking.")
+        _leave(rt, 2, "The lantern and the anchor still need checking.")
+        _leave(rt, 3, "The lantern still needs checking.")
+        out = rt.recall("lantern anchor compass")
+    finally:
+        rt.close()
+
+    assert [row.split("] ")[1].split(" still")[0] for row in _rows(out)] == [
+        "The lantern, the anchor and the compass",
+        "The lantern",
+        "The lantern and the anchor",
+    ], out
+
+
+def test_another_session_gets_its_row_ahead_of_more_of_the_same_session(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "The lantern, the anchor and the compass still need checking.")
+        _leave(rt, 1, "The lantern and the anchor still need checking.")
+        _leave(rt, 2, "The lantern still needs checking.")
+        _leave(rt, 1, "Everything on the boat is finished.")
+        out = rt.recall("lantern anchor compass")
+    finally:
+        rt.close()
+
+    words = [row.split("] ")[1].split("\n")[0] for row in _rows(out)]
+    assert words == [
+        "The lantern, the anchor and the compass still need checking.",
+        "Everything on the boat is finished.",
+        "The lantern still needs checking.",
+        "The lantern and the anchor still need checking.",
+    ], out
+
+
+def test_the_third_row_looks_no_further_than_the_ten_closest(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _twelve_sessions(rt)
+        out = rt.recall(" ".join(SHIP_WORDS))
+    finally:
+        rt.close()
+
+    assert _sessions_listed(out)[:3] == ["0", "9", "1"], out
+
+
+def test_a_short_list_still_looks_at_the_ten_closest(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _twelve_sessions(rt)
+        out = rt.recall(" ".join(SHIP_WORDS), max_results=5)
+        rows = _rows(out)
+    finally:
+        rt.close()
+
+    assert _sessions_listed(out)[:2] == ["0", "9"], out
+    assert len(rows) <= 5
+
+
+def test_a_long_list_adds_the_next_best_after_the_chosen_three(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _twelve_sessions(rt)
+        out = rt.recall(" ".join(SHIP_WORDS), max_results=50)
+    finally:
+        rt.close()
+
+    assert _sessions_listed(out) == ["0", "9", "1", "2", "3", "4", "5", "6", "7", "8", "10", "11"], out
+
+
+def test_a_short_list_keeps_the_best_match_and_then_its_newest(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        for n in range(8):
+            rt.capture(f"The lantern room note {n} is in the log.")
+        _leave(rt, 1, "Where I was: the lantern still needs checking, the lantern most of all.")
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        _leave(rt, 2, "The lantern came up in passing.")
+        eight, four = (rt.recall("lantern", max_results=rows) for rows in (8, 4))
+    finally:
+        rt.close()
+
+    assert _counted(eight) == (6, 2), eight
+    assert "still needs checking" in _rows(eight)[0]
+    assert "everything on the boat is finished" in _rows(eight)[1]
+    assert _counted(four) == (3, 1), four
+    assert "still needs checking" in _rows(four)[0]
+
+
+def test_the_handoff_in_use_is_its_sessions_newest_whatever_the_clock_says(tmp_path):
+    """As the store says, and as a wake reads it, even after a clock moved back."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        old = _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        _leave(rt, 1, "Where I was: the sails are mended.")
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        rt._store._get_conn().execute(
+            "UPDATE hypomnema_entries SET created_at = '2999-01-01T00:00:00+00:00' WHERE id = ?", (old,),
+        )
+        rt._store._get_conn().commit()
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert "everything on the boat is finished" in _rows(out)[1], out
+    assert "kind=handoff;" in _rows(out)[1]
+
+
+@pytest.mark.parametrize("rows", [1, 2, 3, 4])
+def test_a_list_with_one_row_for_handoffs_adds_none_that_didnt_match(tmp_path, rows):
+    """Even when there are rows free: only a row of its own holds one of these."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern and the anchor still need checking.")
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        _leave(rt, 2, "The lantern came up in passing.")
+        out = rt.recall("lantern anchor", max_results=rows)
+    finally:
+        rt.close()
+
+    assert "everything on the boat" not in out, out
+    assert "newest from the session above" not in out
+    assert "still need checking" in _rows(out)[0], out
+    assert len(_rows(out)) == min(rows, 2)
+
+
+def test_a_handoff_with_no_session_has_no_newer_one_added(tmp_path):
+    """Writers that can't say which session they are share the empty session and
+    replace each other, so nothing says two of them are one thread of work."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        rt._ensure_init()
+        rt._store.write_handoff("Where I was: the lantern still needs checking.", **SCOPE)
+        rt._store.write_handoff("Where I was: everything on the boat is finished.", **SCOPE)
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert len(_rows(out)) == 1, out
+    assert "everything on the boat" not in out
+
+
+def test_a_handoff_with_no_session_counts_as_another_session(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern and the anchor still need checking.")
+        _leave(rt, 1, "Where I was: the lantern and the anchor are nearly done.")
+        rt._store.write_handoff("Where I was: the lantern came up in passing.", **SCOPE)
+        out = rt.recall("lantern anchor")
+    finally:
+        rt.close()
+
+    assert "the lantern and the anchor are nearly done" in _rows(out)[0], out
+    assert "the lantern came up in passing" in _rows(out)[1], out
+    assert "the lantern and the anchor still need checking" in _rows(out)[2], out
+
+
+def test_a_forgotten_draft_is_never_its_sessions_newest(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        _leave(rt, 1, "Where I was: the sails are mended.")
+        secret = _leave(rt, 1, "Where I was: the harbour master owes me money.")
+        rt.correct(correction="", target_id=secret, action="forget")
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert "harbour master" not in out
+    first, second = _rows(out)
+    assert "replaced by a newer one from its session" in first, out
+    assert second.startswith("- [newest from the session above] Where I was: the sails are mended"), out
+    assert "kind=older handoff, the newest its session still has" in second, out
+
+
+def test_a_sessions_newest_from_another_scope_is_never_added(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        _leave(rt, 1, "Everything in the other project is finished.", project_scope="elsewhere")
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert "the other project" not in out, out
+    assert len(_rows(out)) == 1
+
+
+def test_an_added_draft_is_never_strengthened(tmp_path, monkeypatch):
+    """A handoff is never a memory: a recall reinforces only the memories it shows."""
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        rt.capture("The lantern room note is in the log.")
+        _leave(rt, 1, "Where I was: the lantern still needs checking.")
+        _leave(rt, 1, "Where I was: everything on the boat is finished.")
+        reinforced: list[list[object]] = []
+        monkeypatch.setattr(rt, "_reinforce_returned", lambda query, memories: reinforced.append(memories))
+        out = rt.recall("lantern")
+    finally:
+        rt.close()
+
+    assert "everything on the boat is finished" in out
+    assert [[row.engram.content for row in memories] for memories in reinforced] == [["The lantern room note is in the log."]]
 
 
 # ── A search of notes alone ──
@@ -206,7 +538,7 @@ def test_a_journal_entry_takes_its_row_from_the_memories_not_the_handoffs(tmp_pa
         rt.close()
 
     assert _section(out, "Journal").count("- [") == 1, out
-    assert _counted(out) == (12, 2), out
+    assert _counted(out) == (12, 3), out
 
 
 # ── Every old draft stays searchable ──
@@ -282,7 +614,18 @@ def test_rows_handoffs_leave_go_to_the_memories(tmp_path):
     finally:
         rt.close()
 
-    assert _counted(one) == (14, 1), one
+    assert _counted(one) == (15, 1), one
+
+
+def test_two_handoffs_leave_their_third_row_to_the_memories(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        _fill(rt, memories=20, handoffs=2)
+        out = rt.recall(QUERY)
+    finally:
+        rt.close()
+
+    assert _counted(out) == (14, 2), out
 
 
 def test_with_no_handoffs_every_row_goes_to_the_memories(tmp_path):
@@ -293,7 +636,7 @@ def test_with_no_handoffs_every_row_goes_to_the_memories(tmp_path):
     finally:
         rt.close()
 
-    assert _counted(none) == (15, 0), none
+    assert _counted(none) == (16, 0), none
 
 
 def test_rows_memories_leave_go_to_the_handoffs(tmp_path):
@@ -304,7 +647,7 @@ def test_rows_memories_leave_go_to_the_handoffs(tmp_path):
     finally:
         rt.close()
 
-    assert _counted(out) == (3, 12), out
+    assert _counted(out) == (3, 13), out
 
 
 def test_a_single_row_goes_to_the_best_memory(tmp_path):
@@ -387,7 +730,8 @@ def _kept_id(said: str) -> str:
     return re.search(r"Memory ID: (\S+)", said).group(1)
 
 
-def test_a_recall_restores_no_more_than_fifteen_from_the_archive(tmp_path):
+@pytest.mark.parametrize(("rows", "restores"), [(1, 1), (16, 16), (30, 16), (39, 16), (45, 10), (50, 5)])
+def test_a_recall_restores_only_what_its_answer_can_show(tmp_path, rows, restores):
     """Restoring changes a memory, so what's restored has to be shown, and at
     50 rows with as many from the archive an answer would be cut first."""
     rt = _runtime(tmp_path / "memory.db")
@@ -395,36 +739,49 @@ def test_a_recall_restores_no_more_than_fifteen_from_the_archive(tmp_path):
         faded = [_kept_id(rt.capture(f"Harbour crane note {n}: repainted blue in May.")) for n in range(20)]
         for memory_id in faded:
             rt._store.archive_engram(rt._store.get_engram(memory_id), reason="decay_below_threshold")
-        out = rt.recall("harbour crane repainted", max_results=50, include_archived=True)
+        out = rt.recall("harbour crane repainted", max_results=rows, include_archived=True)
         restored = [memory_id for memory_id in faded if rt._store.get_engram(memory_id).state == "active"]
     finally:
         rt.close()
 
-    assert _section(out, "From the archive").count("- Harbour crane note") == 15, out
-    assert len(restored) == 15
+    assert _section(out, "From the archive").count("- Harbour crane note") == restores, out
+    assert len(restored) == restores
 
 
-def test_the_longest_answer_with_the_archive_is_never_cut(tmp_path, meaning):  # noqa: F811
-    """Every row as long as a row can be: 45 memories, 5 handoffs and 15 from
-    the archive, the last of them still on the page after Mnemos's own limit."""
+def test_a_list_past_what_an_answer_can_show_restores_nothing(tmp_path):
+    rt = _runtime(tmp_path / "memory.db")
+    try:
+        faded = _kept_id(rt.capture("Harbour crane note: repainted blue in May."))
+        rt._store.archive_engram(rt._store.get_engram(faded), reason="decay_below_threshold")
+        out = rt.recall("harbour crane repainted", max_results=60, include_archived=True)
+        state = rt._store.get_engram(faded).state
+    finally:
+        rt.close()
+
+    assert state != "active", out
+
+
+@pytest.mark.parametrize(("rows", "mix", "restores"), [(50, (50, 0), 5), (39, (39, 0), 16)])
+def test_the_longest_answer_with_the_archive_is_never_cut(tmp_path, meaning, rows, mix, restores):  # noqa: F811
+    """Every row as long as a row can be, and no handoffs, whose rows are short.
+    The last row restored is still on the page after Mnemos's own limit, with
+    the longest query there can be at the top of it."""
     long = " Then the noon figures came in again and nothing else changed all week." * 40
     rt = _runtime(tmp_path / "memory.db")
     try:
         for n in range(30):
             rt.capture(f"The lighthouse stood beside the ferry pier, year {n}.{long}")
             rt.capture(f"Tonight the beacon lamp needs oil, night {n}.{long}")
-        for n in range(10):
-            rt.handoff(f"Tonight the beacon lamp needs oil, pass {n}.{long}", signed_as=MODEL)
         faded = [_kept_id(rt.capture(f"The lighthouse crane, note {n}.{long}")) for n in range(20)]
         for memory_id in faded:
             rt._store.archive_engram(rt._store.get_engram(memory_id), reason="decay_below_threshold")
-        answer = rt.recall("lighthouse", max_results=50, include_archived=True)
+        answer = rt.recall("lighthouse", max_results=rows, include_archived=True)
     finally:
         rt.close()
 
-    assert _counted(answer) == (45, 5), answer[:400]
-    assert _section(answer, "From the archive").count("- The lighthouse crane") == 15
-    assert len(answer) < MAX_TOOL_OUTPUT_CHARS
+    assert _counted(answer) == mix, answer[:400]
+    assert _section(answer, "From the archive").count("- The lighthouse crane") == restores
+    assert len(answer) + MAX_QUERY_CHARS < MAX_TOOL_OUTPUT_CHARS, len(answer)
     assert _output(answer) == answer
 
 
