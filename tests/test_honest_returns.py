@@ -15,7 +15,8 @@ real store that had stopped meaning anything:
 Now only what a result shows is reinforced, at most once per session; a return
 writes no version; a save appends versions and never rewrites one; and
 ``mnemos repair-versions`` removes the copies when a human asks. Code older
-than the store reinforces nothing.
+than the store reinforces nothing. A long list links only its first fifteen
+memories to each other.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from mnemos.cli import main
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.core.engram import Connection, Engram
 from mnemos.core.types import ConnectionRelation
-from mnemos.retrieval.reactive import ReactiveRetriever
+from mnemos.retrieval.reactive import ReactiveRetriever, RetrievalResult
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.store.sqlite_store import EngramStore
 
@@ -208,6 +209,80 @@ def test_only_the_memories_a_result_shows_are_reinforced(tmp_path, call):
     assert _co_activated(db, ferry, garden) == [], (
         "a memory shown was linked to one the reader never saw"
     )
+
+
+# ── A long list links only its first fifteen ──
+
+TIDE = "harbour tide gauge reading"
+
+
+def _tides(runtime: MnemosRuntime, count: int) -> list[str]:
+    """``count`` memories that one cue finds; their ids, oldest first."""
+    return [
+        _memory_id(runtime.capture(
+            f"Tide gauge reading {n}: the harbour tide stood at {n + 1} metres at noon."
+        ))
+        for n in range(count)
+    ]
+
+
+def _linked_by_returns(db) -> set[tuple[str, str]]:
+    """The links a return formed or strengthened, which it marks as its own;
+    upkeep may link the same memories by their words, and marks those so."""
+    return set(_all(
+        db,
+        "SELECT source_id, target_id FROM connections "
+        "WHERE relation = 'co_activated' AND formed_by = 'retrieval'",
+    ))
+
+
+def _each_to_each(ids: list[str]) -> set[tuple[str, str]]:
+    return {(a, b) for a in ids for b in ids if a != b}
+
+
+def test_a_long_recall_links_only_its_first_fifteen_memories(tmp_path):
+    """Every memory a recall shows is strengthened, and the first fifteen
+    shown are linked to each other; one past the fifteenth is linked to
+    nothing. Over a month of real searches, 50 rows every time with every
+    memory linked wrote 599 links a search, against 76 this way (L21)."""
+    db = tmp_path / "memory.db"
+    runtime = _runtime(db)
+    try:
+        _tides(runtime, 20)
+        shown = runtime.recall(TIDE, max_results=20)
+    finally:
+        runtime.close()
+
+    rows = shown.split("Durable memories:\n", 1)[1].split("\n\n", 1)[0]
+    order = re.findall(r"\bid=(engram_\w+)", rows)
+    assert len(order) == 20, shown
+    assert _linked_by_returns(db) == _each_to_each(order[:15])
+    assert [_accesses(db, memory) for memory in order] == [1] * 20, (
+        "a memory shown past the fifteenth was not strengthened"
+    )
+
+
+def test_every_list_links_only_its_first_fifteen_in_the_order_given(tmp_path):
+    """The rule is the retriever's, so a briefing's or a context call's list
+    keeps it as recall's does, and the first fifteen are the first given."""
+    db = tmp_path / "memory.db"
+    runtime = _runtime(db)
+    try:
+        given = _tides(runtime, 17)[::-1]
+    finally:
+        runtime.close()
+
+    store = EngramStore(str(db))
+    try:
+        ReactiveRetriever(store).reinforce(
+            [RetrievalResult(engram=store.get_engram(memory)) for memory in given],
+            TIDE, agent_id="nova", session="one session",
+        )
+    finally:
+        store.close()
+
+    assert _linked_by_returns(db) == _each_to_each(given[:15])
+    assert [_accesses(db, memory) for memory in given] == [1] * 17
 
 
 # ── At most once per session ──

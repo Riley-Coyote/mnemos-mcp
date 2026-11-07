@@ -26,6 +26,14 @@ it can't say how much slower an agent gets, or how much of what comes back it us
   has worked with it yet. Lists of 5 to 10 rows have 2 handoffs, 2 to 4 rows have 1, and a single row
   goes to the best memory; those shorter mixes are untested for facts. A handoff that didn't match
   only ever comes in a row of its own, so Hermes's 4-row recall on every message never gets one.
+- **Only the first 15 memories a list shows are linked to each other.** Every memory shown is still
+  strengthened, and one past the 15th is linked to nothing. A month of real searches, replayed with
+  linking and the night's upkeep on, found that asking for 50 every time with every memory linked
+  wrote 599 links a search against 76 this way, and left searches 48% slower, the store 150 MB bigger
+  and 2 fewer facts found after the month. With the first 15 linked all of that stayed where the
+  default leaves it, and what fades was the same either way. At the default a list shows 13
+  memories, so nothing changes there, except that a list with no handoff in it can show 16, and the
+  16th isn't linked.
 - **`include_archived` restores at most 16 memories at a time, and fewer on a list past 39 rows.** It
   restored as many as the list's length, and at 50 rows an answer could be cut after memories had
   been restored that it never showed.

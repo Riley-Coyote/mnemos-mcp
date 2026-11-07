@@ -125,6 +125,9 @@ MEANING_FLOOR = 0.35
 SPREAD_HOPS = 2
 # A result names at most this many of the words it was found by.
 MATCHED_WORDS = 3
+# A return links its first this many memories to each other, and any after
+# them to nothing (``ReactiveRetriever.reinforce``).
+LINKED_TOGETHER = 15
 
 
 def fuse(lists: Iterable[tuple[Sequence[str], float]], k: int = FUSION_K) -> dict[str, float]:
@@ -815,9 +818,17 @@ class ReactiveRetriever:
 
         Retrieval strengthens a memory because it came back, so only what a
         caller actually returns, after all of its own filtering, may be
-        reinforced; results it drops were never seen. Memories returned
-        together are linked as co-activated with each other, and with nothing
-        that was dropped.
+        reinforced; results it drops were never seen. The first
+        ``LINKED_TOGETHER`` memories returned together are linked as
+        co-activated with each other, and with nothing that was dropped; any
+        after those are reinforced like the rest and linked to nothing. A
+        month of real searches replayed with linking and the night's upkeep on
+        (L21, 2026-11-07) found that asking for 50 every time with all of them
+        linked wrote 599 links a search, against 76 with the first 15, and
+        left searches 48% slower, the store 150 MB bigger and 2 fewer facts
+        found after the month. With the first 15 linked all of that stayed
+        where the default leaves it, and what fades was the same either way:
+        what keeps a memory awake is being shown, not its links on their own.
 
         Each memory is reinforced at most once per ``session`` (None reads
         ``CLAUDE_CODE_SESSION_ID``; an empty string means this process). A
@@ -831,9 +842,9 @@ class ReactiveRetriever:
         results = [r for r in results if r.engram is not None]
         if not self._reconsolidation_enabled or not results:
             return
-        returned_ids = [r.engram.id for r in results]
+        linked = [r.engram.id for r in results[:LINKED_TOGETHER]]
         older: dict[int, bool] = {}
-        for result in results:
+        for place, result in enumerate(results):
             # Reconsolidate in the engram's home store
             target_store = self._store
             if (
@@ -845,12 +856,11 @@ class ReactiveRetriever:
                 older[id(target_store)] = _code_older_than(target_store)
             if older[id(target_store)]:
                 continue
+            together = linked if place < LINKED_TOGETHER else []
             result.engram = reconsolidate(
                 engram=result.engram,
                 current_context=cue,
-                co_retrieved_ids=[
-                    eid for eid in returned_ids if eid != result.engram.id
-                ],
+                co_retrieved_ids=[eid for eid in together if eid != result.engram.id],
                 store=target_store,
                 session=session,
             )

@@ -5677,8 +5677,10 @@ class MnemosRuntime:
                 for engram in restored
                 if engram.state == "active"
             ]
-        # Everything shown is one return, reinforced together: what came back
-        # from the archive is linked with what recall found beside it.
+        # Everything shown is one return, reinforced together, and its first
+        # LINKED_TOGETHER memories are linked to each other. What came back
+        # from the archive comes last, so it is linked with what recall found
+        # beside it while it is among those.
         self._reinforce_returned(query, returned)
         return "\n".join(lines)
 
@@ -7539,7 +7541,9 @@ class MnemosRuntime:
         )
 
     def _reinforce_returned(self, query: str, memories: list[Any]) -> None:
-        """Reconsolidate the memories a result shows the reader, and no others.
+        """Reconsolidate the memories a result shows the reader, and no others,
+        linking the first ``LINKED_TOGETHER`` of them to each other
+        (``ReactiveRetriever.reinforce``).
 
         Each is reinforced at most once per session: the Claude Code session
         (``CLAUDE_CODE_SESSION_ID``) when there is one, otherwise this server
