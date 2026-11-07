@@ -64,13 +64,7 @@ def test_provider_imports_and_exposes_hermes_tools(tmp_path):
         provider.shutdown()
 
     names = {schema["name"] for schema in schemas}
-    assert names == {
-        "mnemos_identity_capture",
-        "mnemos_identity_recall",
-        "mnemos_identity_correct",
-        "mnemos_identity_report",
-        "mnemos_identity_handoff",
-    }
+    assert {"mnemos_capture", "mnemos_recall", "mnemos_correct", "mnemos_handoff"} <= names
 
 
 def test_provider_defaults_are_small_identity_continuity_defaults():
@@ -98,7 +92,7 @@ def test_provider_context_stays_under_configured_budget(tmp_path):
     try:
         for idx in range(8):
             provider.handle_tool_call(
-                "mnemos_identity_capture",
+                "mnemos_capture",
                 {
                     "content": (
                         f"Riley identity-continuity preference {idx}: keep Hermes Mnemos "
@@ -122,14 +116,14 @@ def test_provider_can_capture_and_recall_in_temp_home(tmp_path):
 
     try:
         captured = json.loads(provider.handle_tool_call(
-            "mnemos_identity_capture",
+            "mnemos_capture",
             {
                 "content": "Riley prefers Hermes Mnemos continuity to stay local-first.",
                 "importance": "high",
             },
         ))
         recalled = json.loads(provider.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "local-first continuity", "max_results": 4},
         ))
     finally:
@@ -162,15 +156,15 @@ def test_hermes_agent_scope_does_not_leak_between_agents(tmp_path):
 
     try:
         nova.handle_tool_call(
-            "mnemos_identity_capture",
+            "mnemos_capture",
             {"content": "Nova remembers a scoped Hermes identity note.", "importance": "high"},
         )
         leaked = json.loads(vektor.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "scoped Hermes identity note"},
         ))
         found = json.loads(nova.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "scoped Hermes identity note"},
         ))
     finally:
@@ -213,19 +207,19 @@ def test_hermes_scope_does_not_leak_between_people_or_projects(tmp_path):
 
     try:
         riley.handle_tool_call(
-            "mnemos_identity_capture",
+            "mnemos_capture",
             {"content": "Riley's Mnemos Hermes scope contains a private identity note.", "importance": "high"},
         )
         person_leak = json.loads(alex.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "private identity note"},
         ))
         project_leak = json.loads(other_project.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "private identity note"},
         ))
         found = json.loads(riley.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "private identity note"},
         ))
     finally:
@@ -284,7 +278,7 @@ def test_builtin_memory_write_is_mirrored_and_can_be_forgotten(tmp_path):
         before = provider.prefetch("identity-memory corrections")
         provider.on_memory_write("remove", "user", "identity-memory corrections", metadata={})
         after = json.loads(provider.handle_tool_call(
-            "mnemos_identity_recall",
+            "mnemos_recall",
             {"query": "identity-memory corrections"},
         ))
     finally:
@@ -292,31 +286,6 @@ def test_builtin_memory_write_is_mirrored_and_can_be_forgotten(tmp_path):
 
     assert "supersede stale claims" in before
     assert "No relevant continuity found" in after["result"]
-
-
-def test_uncertain_capture_goes_to_review_inbox(tmp_path):
-    provider = _new_provider(tmp_path)
-    provider.initialize("session-1", hermes_home=tmp_path)
-
-    try:
-        queued = json.loads(provider.handle_tool_call(
-            "mnemos_identity_capture",
-            {
-                "content": "Maybe remember that the launch label could be Night Glass.",
-                "review": True,
-            },
-        ))
-        inbox = json.loads(provider.handle_tool_call(
-            "mnemos_identity_report",
-            {"kind": "inbox"},
-        ))
-    finally:
-        provider.shutdown()
-
-    assert queued["status"] == "queued_for_review"
-    assert inbox["inbox"]
-    assert inbox["inbox"][0]["confidence"] < 0.62
-    assert "Night Glass" in inbox["inbox"][0]["content"]
 
 
 def test_provider_mode_activation_sets_mnemos_provider(tmp_path):
@@ -628,10 +597,10 @@ def test_prefetch_never_serves_what_was_forgotten_since(tmp_path):
     provider = _new_provider(tmp_path)
     provider.initialize("session-1", hermes_home=tmp_path)
     try:
-        provider.handle_tool_call("mnemos_identity_capture",
+        provider.handle_tool_call("mnemos_capture",
                                   {"content": "The studio door code is ZEBRA4471."})
         assert "ZEBRA4471" in provider.prefetch("studio door code")
-        provider.handle_tool_call("mnemos_identity_correct",
+        provider.handle_tool_call("mnemos_correct",
                                   {"query": "studio door code ZEBRA4471", "action": "forget"})
         assert "ZEBRA4471" not in provider.prefetch("studio door code")
     finally:
@@ -644,7 +613,7 @@ def test_prefetch_sees_another_process_forget(tmp_path):
     provider = _new_provider(tmp_path)
     provider.initialize("session-1", hermes_home=tmp_path)
     try:
-        provider.handle_tool_call("mnemos_identity_capture",
+        provider.handle_tool_call("mnemos_capture",
                                   {"content": "The studio door code is ZEBRA4471."})
         assert "ZEBRA4471" in provider.prefetch("studio door code")
         scope = provider.scope
@@ -680,7 +649,7 @@ def test_a_mirrored_replace_never_rewrites_an_unrelated_note(tmp_path):
     provider = _new_provider(tmp_path)
     provider.initialize("session-1", hermes_home=tmp_path)
     try:
-        provider.handle_tool_call("mnemos_identity_capture",
+        provider.handle_tool_call("mnemos_capture",
                                   {"content": "Calibrate the studio monitor before colour grading."})
         provider.on_memory_write("replace", "memory", "The studio monitor is a 27-inch panel.",
                                  metadata={"old_text": "studio monitor"})
@@ -713,7 +682,7 @@ def test_prefetch_still_caches_when_nothing_was_written(tmp_path):
     provider = _new_provider(tmp_path)
     provider.initialize("session-1", hermes_home=tmp_path)
     try:
-        provider.handle_tool_call("mnemos_identity_capture",
+        provider.handle_tool_call("mnemos_capture",
                                   {"content": "The studio door code is ZEBRA4471."})
         calls = []
         recall = provider._runtime._recall_own

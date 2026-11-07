@@ -67,7 +67,10 @@ def mnemos_command() -> str:
     the user just ran — a Homebrew copy shadowing a pipx or venv one. The
     generated hook and client configs would then invoke the wrong Mnemos,
     against a different environment and a different store, or none at all.
-    Prefer the running script, then this interpreter's own bin directory.
+    Prefer the running script, then this interpreter's own bin directory, then
+    the one a host was told about when it was connected (``MNEMOS_COMMAND``:
+    inside Hermes, this interpreter is Hermes' own, and its shell may not find
+    Mnemos at all).
     """
     argv0 = sys.argv[0] if sys.argv and sys.argv[0] else ""
     if argv0:
@@ -81,7 +84,7 @@ def mnemos_command() -> str:
     if sibling.is_file():
         return str(sibling)
 
-    return shutil.which("mnemos") or "mnemos"
+    return os.environ.get("MNEMOS_COMMAND", "").strip() or shutil.which("mnemos") or "mnemos"
 
 
 def command_line(agent_id: str, db_path, *command: str, mnemos: str | None = None) -> str:

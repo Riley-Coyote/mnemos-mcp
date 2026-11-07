@@ -597,6 +597,7 @@ def main(argv: list[str] | None = None) -> int:
     }
     p_hermes_install = hermes_sub.add_parser("install", help="Install Mnemos for Hermes")
     p_hermes_install.add_argument("--hermes-home", default=None, help="Hermes home directory")
+    p_hermes_install.add_argument("--profile", default=None, help="A Hermes profile, an agent of its own, instead of the home above")
     _scope_options(p_hermes_install, helps=hermes_scope)
     p_hermes_install.add_argument(
         "--mode",
@@ -607,13 +608,14 @@ def main(argv: list[str] | None = None) -> int:
     p_hermes_install.add_argument("--activate", action="store_true", help="Set memory.provider to mnemos in Provider Mode")
     p_hermes_install.add_argument("--with-mcp", action="store_true", help="Also add Mnemos to Hermes mcp_servers")
     p_hermes_install.add_argument("--mcp-name", default="mnemos", help="Hermes MCP server name")
-    p_hermes_install.add_argument("--force", action="store_true", help="Replace an existing shim")
+    p_hermes_install.add_argument("--force", action="store_true", help="Replace a plugin of this name that isn't Mnemos's, or another memory provider")
     p_hermes_install.add_argument("--dry-run", action="store_true", help="Show what would be written")
     p_hermes_quickstart = hermes_sub.add_parser(
         "quickstart",
         help="Safely install Mnemos for Hermes and run doctor",
     )
     p_hermes_quickstart.add_argument("--hermes-home", default=None, help="Hermes home directory")
+    p_hermes_quickstart.add_argument("--profile", default=None, help="A Hermes profile, an agent of its own, instead of the home above")
     _scope_options(p_hermes_quickstart, helps=hermes_scope)
     p_hermes_quickstart.add_argument(
         "--agent-safe",
@@ -634,7 +636,20 @@ def main(argv: list[str] | None = None) -> int:
     p_hermes_quickstart.add_argument("--dry-run", action="store_true", help="Show what would be written")
     p_hermes_doctor = hermes_sub.add_parser("doctor", help="Check Hermes Mnemos setup")
     p_hermes_doctor.add_argument("--hermes-home", default=None, help="Hermes home directory")
+    p_hermes_doctor.add_argument("--profile", default=None, help="A Hermes profile, an agent of its own, instead of the home above")
     hermes_sub.add_parser("shim", help="Print the Hermes provider shim")
+    p_hermes_tool = hermes_sub.add_parser(
+        "tool",
+        help="Run one of the agent's memory tools from a shell, for a Hermes job that isn't offered them",
+    )
+    p_hermes_tool.add_argument("tool_name", metavar="tool", help="The tool, as the agent knows it: mnemos_capture")
+    p_hermes_tool.add_argument(
+        "tool_arguments", metavar="arguments", nargs="?", default=None,
+        help="Its arguments as JSON; read from stdin when left out",
+    )
+    p_hermes_tool.add_argument("--hermes-home", default=None, help="Hermes home directory")
+    p_hermes_tool.add_argument("--profile", default=None, help="A Hermes profile, an agent of its own")
+    _scope_options(p_hermes_tool, helps=hermes_scope)
 
     # ── identity ──
     p_identity = sub.add_parser("identity", help="Computed vs declared identity")
@@ -722,6 +737,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     _scope_options(p_connect)
     p_connect.add_argument("--name", default="mnemos", help="MCP server name")
+    p_connect.add_argument(
+        "--profile", default=None,
+        help="Hermes: connect this profile, an agent of its own with its own memory",
+    )
     p_connect.add_argument("--write", action="store_true", help="Do it instead of showing what it would do")
     p_connect.add_argument(
         "--no-prompt", action="store_true",
@@ -4411,6 +4430,14 @@ def _cmd_hermes(args: argparse.Namespace) -> int:
         quickstart_hermes,
         render_plugin_shim,
     )
+    from .integrations.hermes.scope import profile_home
+
+    if getattr(args, "profile", None):
+        try:
+            args.hermes_home = str(profile_home(args.profile))
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 1
 
     if args.hermes_command == "install":
         result = install_hermes_plugin(
@@ -4453,8 +4480,45 @@ def _cmd_hermes(args: argparse.Namespace) -> int:
         print(render_plugin_shim())
         return 0
 
-    print("Usage: mnemos hermes {install|quickstart|doctor|shim}", file=sys.stderr)
+    if args.hermes_command == "tool":
+        return _hermes_tool(args)
+
+    print("Usage: mnemos hermes {install|quickstart|doctor|shim|tool}", file=sys.stderr)
     return 1
+
+
+def _hermes_tool(args: argparse.Namespace) -> int:
+    """One of the agent's memory tools, run from a shell: the same code the provider
+    runs, for a Hermes that runs a scheduled job without its provider."""
+    from dataclasses import replace
+
+    from .integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore
+
+    raw = args.tool_arguments if args.tool_arguments is not None else sys.stdin.read()
+    try:
+        values = json.loads(raw.strip() or "{}")
+    except ValueError as exc:
+        print(f"The arguments aren't JSON: {exc}", file=sys.stderr)
+        return 1
+    if not isinstance(values, dict):
+        print("The arguments should be a JSON object.", file=sys.stderr)
+        return 1
+    named = {
+        name: getattr(args, name)
+        for name in ("db_path", "agent_id", "person_id", "project_scope")
+        if getattr(args, name, None)
+    }
+    provider = MnemosMemoryProviderCore(replace(HermesMnemosConfig.load(args.hermes_home), **named))
+    provider.initialize("hermes-job", hermes_home=args.hermes_home, platform="cron", agent_context="primary")
+    try:
+        reply = json.loads(provider.handle_tool_call(args.tool_name, values))
+    finally:
+        provider.shutdown()
+    if not reply.get("ok"):
+        print(reply.get("error") or reply, file=sys.stderr)
+        return 1
+    print(reply["result"])
+    return 0
 
 
 def _mcp_available() -> bool:
@@ -4575,6 +4639,45 @@ def _remove_registered_server(tool: str, parts: list[str], *, write: bool) -> st
     return f"{line} said: {said[:200]}"
 
 
+def _hours_taken_out(*, write: bool) -> tuple[list[str], list[str]]:
+    """The quiet hours connect --hours put in an agent's own scheduler: what's there or
+    was removed, and what went wrong. Each Hermes home has a scheduler of its own, and a
+    job left in one would keep waking that agent, on its provider, for a command that's gone."""
+    from .integrations.hermes.installer import known_hermes_homes
+    from .setup import agent_hours as _hours
+
+    done: list[str] = []
+    problems: list[str] = []
+
+    def take_out(key: str, label: str) -> None:
+        binary = shutil.which(key)
+        held = _hours.listed(key, binary) if binary else None
+        if not held:
+            return
+        if write:
+            ok, said = _hours.remove(key)
+            if not ok:
+                problems.append(f"{label}: {said}")
+                return
+        done.append(
+            f"{label}: the quiet hours ({len(held)} jobs) {'removed from' if write else 'in'} its scheduler"
+        )
+
+    home_was = os.environ.get("HERMES_HOME")
+    default = (Path.home() / ".hermes").resolve()
+    try:
+        for home in known_hermes_homes():
+            os.environ["HERMES_HOME"] = str(home)
+            take_out("hermes", "Hermes" if home.resolve() == default else f"Hermes ({home})")
+    finally:
+        if home_was is None:
+            os.environ.pop("HERMES_HOME", None)
+        else:
+            os.environ["HERMES_HOME"] = home_was
+    take_out("openclaw", "OpenClaw")
+    return done, problems
+
+
 def _cmd_uninstall(args: argparse.Namespace) -> int:
     """Take Mnemos out of every client its setup writes to, and unschedule
     its jobs. Its memories stay: they are the agent's, and this says where
@@ -4640,22 +4743,16 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
             shutil.rmtree(hook_dir, ignore_errors=True)
         done.append(f"OpenClaw: the mnemos-wake hook {'removed from' if write else 'in'} {hook_dir}")
 
-    # The quiet hours connect --hours put in an agent's own scheduler.
-    from .setup import agent_hours as _hours
+    from .integrations.hermes.installer import known_hermes_homes, remove_from_hermes
 
-    for key, label in (("hermes", "Hermes"), ("openclaw", "OpenClaw")):
-        binary = shutil.which(key)
-        held = _hours.listed(key, binary) if binary else None
-        if not held:
-            continue
-        if write:
-            ok, said = _hours.remove(key)
-            if not ok:
-                problems.append(f"{label}: {said}")
-                continue
-        done.append(
-            f"{label}: the quiet hours ({len(held)} jobs) {'removed from' if write else 'in'} its scheduler"
-        )
+    for home in known_hermes_homes():
+        said, trouble = remove_from_hermes(home, write=write)
+        done.extend(said)
+        problems.extend(trouble)
+
+    said, trouble = _hours_taken_out(write=write)
+    done.extend(said)
+    problems.extend(trouble)
 
     if done:
         print("Removed:" if write else "Would remove:")

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,7 +14,16 @@ from typing import Any
 
 from ...file_security import atomic_write_text
 from ...setup.state import mnemos_command
-from .scope import default_hermes_home, save_hermes_mnemos_config, slugify
+from .scope import (
+    HermesMnemosConfig,
+    config_copied_from_elsewhere,
+    default_hermes_home,
+    profile_agent_id,
+    profile_store,
+    save_hermes_mnemos_config,
+    slugify,
+)
+from .tools import TOOL_SCHEMAS
 
 
 PLUGIN_NAME = "mnemos"
@@ -21,11 +31,9 @@ PLUGIN_VERSION = "0.3.0"
 PROVIDER_MODE = "provider"
 SIDECAR_MODE = "sidecar"
 DEFAULT_MCP_SERVER_NAME = "mnemos"
-# Every conversation on a Hermes gateway reaches an MCP tool through one server,
-# which can't tell them apart, so a handoff left there would land in the one
-# slot they'd all share. In Provider Mode the agent has mnemos_identity_handoff,
-# which knows its conversation.
-_PROVIDER_LEAVES_OUT = ("mnemos_handoff", "mnemos_context")
+# What Mnemos itself writes in a server's entry: anything more is someone's own.
+_OWN_SERVER_KEYS = {"command", "args", "env", "timeout", "connect_timeout"}
+_OWN_SERVER_ENV = {"MNEMOS_HARNESS"}
 # Mnemos and what it imports, which Hermes' own environment has to be able to find.
 _NEEDS_IN_HERMES = ("mnemos", "ulid", "dotenv", "yaml", "mcp")
 _SHIM_OPENING = '"""Mnemos memory provider shim for Hermes Agent.'
@@ -82,10 +90,12 @@ def render_plugin_shim() -> str:
     return (
         f"{_SHIM_OPENING}\"\"\"\n\n\n"
         "def register(ctx):\n"
-        "    import sys\n\n"
+        "    import os, sys\n\n"
         "    # Where Mnemos was when it was connected. Looked in last, so Hermes' own\n"
         "    # packages win. If Mnemos moves, run `mnemos connect hermes --write` again.\n"
-        f"    sys.path.extend(p for p in {_mnemos_import_paths()!r} if p not in sys.path)\n\n"
+        f"    sys.path.extend(p for p in {_mnemos_import_paths()!r} if p not in sys.path)\n"
+        "    # Its command, for what the agent is told to run: Hermes' shell may not find it.\n"
+        f"    os.environ.setdefault('MNEMOS_COMMAND', {mnemos_command()!r})\n\n"
         "    from agent.memory_provider import MemoryProvider\n"
         "    from mnemos.integrations.hermes import build_memory_provider_class\n\n"
         "    ctx.register_memory_provider(build_memory_provider_class(MemoryProvider)())\n"
@@ -196,11 +206,8 @@ def render_plugin_manifest() -> str:
         "kind: exclusive\n"
         "description: Local-first Mnemos identity-continuity provider for Hermes\n"
         "provides_tools:\n"
-        "  - mnemos_identity_capture\n"
-        "  - mnemos_identity_recall\n"
-        "  - mnemos_identity_correct\n"
-        "  - mnemos_identity_report\n"
-        "hooks:\n"
+        + "".join(f"  - {tool['name']}\n" for tool in TOOL_SCHEMAS)
+        + "hooks:\n"
         "  - prefetch\n"
         "  - on_session_end\n"
         "  - on_memory_write\n"
@@ -214,15 +221,13 @@ def render_plugin_readme() -> str:
         "# Mnemos for Hermes\n\n"
         "This directory is a small Hermes memory-provider shim. The durable identity-continuity "
         "implementation lives in the installed `mnemos-continuity` Python package.\n\n"
-        "Provider Mode enables Mnemos as Hermes' single active external memory provider while "
-        "leaving Hermes built-in `MEMORY.md` and `USER.md` active:\n\n"
-        "```bash\n"
-        "hermes config set memory.provider mnemos\n"
-        "```\n\n"
+        "Provider Mode makes Mnemos Hermes' single active external memory provider, leaving "
+        "Hermes built-in `MEMORY.md` and `USER.md` active. It's what `mnemos connect hermes "
+        "--write` sets up.\n\n"
         "Sidecar Mode leaves `memory.provider` unchanged and exposes Mnemos through MCP/tools "
         "for agents already using Honcho, Supermemory, Mem0, or another external provider.\n\n"
-        "Mnemos stores local scoped continuity in `$HERMES_HOME/mnemos/mnemos.db` by default. "
-        "Provider and sidecar settings can live in `$HERMES_HOME/mnemos.json`.\n"
+        "Each Hermes profile is its own agent, with its own memory in `~/.mnemos/`. Which one "
+        "is in `$HERMES_HOME/mnemos.json`.\n"
     )
 
 
@@ -241,6 +246,7 @@ class HermesInstallResult:
     activated: bool = False
     dry_run: bool = False
     warnings: list[str] = field(default_factory=list)
+    notes: list[str] = field(default_factory=list)
     hermes_loads: str = ""
     hermes_load_problem: str = ""
 
@@ -280,8 +286,9 @@ class HermesInstallResult:
         if self.warnings:
             lines.append("Warnings:")
             lines.extend(f"- {warning}" for warning in self.warnings)
+        lines.extend(self.notes)
         if self.mode == PROVIDER_MODE and not self.activated:
-            lines.append("Enable with: hermes config set memory.provider mnemos")
+            lines.append("Enable with: mnemos connect hermes --write")
         if self.mode == SIDECAR_MODE:
             lines.append("Sidecar Mode keeps the existing Hermes external memory provider and exposes Mnemos through MCP/tools.")
         return "\n".join(lines)
@@ -304,7 +311,11 @@ class HermesQuickstartResult:
             return False
         if self.warnings:
             return False
-        if self.agent_safe and not self.install_result.mcp_configured:
+        if (
+            self.agent_safe
+            and not self.install_result.mcp_configured
+            and self.install_result.active_provider != PLUGIN_NAME
+        ):
             return False
         return True
 
@@ -395,8 +406,33 @@ def install_hermes_plugin(
         dry_run=dry_run,
         active_provider=_read_active_provider(home / "config.yaml"),
     )
+    if selected_mode == SIDECAR_MODE and agent_safe and result.active_provider == PLUGIN_NAME:
+        result.mode = PROVIDER_MODE
+        result.activated = True
+        result.notes.append(
+            "Mnemos is already Hermes' memory provider, which carries its tools: nothing to add."
+        )
+        return result
+
+    # One agent, one memory, whichever way it is set up and in whatever order:
+    # what was asked for here, or else the memory this Hermes already has.
+    kept = HermesMnemosConfig.load(home)
+    # The server in a copied home names the memory of the one it was copied from.
+    copied = config_copied_from_elsewhere(home)
+    if _no_scope_chosen(home, db_path, agent_id, person_id, project_scope):
+        db_path, agent_id, person_id, project_scope = _one_memory_scope(home)
+    else:
+        db_path = db_path or kept.db_path
+        agent_id = agent_id or kept.agent_id
+        person_id = person_id or kept.person_id
+        project_scope = project_scope or kept.project_scope
+
+    older = home / "mnemos" / "mnemos.db"
+    if db_path and older.exists() and Path(db_path).expanduser().resolve() != older.resolve():
+        result.notes.append(f"An older memory from this Hermes is still at {older}. It stays there, unread.")
 
     files: dict[Path, str] = {}
+    hook_dir = home / "hooks" / PRELOAD_HOOK
     if selected_mode == PROVIDER_MODE:
         for provider_dir in plugin_dirs:
             files.update({
@@ -404,28 +440,31 @@ def install_hermes_plugin(
                 provider_dir / "plugin.yaml": render_plugin_manifest(),
                 provider_dir / "README.md": render_plugin_readme(),
             })
-
-    hook_dir = home / "hooks" / PRELOAD_HOOK
-    if selected_mode == PROVIDER_MODE:
         files.update({hook_dir / name: content for name, content in render_preload_hook().items()})
     elif not dry_run:
         _remove_preload_hook(hook_dir)
 
-    for path, content in files.items():
-        existing = path.read_text(encoding="utf-8", errors="replace") if path.exists() else None
-        # A shim Mnemos wrote says where Mnemos was then, so it goes stale.
-        ours = existing is not None and existing.startswith(_SHIM_OPENING)
-        if existing is not None and existing != content and not (force or ours):
-            result.warnings.append(f"Existing file differs; re-run with --force to replace: {path}")
-            continue
+    # Someone else's plugin under this name stays, and Mnemos isn't made the
+    # provider: Hermes would load theirs and call it Mnemos.
+    theirs = [
+        path for path, content in files.items()
+        if not force
+        and not _wrote_this_folder(path.parent)
+        and path.exists()
+        and path.read_text(encoding="utf-8", errors="replace") != content
+    ]
+    for path in theirs:
+        result.warnings.append(f"Existing file differs; re-run with --force to replace: {path}")
+    for path, content in {} if theirs else files.items():
         if dry_run:
             result.files_written.append(path)
             continue
+        ours = path.exists() and _wrote_this_folder(path.parent)
         path.parent.mkdir(parents=True, exist_ok=True)
-        atomic_write_text(path, content, backup_existing=force or ours)
+        atomic_write_text(path, content, backup_existing=path.exists() and (force or ours))
         result.files_written.append(path)
 
-    if selected_mode == PROVIDER_MODE and not dry_run:
+    if selected_mode == PROVIDER_MODE and not dry_run and not theirs:
         result.hermes_loads, result.hermes_load_problem = _hermes_load_check(home)
         if result.hermes_loads == "no":
             result.warnings.append(
@@ -439,14 +478,18 @@ def install_hermes_plugin(
         "person_id": person_id,
         "project_scope": project_scope,
     }
-    if any(value not in (None, "") for value in config_updates.values()):
+    if any(value not in (None, "") for value in config_updates.values()) and not theirs:
         config_path = home / "mnemos.json"
         if dry_run:
             result.config_path = config_path
         else:
-            result.config_path = save_hermes_mnemos_config(home, config_updates)
+            result.config_path = save_hermes_mnemos_config(home, {**config_updates, "hermes_home": str(home)})
 
-    if should_configure_mcp:
+    # This run's first change to Hermes' config is what its backup keeps: the
+    # file as it found it, however many changes follow.
+    backed_up: set[Path] = set()
+
+    def add_server() -> None:
         configured, warning, config_path = _configure_mcp_server(
             home,
             server_name=mcp_name,
@@ -455,25 +498,40 @@ def install_hermes_plugin(
             person_id=person_id,
             project_scope=project_scope,
             dry_run=dry_run,
-            replace_existing_server=not agent_safe,
-            exclude_tools=(
-                _PROVIDER_LEAVES_OUT
-                if selected_mode == PROVIDER_MODE and result.hermes_loads != "no"
-                else ()
-            ),
+            replace_existing_server=copied or not agent_safe,
+            backed_up=backed_up,
         )
         result.mcp_configured = configured
         result.mcp_config_path = config_path
         if warning:
             result.warnings.append(warning)
 
-    if selected_mode == SIDECAR_MODE and activate:
-        result.warnings.append("Sidecar Mode leaves memory.provider unchanged; ignoring --activate.")
+    if should_configure_mcp:
+        add_server()
+
+    if selected_mode == SIDECAR_MODE:
+        if activate:
+            result.warnings.append("Sidecar Mode leaves memory.provider unchanged; ignoring --activate.")
+        if result.active_provider == PLUGIN_NAME:
+            # Asked for the tools alone, from Provider Mode: the switch, with the
+            # same memory. (agent_safe, which promises to leave it, returned above.)
+            if not dry_run:
+                cleared, warning = _clear_memory_provider(home, backed_up)
+                if warning:
+                    result.warnings.append(warning)
+                if cleared:
+                    result.active_provider = _read_active_provider(home / "config.yaml")
+            result.notes.append(
+                "Mnemos is no longer Hermes' memory provider, so this agent has the tools alone, on "
+                "the same memory. For its wake and per-message recall back: mnemos connect hermes --write"
+            )
+    elif theirs:
+        pass  # result.activated stays False
     elif activate:
         if dry_run:
-            result.activated = True
+            result.activated = result.active_provider in {"", PLUGIN_NAME} or force
         else:
-            activated, warning = _activate_memory_provider(home)
+            activated, warning = _activate_memory_provider(home, force=force, backed_up=backed_up)
             result.activated = activated
             if warning:
                 result.warnings.append(warning)
@@ -481,33 +539,66 @@ def install_hermes_plugin(
     else:
         result.activated = result.active_provider == PLUGIN_NAME
 
+    if (
+        selected_mode == PROVIDER_MODE
+        and result.active_provider == PLUGIN_NAME
+        and not should_configure_mcp
+        and not dry_run
+        and not theirs  # then the provider carries nothing, and the server is what the agent has
+    ):
+        if result.hermes_loads == "no":
+            # The provider carries the tools: without it, a server is how the agent has them.
+            before = _read_mcp_server(home, mcp_name)
+            add_server()
+            its_memory = _another_memory(home, before)
+            if its_memory:
+                result.notes.append(
+                    f"mcp_servers.{mcp_name} kept another memory, in {its_memory}. It opens this "
+                    "agent's memory now, and that one stays there, unread."
+                )
+        else:
+            _retire_own_server(home, mcp_name, result, backed_up)
+
     return result
+
+
+def _wrote_this_folder(folder: Path) -> bool:
+    """Whether a plugin or hook folder holds what Mnemos wrote: those go stale as
+    Mnemos moves and changes, and are its own to rewrite."""
+
+    for name, opening in (("__init__.py", _SHIM_OPENING), ("handler.py", _HOOK_OPENING)):
+        path = folder / name
+        if path.is_file() and path.read_text(encoding="utf-8", errors="replace").startswith(opening):
+            return True
+    return False
 
 
 def _no_scope_chosen(
     home: Path, db_path: str | None, agent_id: str | None, person_id: str | None, project_scope: str | None,
 ) -> bool:
-    """Whether nobody has said which memory this is: no flags, no ``mnemos.json``,
-    and no store from a provider that worked it out chat by chat."""
+    """Whether nobody has said which memory this is: nothing named here, none in
+    ``mnemos.json``, and no store from a provider that worked it out chat by chat."""
 
     if any((db_path, agent_id, person_id, project_scope)):
         return False
-    return not (home / "mnemos.json").exists() and not (home / "mnemos" / "mnemos.db").exists()
+    kept = HermesMnemosConfig.load(home)
+    return not (kept.db_path or kept.agent_id) and not (home / "mnemos" / "mnemos.db").exists()
 
 
 def _one_memory_scope(home: Path) -> tuple[str, str, str, str]:
     """One agent, one memory, in every chat and for everyone in them, as
     ``mnemos connect hermes`` sets it up: left to itself the provider works its
     scope out from the chat's name and the person writing, so a group's rename or
-    a private chat is another memory. What a sidecar already keeps stays kept."""
+    a private chat is another memory. Each profile is its own agent. What a
+    sidecar already keeps stays kept."""
 
     from ...simple_scope import resolve_scope
 
     server = _read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)
-    if server:
+    if server and not config_copied_from_elsewhere(home):
         scope = _sidecar_scope(server)
     else:
-        scope = resolve_scope(agent_id="hermes", db_path=str(Path.home() / ".mnemos" / "hermes.db"))
+        scope = resolve_scope(agent_id=profile_agent_id(home), db_path=profile_store(home))
     return str(scope.db_path), scope.agent_id, scope.person_id, scope.project_scope
 
 
@@ -553,10 +644,6 @@ def quickstart_hermes(
     warnings: list[str] = []
     if agent_safe and wants_provider:
         warnings.append("Agent-safe quickstart ignores provider activation flags and keeps memory.provider unchanged.")
-    one_memory = mode == PROVIDER_MODE and _no_scope_chosen(home, db_path, agent_id, person_id, project_scope)
-    if one_memory:
-        db_path, agent_id, person_id, project_scope = _one_memory_scope(home)
-
     install = install_hermes_plugin(
         hermes_home=home,
         db_path=db_path,
@@ -564,7 +651,7 @@ def quickstart_hermes(
         person_id=person_id,
         project_scope=project_scope,
         mode=mode,
-        configure_mcp=mode == SIDECAR_MODE or one_memory,
+        configure_mcp=mode == SIDECAR_MODE,
         mcp_server_name=mcp_server_name,
         activate=activate,
         dry_run=dry_run,
@@ -579,13 +666,13 @@ def quickstart_hermes(
                 f"Agent-safe quickstart expected to preserve memory.provider as {preserved_provider or '(not set)'}, "
                 f"but found {after_provider or '(not set)'}."
             )
-        if not install.mcp_configured:
+        if not install.mcp_configured and after_provider != PLUGIN_NAME:
             warnings.append("Agent-safe quickstart could not safely configure the Mnemos MCP sidecar.")
 
     restart_likely = bool(install.files_written or install.mcp_configured or install.activated)
     return HermesQuickstartResult(
         hermes_home=home,
-        mode=mode,
+        mode=install.mode,
         agent_safe=agent_safe,
         install_result=install,
         diagnostics=after,
@@ -593,6 +680,21 @@ def quickstart_hermes(
         restart_likely_needed=restart_likely,
         warnings=warnings,
     )
+
+
+def connect_would_change(home: Path) -> bool:
+    """Whether Provider Mode here isn't what this Mnemos would set up: a plugin
+    from an older Mnemos or another place, which can't load or names a path gone,
+    or the server it no longer needs beside it. Read from a command run in Mnemos's
+    own environment: inside Hermes the paths come out differently."""
+
+    shim = provider_plugin_dirs(home)[0] / "__init__.py"
+    try:
+        stale = shim.read_text(encoding="utf-8", errors="replace") != render_plugin_shim()
+    except OSError:
+        stale = True
+    server = _read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)
+    return stale or (_is_mnemos_server(server) and not _has_settings_of_its_own(server))
 
 
 def build_diagnostics(hermes_home: str | Path | None = None) -> dict[str, Any]:
@@ -623,6 +725,13 @@ def build_diagnostics(hermes_home: str | Path | None = None) -> dict[str, Any]:
         mode = "not-configured"
     # A sidecar's memory is wherever its server opens it, not a file in Hermes' folder.
     db_path = Path(_sidecar_scope(mcp_server).db_path).expanduser() if mode == "sidecar" else _configured_db_path(home)
+    damage = _store_damage(db_path)
+    # Beside the provider, a server opening another memory splits this agent in two.
+    other_memory = ""
+    if active == PLUGIN_NAME and mcp_server and _is_mnemos_server(mcp_server):
+        tools_store = Path(_sidecar_scope(mcp_server).db_path).expanduser()
+        if tools_store.resolve() != db_path.resolve():
+            other_memory = str(tools_store)
     return {
         "hermes_home": str(home),
         "plugin_dir": str(plugin_dir),
@@ -646,7 +755,9 @@ def build_diagnostics(hermes_home: str | Path | None = None) -> dict[str, Any]:
         "mnemos_command": command,
         "db_path": str(db_path),
         "db_exists": db_path.exists(),
-        "ready": loads != "no" if active == PLUGIN_NAME else mcp_configured,
+        "db_damage": damage,
+        "tools_open_other_memory": other_memory,
+        "ready": not damage and not other_memory and (loads != "no" if active == PLUGIN_NAME else mcp_configured),
         "restart_likely_needed": active == PLUGIN_NAME or mcp_configured or provider_shim_ready,
     }
 
@@ -663,12 +774,22 @@ def format_diagnostics(payload: dict[str, Any]) -> str:
         f"Provider:    {payload['active_memory_provider'] or '(not set)'}",
         f"MCP sidecar: {'yes' if payload['mcp_server_configured'] else 'no'}",
         f"Config:      {'yes' if payload['mnemos_config_exists'] else 'no'}",
-        f"Database:    {payload['db_path']} ({'exists' if payload['db_exists'] else 'not created yet'})",
+        f"Database:    {payload['db_path']} ({_store_state(payload)})",
         f"Command:     {payload['mnemos_command']}",
         f"Restart:     {'likely after install/config changes' if payload['restart_likely_needed'] else 'not likely'}",
     ]
     if payload.get("hermes_loads_mnemos"):
         lines.append(_hermes_load_line(payload["hermes_loads_mnemos"], payload.get("hermes_load_problem", "")))
+    if payload.get("db_damage"):
+        lines.append(
+            f"The memory file is damaged: {payload['db_damage']}. Hermes still answers, without this "
+            "memory. `mnemos doctor` has what to do next."
+        )
+    if payload.get("tools_open_other_memory"):
+        lines.append(
+            f"Two memories: the provider keeps {payload['db_path']}, and the tools keep "
+            f"{payload['tools_open_other_memory']}. Run `mnemos connect hermes --write` to keep one."
+        )
     if payload["provider_mode_active"] and payload.get("hermes_loads_mnemos") == "no":
         lines.append(
             "Provider Mode: set, but Hermes has no memory until it can load Mnemos. "
@@ -681,12 +802,39 @@ def format_diagnostics(payload: dict[str, Any]) -> str:
         lines.append(f"Sidecar Mode: active; memory.provider preserved as {preserved}.")
     elif payload["active_memory_provider"] and payload["active_memory_provider"] != PLUGIN_NAME:
         lines.append(
-            "Provider Mode would replace the current external provider; use "
-            "`mnemos hermes install --mode sidecar` to keep it."
+            f"Hermes' memory provider is {payload['active_memory_provider']}, and Hermes has one slot. "
+            "`mnemos connect hermes --write` keeps it and adds the tools alone."
         )
     else:
-        lines.append("Enable with: hermes config set memory.provider mnemos")
+        lines.append("Enable with: mnemos connect hermes --write")
     return "\n".join(lines)
+
+
+def _store_damage(path: Path) -> str:
+    """What's wrong with the memory file, in SQLite's words, or "": fine, not there
+    yet, or busy, which is not damage."""
+
+    if not path.is_file() or path.stat().st_size == 0:
+        return ""
+    try:
+        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=2)
+    except sqlite3.Error as exc:
+        return str(exc)
+    try:
+        said = conn.execute("PRAGMA quick_check(1)").fetchone()[0]
+        return "" if said == "ok" else str(said)
+    except sqlite3.OperationalError as exc:
+        return "" if "locked" in str(exc) or "busy" in str(exc) else str(exc)
+    except sqlite3.Error as exc:
+        return str(exc)
+    finally:
+        conn.close()
+
+
+def _store_state(payload: dict[str, Any]) -> str:
+    if payload.get("db_damage"):
+        return "damaged"
+    return "exists" if payload["db_exists"] else "not created yet"
 
 
 def _diagnostic_mode_label(payload: dict[str, Any]) -> str:
@@ -714,23 +862,84 @@ def _remove_preload_hook(hook_dir: Path) -> None:
             pass  # someone keeps something of their own there
 
 
-def _restore_provider_tools(server: Any) -> bool:
-    """Take back what Provider Mode left out of an MCP server: without the
-    provider, nothing stands in for those tools. Anyone's own exclusions stay.
-    Returns whether it changed the server."""
+def _is_mnemos_server(server: Any) -> bool:
+    """Whether an MCP server's entry runs Mnemos, rather than something of the
+    same name."""
 
-    tools = server.get("tools") if isinstance(server, dict) else None
-    exclude = tools.get("exclude") if isinstance(tools, dict) else None
-    if not isinstance(exclude, list) or not set(exclude) & set(_PROVIDER_LEAVES_OUT):
+    if not isinstance(server, dict):
         return False
-    kept = [name for name in exclude if name not in _PROVIDER_LEAVES_OUT]
-    if kept:
-        tools["exclude"] = kept
-    else:
-        del tools["exclude"]
-        if not tools:
-            del server["tools"]
-    return True
+    args = [str(arg) for arg in server.get("args") or []]
+    return Path(str(server.get("command") or "")).stem == "mnemos" and "serve" in args
+
+
+def _has_settings_of_its_own(server: dict[str, Any]) -> bool:
+    env = server.get("env")
+    return bool(set(server) - _OWN_SERVER_KEYS or (isinstance(env, dict) and set(env) - _OWN_SERVER_ENV))
+
+
+def _write_config(config_path: Path, text: str, backed_up: set[Path] | None) -> None:
+    """Hermes' config, written where it really lives (a linked file stays linked),
+    with a backup of it as this run found it."""
+
+    target = config_path.resolve() if config_path.is_symlink() else config_path
+    first = backed_up is None or target not in backed_up
+    atomic_write_text(target, text, backup_existing=first and target.exists())
+    if backed_up is not None:
+        backed_up.add(target)
+
+
+def _retire_own_server(home: Path, server_name: str, result: HermesInstallResult, backed_up: set[Path]) -> None:
+    """Take out the server Mnemos wrote for this agent when it had only tools. The
+    provider carries them now, and one that can't tell conversations apart beside
+    it would show the agent every tool twice. One with settings of its own stays."""
+
+    server = _read_mcp_server(home, server_name)
+    if not server or not _is_mnemos_server(server):
+        return
+    if _has_settings_of_its_own(server):
+        result.notes.append(
+            f"mcp_servers.{server_name} has settings of its own, so it stays, and the agent will see "
+            "Mnemos's tools twice. Take it out of Hermes' config when you're ready."
+        )
+        return
+    problem = _without_server(home, server_name, backed_up)
+    if problem:
+        result.warnings.append(problem)
+        return
+    said = f"The provider carries the tools now, so mcp_servers.{server_name} is gone."
+    its_memory = _another_memory(home, server)
+    if its_memory:
+        said += f" It kept another memory, in {its_memory}, which stays there, unread."
+    result.notes.append(said)
+
+
+def _another_memory(home: Path, server: dict[str, Any] | None) -> Path | None:
+    """The store a Mnemos server opens, if it isn't the one this home's config names."""
+
+    if not server or not _is_mnemos_server(server):
+        return None
+    its_memory = Path(_sidecar_scope(server).db_path).expanduser()
+    return None if its_memory.resolve() == _configured_db_path(home).resolve() else its_memory
+
+
+def _without_server(home: Path, server_name: str, backed_up: set[Path] | None) -> str | None:
+    """Take one server out of Hermes' config, or say why not."""
+
+    config_path = home / "config.yaml"
+    try:
+        import yaml  # type: ignore
+
+        existing = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        servers = existing.get("mcp_servers") if isinstance(existing, dict) else None
+        if not isinstance(servers, dict) or server_name not in servers:
+            return None
+        del servers[server_name]
+        if not servers:
+            del existing["mcp_servers"]
+        _write_config(config_path, yaml.safe_dump(existing, sort_keys=False), backed_up)
+        return None
+    except Exception as exc:
+        return f"Could not update {config_path}: {exc}"
 
 
 def _configure_mcp_server(
@@ -743,7 +952,7 @@ def _configure_mcp_server(
     project_scope: str | None = None,
     dry_run: bool = False,
     replace_existing_server: bool = True,
-    exclude_tools: tuple[str, ...] = (),
+    backed_up: set[Path] | None = None,
 ) -> tuple[bool, str | None, Path]:
     config_path = home / "config.yaml"
     if dry_run:
@@ -755,8 +964,6 @@ def _configure_mcp_server(
         person_id=person_id,
         project_scope=project_scope,
     )
-    if exclude_tools:
-        server["tools"] = {"exclude": list(exclude_tools)}
 
     try:
         import yaml  # type: ignore
@@ -797,11 +1004,26 @@ def _configure_mcp_server(
                 config_path,
             )
         existing_server = mcp_servers.get(server_name)
-        restored = not exclude_tools and _restore_provider_tools(existing_server)
-        if existing_server and existing_server != server and not replace_existing_server:
-            if restored:
-                atomic_write_text(config_path, yaml.safe_dump(existing, sort_keys=False), backup_existing=True)
+        if isinstance(existing_server, dict) and existing_server:
+            same_server = all(existing_server.get(key) == server[key] for key in ("command", "args"))
+            if not same_server and not replace_existing_server:
+                return (
+                    False,
+                    f"Existing mcp_servers.{server_name} differs; agent-safe mode left it unchanged.",
+                    config_path,
+                )
+            # What Mnemos runs is Mnemos's to set. Everything else there is someone's own.
+            own_env = existing_server.get("env")
+            server = {
+                **server,
+                **existing_server,
+                "command": server["command"],
+                "args": server["args"],
+                "env": {**(own_env if isinstance(own_env, dict) else {}), **server["env"]},
+            }
+            if server == existing_server:
                 return True, None, config_path
+        elif existing_server and not replace_existing_server:
             return (
                 False,
                 f"Existing mcp_servers.{server_name} differs; agent-safe mode left it unchanged.",
@@ -809,10 +1031,7 @@ def _configure_mcp_server(
             )
         mcp_servers[server_name] = server
         existing["mcp_servers"] = mcp_servers
-        atomic_write_text(
-            config_path, yaml.safe_dump(existing, sort_keys=False),
-            backup_existing=config_path.exists(),
-        )
+        _write_config(config_path, yaml.safe_dump(existing, sort_keys=False), backed_up)
         return True, None, config_path
     except Exception as exc:
         return False, f"Could not update {config_path} for MCP sidecar mode: {exc}", config_path
@@ -942,21 +1161,15 @@ def _simple_yaml_value(raw: str) -> Any:
 
 
 def _configured_db_path(home: Path) -> Path:
-    path = home / "mnemos" / "mnemos.db"
-    config_path = home / "mnemos.json"
-    if config_path.exists():
-        try:
-            data = json.loads(config_path.read_text(encoding="utf-8"))
-            raw = str(data.get("db_path") or "").strip()
-            if raw:
-                raw = raw.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
-                path = Path(raw).expanduser()
-        except Exception:
-            pass
-    return path
+    raw = HermesMnemosConfig.load(home).db_path
+    if not raw:
+        return home / "mnemos" / "mnemos.db"
+    return Path(raw.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))).expanduser()
 
 
-def _activate_memory_provider(home: Path) -> tuple[bool, str | None]:
+def _activate_memory_provider(
+    home: Path, *, force: bool = False, backed_up: set[Path] | None = None,
+) -> tuple[bool, str | None]:
     config_path = home / "config.yaml"
     try:
         import yaml  # type: ignore
@@ -970,21 +1183,116 @@ def _activate_memory_provider(home: Path) -> tuple[bool, str | None]:
     home.mkdir(parents=True, exist_ok=True)
     try:
         existing = yaml.safe_load(config_path.read_text(encoding="utf-8")) if config_path.exists() else {}
+        if existing is None:
+            existing = {}
         if not isinstance(existing, dict):
             return False, f"Existing {config_path} is not a YAML mapping, so it was not modified."
         memory = existing.get("memory")
         if memory is None:
-            existing["memory"] = {}
+            existing["memory"] = memory = {}
         elif not isinstance(memory, dict):
             return False, f"Existing memory section in {config_path} is not a mapping, so it was not modified."
-        existing["memory"]["provider"] = PLUGIN_NAME
-        atomic_write_text(
-            config_path, yaml.safe_dump(existing, sort_keys=False),
-            backup_existing=config_path.exists(),
-        )
+        holder = str(memory.get("provider") or "")
+        if holder == PLUGIN_NAME:
+            return True, None
+        if holder and not force:
+            return False, (
+                f"Hermes' memory provider is {holder}, and Hermes has one slot, so I left it. "
+                "`mnemos connect hermes --write` keeps it and adds the tools alone; "
+                "`mnemos hermes install --activate --force` replaces it."
+            )
+        memory["provider"] = PLUGIN_NAME
+        _write_config(config_path, yaml.safe_dump(existing, sort_keys=False), backed_up)
         return True, None
     except Exception as exc:
         return False, f"Could not update {config_path}: {exc}"
+
+
+def _clear_memory_provider(home: Path, backed_up: set[Path] | None = None) -> tuple[bool, str | None]:
+    """Take Mnemos out of Hermes' memory-provider slot, and only Mnemos."""
+
+    config_path = home / "config.yaml"
+    try:
+        import yaml  # type: ignore
+
+        existing = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        memory = existing.get("memory") if isinstance(existing, dict) else None
+        if not isinstance(memory, dict) or memory.get("provider") != PLUGIN_NAME:
+            return False, None
+        del memory["provider"]
+        if not memory:
+            del existing["memory"]
+        _write_config(config_path, yaml.safe_dump(existing, sort_keys=False), backed_up)
+        return True, None
+    except Exception as exc:
+        return False, f"Could not update {config_path}: {exc}"
+
+
+def known_hermes_homes() -> list[Path]:
+    """Every Hermes home this machine shows: the one in use, the default, and each
+    profile's."""
+
+    default = Path.home() / ".hermes"
+    homes = [default_hermes_home(), default]
+    profiles = default / "profiles"
+    if profiles.is_dir():
+        homes.extend(sorted(path for path in profiles.iterdir() if path.is_dir()))
+    seen: dict[Path, Path] = {}
+    for home in homes:
+        seen.setdefault(home.resolve(), home)
+    return list(seen.values())
+
+
+def remove_from_hermes(home: Path, *, write: bool) -> tuple[list[str], list[str]]:
+    """Take Mnemos out of one Hermes home: the provider slot, its server, its
+    plugin and its hook. Without ``write``, say what that would do. Returns what
+    it did and what it couldn't. ``mnemos.json`` stays, as the memories do: it's
+    how connecting again finds this agent's memory."""
+
+    done: list[str] = []
+    problems: list[str] = []
+    verb = "removed from" if write else "in"
+    backed_up: set[Path] = set()
+    config_path = home / "config.yaml"
+    if _read_active_provider(config_path) == PLUGIN_NAME:
+        problem = None
+        if write:
+            _cleared, problem = _clear_memory_provider(home, backed_up)
+        if problem:
+            problems.append(problem)
+        else:
+            done.append(f"Hermes: memory.provider {verb} {config_path}")
+    if _is_mnemos_server(_read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)):
+        problem = _without_server(home, DEFAULT_MCP_SERVER_NAME, backed_up) if write else None
+        if problem:
+            problems.append(problem)
+        else:
+            done.append(f"Hermes: the {DEFAULT_MCP_SERVER_NAME} server {verb} {config_path}")
+    for folder in provider_plugin_dirs(home):
+        if _wrote_this_folder(folder):
+            if write:
+                _remove_plugin_folder(folder)
+            done.append(f"Hermes: the Mnemos plugin {verb} {folder}")
+    hook_dir = home / "hooks" / PRELOAD_HOOK
+    if _wrote_this_folder(hook_dir):
+        if write:
+            _remove_preload_hook(hook_dir)
+        done.append(f"Hermes: the preload hook {verb} {hook_dir}")
+    return done, problems
+
+
+def _remove_plugin_folder(folder: Path) -> None:
+    """Take away what Mnemos wrote in a plugin folder, and the folder if that
+    empties it: someone may keep something of their own there."""
+
+    for name in ("__init__.py", "plugin.yaml", "README.md"):
+        (folder / name).unlink(missing_ok=True)
+        (folder / f"{name}.bak").unlink(missing_ok=True)
+    shutil.rmtree(folder / "__pycache__", ignore_errors=True)
+    try:
+        folder.rmdir()
+    except OSError:
+        pass
 
 
 def _read_active_provider(config_path: Path) -> str:

@@ -889,8 +889,15 @@ def test_the_only_code_that_writes_these_words_is_the_tools_and_the_persons_own_
     # agent calls. A note of the person's own (M17) is written the same two ways.
     assert calls("reply_to_note") == ["cli.py:_cmd_notes_reply", "interface/person.py:Interface.reply"]
     assert calls("person_note") == ["cli.py:_cmd_notes_write", "interface/person.py:Interface.note"]
-    assert calls("journal") == ["simple_mcp.py:register_simple_tools.mnemos_journal"]
-    assert calls("note") == ["simple_mcp.py:register_simple_tools.mnemos_note"]
+    # The agent's own tools, by either door: over MCP, or from inside Hermes.
+    assert calls("journal") == [
+        "integrations/hermes/provider.py:MnemosMemoryProviderCore._tool_journal",
+        "simple_mcp.py:register_simple_tools.mnemos_journal",
+    ]
+    assert calls("note") == [
+        "integrations/hermes/provider.py:MnemosMemoryProviderCore._tool_note",
+        "simple_mcp.py:register_simple_tools.mnemos_note",
+    ]
 
     # And in SQL: each table has one INSERT, nothing deletes a row, and the only
     # UPDATE sets one of the two timestamps. No statement rewrites words.

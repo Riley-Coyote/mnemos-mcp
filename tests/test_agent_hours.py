@@ -36,6 +36,8 @@ FAKE_AGENT = r'''#!{python}
 import json, os, sys
 
 jobs_file, log = os.environ["FAKE_JOBS"], os.environ["FAKE_LOG"]
+if os.environ.get("FAKE_JOBS_BY_HOME") and os.path.basename(sys.argv[0]) == "hermes":  # each home has its own
+    jobs_file = os.path.join(os.environ["HERMES_HOME"], "fake-jobs.json")
 me = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 with open(log, "a") as out:
@@ -54,19 +56,30 @@ def value(flag):
 if args[:2] == ["cron", "list"]:
     if me == "hermes":
         for job in jobs:
-            print("  %s [active]\n    Name:      %s\n    Schedule:  %s\n    Deliver:   %s\n"
-                  % (job["id"], job["name"], job["schedule"], job["deliver"]))
+            if job.get("paused") and "--all" not in args:  # as Hermes 0.17 lists them
+                continue
+            print("  %s [%s]\n    Name:      %s\n    Schedule:  %s\n    Deliver:   %s\n"
+                  % (job["id"], "paused" if job.get("paused") else "active",
+                     job["name"], job["schedule"], job["deliver"]))
     else:
         print(json.dumps({"jobs": [{"id": j["id"], "name": j["name"]} for j in jobs]}))
 elif args[:2] == ["cron", "create"] and me == "hermes":
     rest = [a for a in args[2:]]
-    jobs.append({"id": "%012x" % (len(jobs) + 1), "name": value("--name"),
+    jobs.append({"id": "%012x" % (max([int(j["id"], 16) for j in jobs] + [0]) + 1), "name": value("--name"),
                  "deliver": value("--deliver"), "schedule": rest[-2], "prompt": rest[-1]})
     save()
 elif args[:2] == ["cron", "add"] and me == "openclaw":
-    jobs.append({"id": "%012x" % (len(jobs) + 1), "name": value("--name"),
+    jobs.append({"id": "%012x" % (max([int(j["id"], 16) for j in jobs] + [0]) + 1), "name": value("--name"),
                  "schedule": value("--cron"), "prompt": value("--message"),
                  "deliver": "none" if "--no-deliver" in args else "announce"})
+    save()
+elif args[:2] == ["cron", "edit"] and me == "hermes":
+    if os.environ.get("FAKE_EDIT_FAILS"):
+        print("no gateway", file=sys.stderr)
+        sys.exit(1)
+    for job in jobs:
+        if job["id"] == args[2]:
+            job["prompt"] = value("--prompt")
     save()
 elif args[:2] in (["cron", "remove"], ["cron", "rm"]):
     jobs[:] = [j for j in jobs if j["id"] != args[2]]
@@ -89,7 +102,7 @@ def agents(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", f"{folder}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("FAKE_JOBS", str(jobs))
     monkeypatch.setenv("FAKE_LOG", str(log))
-    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    monkeypatch.setenv("HERMES_HOME", str(Path.home() / ".hermes"))
     monkeypatch.setenv("OPENCLAW_STATE_DIR", str(tmp_path / "openclaw"))
     monkeypatch.setenv("OPENCLAW_CONFIG_PATH", str(tmp_path / "openclaw" / "openclaw.json"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
@@ -166,6 +179,128 @@ def test_hermes_jobs_run_the_hand_off_and_deliver_nowhere_public(agents, capsys)
         assert "goes nowhere" in job["prompt"]
     assert state.hours_choice("hermes") == "yes"
     assert "gateway" in capsys.readouterr().out
+
+
+def test_a_hermes_job_can_reach_its_tools_from_its_shell(agents):
+    # Hermes from before September 2026 runs a job without its memory provider.
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    prompt = held(jobs)[0]["prompt"]
+    assert "/opt/mnemos/bin/mnemos hermes tool mnemos_capture" in prompt and "--agent-id hermes" in prompt
+
+
+def _hermes_job_file(jobs):
+    """Hermes' own file for its jobs, as the fake Hermes holds them."""
+    hermes_jobs = Path.home() / ".hermes" / "cron" / "jobs.json"
+    hermes_jobs.parent.mkdir(parents=True, exist_ok=True)
+    hermes_jobs.write_text(json.dumps({"jobs": held(jobs)}))
+    return hermes_jobs
+
+
+def test_jobs_with_older_words_get_the_new_ones_when_connecting_again(agents, capsys):
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    older = held(jobs)
+    for job in older:
+        job["prompt"] = "It is time for your quiet hour, with only the old words."
+    jobs.write_text(json.dumps(older))
+    _hermes_job_file(jobs)
+    capsys.readouterr()
+
+    # Without --hours: someone upgrading, who only runs connect again.
+    assert main(["connect", "hermes", "--write", "--no-upkeep"]) == 0
+
+    assert "from an older Mnemos" in capsys.readouterr().out
+    renewed = held(jobs)
+    assert len(renewed) == 3 and all("hermes tool mnemos_capture" in j["prompt"] for j in renewed)
+    assert [j["id"] for j in renewed] == [j["id"] for j in older]
+    assert not [c for c in cron_calls(log) if c[2] == "remove"]
+
+
+def _with_older_words(jobs: Path, paused: bool = False) -> list[dict]:
+    older = held(jobs)
+    for job in older:
+        job["prompt"] = "It is time for your quiet hour, with only the old words."
+    older[0]["paused"] = paused
+    jobs.write_text(json.dumps(older))
+    _hermes_job_file(jobs)
+    return older
+
+
+def test_a_paused_job_stays_paused_when_its_words_change(agents, capsys):
+    # Hermes 0.17 lists no paused job but keeps it in its file, which took connect down.
+    # Removing and making it again would have started it up, and spent someone's tokens.
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    older = _with_older_words(jobs, paused=True)
+    log.write_text("")
+
+    assert main(["connect", "hermes", "--write", "--no-upkeep"]) == 0
+
+    renewed = held(jobs)
+    assert [j["id"] for j in renewed] == [j["id"] for j in older]
+    assert renewed[0]["paused"] and all("hermes tool mnemos_capture" in j["prompt"] for j in renewed)
+    assert not [c for c in cron_calls(log) if c[2] in ("remove", "create")]
+
+
+def test_a_paused_job_is_not_made_a_second_time(agents):
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    before = held(jobs)
+    before[0]["paused"] = True
+    jobs.write_text(json.dumps(before))
+    _hermes_job_file(jobs)
+
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+
+    assert held(jobs) == before
+
+
+def test_words_that_cant_be_changed_leave_the_job_and_say_so(agents, capsys, monkeypatch):
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    older = _with_older_words(jobs)
+    monkeypatch.setenv("FAKE_EDIT_FAILS", "1")
+    capsys.readouterr()
+
+    assert main(["connect", "hermes", "--write", "--no-upkeep"]) == 1
+
+    assert "failed" in capsys.readouterr().out
+    assert held(jobs) == older
+
+
+def test_uninstall_takes_the_hours_out_of_every_profile(agents, monkeypatch):
+    # A job left in one keeps waking that agent, on its provider, for a command that's gone.
+    from mnemos.cli import _hours_taken_out
+
+    default = Path.home() / ".hermes"
+    (default / "profiles" / "work").mkdir(parents=True)
+    monkeypatch.setenv("FAKE_JOBS_BY_HOME", "1")
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    assert main(["connect", "hermes", "--profile", "work", "--hours", "--write", "--no-upkeep"]) == 0
+    monkeypatch.setenv("HERMES_HOME", str(default))
+    files = [default / "fake-jobs.json", default / "profiles" / "work" / "fake-jobs.json"]
+    assert [len(held(path)) for path in files] == [3, 3]
+
+    said, problems = _hours_taken_out(write=False)
+    assert len(said) == 2 and not problems and [len(held(path)) for path in files] == [3, 3]
+
+    said, problems = _hours_taken_out(write=True)
+    assert len(said) == 2 and not problems and [held(path) for path in files] == [[], []]
+    assert any("work" in line for line in said)
+    assert os.environ["HERMES_HOME"] == str(default)
+
+
+def test_jobs_with_the_right_words_are_left_alone(agents, capsys):
+    jobs, log = agents
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+    _hermes_job_file(jobs)
+    before = held(jobs)
+
+    assert main(["connect", "hermes", "--hours", "--write", "--no-upkeep"]) == 0
+
+    assert held(jobs) == before and not [c for c in cron_calls(log) if c[2] == "remove"]
+    assert "already scheduled" in capsys.readouterr().out
 
 
 def test_openclaw_jobs_run_the_hand_off_in_an_isolated_session_and_deliver_nowhere(agents):

@@ -322,7 +322,12 @@ HERMES = Harness(
     command="hermes",
     level=INSTALLS,
     version="0.17",
-    mcp=Ability(True, "mcp_servers in config.yaml; hermes mcp test listed the 12 tools", SAW),
+    mcp=Ability(
+        True,
+        "Provider Mode: the provider offers them, by the same names; with another provider "
+        "in the slot, mcp_servers in config.yaml, where hermes mcp test listed the 12 tools",
+        SAW,
+    ),
     # Saw it: real turns through Hermes' own gateway, Telegram adapter, plugin
     # loader and agent, in its own Python, on 0.17 and today's main, with stand-ins
     # for the Telegram servers and the model recording what reached it.
@@ -357,6 +362,8 @@ HERMES = Harness(
     notes=(
         "Hermes has one memory-provider slot. If another provider holds it, connect leaves it "
         "alone and adds only the tools (no wake or cue).",
+        "Each Hermes profile is an agent of its own, with its own memory, connected with "
+        "--profile <name>. They share what any two agents share: the machine's shared memory.",
     ),
 )
 

@@ -4311,6 +4311,13 @@ class MnemosRuntime:
 
         return resolve_author_model(self._session_introduction(), signed_as=signed_as)
 
+    def signs_for_host(self, model: str) -> None:
+        """What the host says this session is running signs its writes, as an
+        introduction does (the Hermes provider: one process, a runtime for each
+        conversation, so nothing in the environment can say). Writes nothing."""
+
+        self._session_author = clean_model_id(model) or self._session_author
+
     def session_identity(self) -> tuple[str, str]:
         """The model and name this session last introduced itself as, or
         ``""``s.
