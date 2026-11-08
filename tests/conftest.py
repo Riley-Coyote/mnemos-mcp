@@ -39,6 +39,9 @@ def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     from pathlib import Path
 
     monkeypatch.setattr("mnemos.setup.scheduler.account_home", lambda: Path.home(), raising=False)
+    # A Hermes provider started in a test hands the keys to Hermes for the rest of
+    # the process; each test starts with Mnemos reading them as it does anywhere.
+    monkeypatch.setattr("mnemos.llm._host_secrets", None, raising=False)
     for var in (
         "MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "MNEMOS_AGENT_MODEL",
         "MNEMOS_SUBSTRATE_AFFINITY", "MNEMOS_AGENT_ID", "MNEMOS_PERSON_ID",

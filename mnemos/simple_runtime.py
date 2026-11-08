@@ -464,10 +464,16 @@ def _maintenance_stopped(failure: str) -> str:
     ])
 
 
-def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
+# Set for the background process when a host (Hermes) hands out the keys: there,
+# too, it reads them from the environment it was given and from no file.
+_SECRETS_FROM_HOST_ENV = "MNEMOS_SECRETS_FROM_HOST"
+
+
+def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = True) -> bool:
     """Start ``scope``'s maintenance in a process of its own, detached, so it
-    outlives the session that asked for it, holding the claim ``token`` took.
-    Returns whether it started."""
+    outlives the session that asked for it, holding the claim ``token`` took,
+    and using a model of its own only if this process would
+    (``dedicated_model``). Returns whether it started."""
     if not sys.executable:
         return False
     db_path = Path(scope.db_path).expanduser()
@@ -478,6 +484,7 @@ def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
     command = [
         sys.executable, "-c", _UPKEEP_CHILD, json.dumps(paths),
         str(db_path), scope.agent_id, scope.person_id, scope.project_scope, token,
+        "1" if dedicated_model else "0",
     ]
     options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
@@ -486,6 +493,10 @@ def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
         "close_fds": True,
         "cwd": str(db_path.parent),
     }
+    from .llm import host_secrets_active
+
+    if host_secrets_active():
+        options["env"] = {**os.environ, _SECRETS_FROM_HOST_ENV: "1"}
     if os.name == "nt":
         options["creationflags"] = (
             getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -510,12 +521,19 @@ def _spawn_upkeep(scope: MnemosScope, token: str) -> bool:
 def run_background_upkeep(argv: list[str]) -> int:
     """The background process's work: the scope's automatic maintenance, as a
     capture used to run it before answering. Gives up the scope's claim when
-    done (the capture's, by the token it took it with: the last argument),
-    and records what went wrong, if anything did, for the next capture to
-    say. Returns the process's exit status."""
+    done (the capture's, by the token it took it with, the argument after the
+    scope), uses a model of its own only when the capture's process would (the
+    one after that: "0" says not), and records what went wrong, if anything
+    did, for the next capture to say. Returns the process's exit status."""
     db_path, agent_id, person_id, project_scope, *rest = argv
+    if os.environ.get(_SECRETS_FROM_HOST_ENV) == "1":
+        from .llm import take_secrets_from
+
+        take_secrets_from(os.environ.get)
     runtime = MnemosRuntime(
         db_path=db_path, agent_id=agent_id, person_id=person_id, project_scope=project_scope,
+        # From a release that passed no choice: a model of its own, as it was then.
+        use_dedicated_model=rest[1:2] != ["0"],
     )
     runtime._upkeep_inline = True
     runtime._upkeep_token = rest[0] if rest else ""
@@ -7113,7 +7131,7 @@ class MnemosRuntime:
         failed = self._last_upkeep_failure()
         claim = self._claim_upkeep()
         if claim == "claimed":
-            if _spawn_upkeep(self.scope, self._upkeep_token):
+            if _spawn_upkeep(self.scope, self._upkeep_token, dedicated_model=self._use_dedicated_model):
                 return "\n".join([
                     "Requested: standard",
                     "Cycle: started in the background",

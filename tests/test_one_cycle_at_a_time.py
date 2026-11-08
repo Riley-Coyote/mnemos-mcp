@@ -52,7 +52,7 @@ def started(monkeypatch):
     processes = []
     monkeypatch.setattr(
         simple_runtime, "_spawn_upkeep",
-        lambda scope, token="": processes.append((scope, token)) or True, raising=False,
+        lambda scope, token="", **_: processes.append((scope, token)) or True, raising=False,
     )
     return processes
 
