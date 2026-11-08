@@ -211,6 +211,10 @@ def _one_at_a_time(method):
 class MnemosMemoryProviderCore:
     """Hermes-compatible provider implementation without importing Hermes."""
 
+    # Whether Hermes's plugin catalog installed this Mnemos, in an environment
+    # Hermes rebuilds and removes (hermes-plugin/__init__.py says so).
+    _from_catalog = False
+
     def __init__(self, config: HermesMnemosConfig | None = None):
         self._config = config
         self._scope: HermesScope | None = None
@@ -268,6 +272,7 @@ class MnemosMemoryProviderCore:
             use_dedicated_model=config.deep_maintenance,
             harness="hermes",
             conversation=self._scope.conversation,
+            host_manages_install=self._from_catalog,
         )
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         # Opened, not read: a wake counts what it shows as shown, so one built
@@ -692,12 +697,13 @@ _TOOLS = {
 
 
 @functools.lru_cache(maxsize=None)
-def build_memory_provider_class(memory_provider_base: type) -> type:
+def build_memory_provider_class(memory_provider_base: type, *, from_catalog: bool = False) -> type:
     """Build a Hermes ``MemoryProvider`` subclass without hard-importing Hermes.
-    One class per base: Hermes asks again for every agent it builds."""
+    One class per base: Hermes asks again for every agent it builds.
+    ``from_catalog``: Hermes's plugin catalog installed this Mnemos."""
 
     class MnemosMemoryProvider(MnemosMemoryProviderCore, memory_provider_base):  # type: ignore[misc, valid-type]
-        pass
+        _from_catalog = from_catalog
 
     MnemosMemoryProvider.__name__ = "MnemosMemoryProvider"
     MnemosMemoryProvider.__qualname__ = "MnemosMemoryProvider"

@@ -1198,6 +1198,7 @@ class MnemosRuntime:
         marks_lived: bool = True,
         harness: str = "",
         conversation: str = "",
+        host_manages_install: bool = False,
     ) -> None:
         # Which agent this runtime serves, when its host says so (the Hermes
         # provider does), and the name an MCP client gave in its handshake
@@ -1205,6 +1206,12 @@ class MnemosRuntime:
         # them (``_setup_part``).
         self.harness = harness
         self.client_name = ""
+        # Whether the host installed Mnemos itself (Hermes's plugin catalog),
+        # into an environment it rebuilds when it updates and deletes when the
+        # plugin is removed. Then the first session offers nothing scheduled
+        # outside the host: a job would run the copy of Mnemos in that
+        # environment, and outlive it.
+        self.host_manages_install = host_manages_install
         # Which conversation this runtime serves, when its host says so. One
         # Hermes gateway runs every topic in one process, a runtime for each,
         # so the environment can't say (``_note_session``).
@@ -3023,7 +3030,9 @@ class MnemosRuntime:
             if not status.upkeep:
                 missing.append("upkeep between sessions, the memory's own housekeeping")
             settle: list[str] = []
-            if missing:
+            # Where the host installed Mnemos, it connected it, and the provider keeps the
+            # memory tidy in its sessions: connect would schedule its upkeep outside the host.
+            if missing and not self.host_manages_install:
                 command = state.command_line(
                     agent_id, db_path, "connect", harness.key, "--write",
                 )
@@ -3075,6 +3084,11 @@ class MnemosRuntime:
 
         hours = harness.hours
         agent_id, db_path = self.scope.agent_id, self.db_path
+        if self.host_manages_install:
+            return "", (
+                f"- Quiet hours aren't offered when {harness.label} installed Mnemos from its "
+                "plugin catalog. Don't offer them."
+            )
         if hours is None:
             return "", (
                 f"- Quiet hours aren't offered for {harness.label}: nothing is scheduled for it "
