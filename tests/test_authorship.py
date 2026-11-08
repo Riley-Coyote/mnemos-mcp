@@ -35,6 +35,7 @@ import anyio
 import pytest
 
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.core.engram import Engram
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.store.sqlite_store import SCHEMA_VERSION, SQL_CREATE_TABLES, EngramStore
@@ -264,7 +265,7 @@ def test_the_tools_take_signed_as_over_the_real_protocol(tmp_path):
     assert "mnemos_introduce" in SERVER_INSTRUCTIONS and "again" in SERVER_INSTRUCTIONS
     import asyncio
 
-    schemas = {tool.name: tool.inputSchema for tool in asyncio.run(simple_mcp.list_tools())}
+    schemas = {tool.name: wire(tool)["inputSchema"] for tool in asyncio.run(simple_mcp.list_tools())}
     for name in ("mnemos_capture", "mnemos_handoff", "mnemos_correct", "mnemos_reflect"):
         assert "signed_as" in schemas[name]["properties"], name
 

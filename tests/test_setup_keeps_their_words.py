@@ -15,7 +15,7 @@ whose words it was.
 
 import pytest
 
-pytest.importorskip("mcp.server.fastmcp")
+pytest.importorskip("mcp")
 
 from mnemos import mcp_server  # noqa: E402
 from mnemos.config.loader import load_config, save_config  # noqa: E402

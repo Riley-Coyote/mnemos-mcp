@@ -29,6 +29,7 @@ import anyio
 import pytest
 
 from mnemos.simple_runtime import MnemosRuntime
+from mnemos.mcp_compat import wire
 
 ORIGINAL = "She got a writing residency in Lisbon: six weeks, starting in March."
 CORRECTED = "She got a writing residency in Lisbon: five weeks, starting in March."
@@ -204,16 +205,16 @@ def test_both_tool_surfaces_take_an_impact(module):
     import asyncio
     import importlib
 
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     name, attr = module.split(":")
     server = getattr(importlib.import_module(name), attr)
     tools = {tool.name: tool for tool in asyncio.run(server.list_tools())}
-    assert "impact" in tools["mnemos_correct"].inputSchema["properties"]
+    assert "impact" in wire(tools["mnemos_correct"])["inputSchema"]["properties"]
 
 
 def test_the_correct_tool_passes_impact_through(tmp_path):
     """Over the real protocol: the server writes, this process reads back."""
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -242,12 +243,12 @@ def test_the_correct_tool_passes_impact_through(tmp_path):
                 captured = await session.call_tool(
                     "mnemos_capture", {"content": ORIGINAL, "impact": MEANING}
                 )
-                assert not captured.isError, _text(captured)
+                assert not wire(captured)["isError"], _text(captured)
 
                 kept = await session.call_tool(
                     "mnemos_correct", {"correction": CORRECTED, "query": QUERY}
                 )
-                assert not kept.isError, _text(kept)
+                assert not wire(kept)["isError"], _text(kept)
                 assert f'Kept what it meant: "{MEANING}"' in _text(kept), _text(kept)
 
                 given = await session.call_tool(
@@ -258,7 +259,7 @@ def test_the_correct_tool_passes_impact_through(tmp_path):
                         "impact": NEW_MEANING,
                     },
                 )
-                assert not given.isError, _text(given)
+                assert not wire(given)["isError"], _text(given)
 
     anyio.run(run)
 

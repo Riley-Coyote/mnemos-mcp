@@ -30,6 +30,7 @@ import anyio
 import pytest
 
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.simple_runtime import MnemosRuntime, format_health_card
 
 
@@ -176,7 +177,7 @@ def test_a_running_server_stops_maintaining_once_newer_code_opens_the_store(tmp_
     must notice on its next maintenance, not only at its own startup, while
     its captures keep landing and another process can read them back.
     """
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -212,7 +213,7 @@ def test_a_running_server_stops_maintaining_once_newer_code_opens_the_store(tmp_
                 ))
                 health = await session.call_tool("mnemos_health", {})
                 seen["health_text"] = text(health)
-                seen["health_code"] = (health.structuredContent or {}).get("code")
+                seen["health_code"] = (wire(health)["structuredContent"] or {}).get("code")
                 seen["cycles_after"] = _count(db, "consolidation_log")
         return seen
 

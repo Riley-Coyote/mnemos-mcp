@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from mnemos.simple_runtime import MnemosRuntime
+from mnemos.mcp_compat import wire
 
 WORDS = "The cedar observatory keeps spare telescope lenses in the west cabinet."
 
@@ -264,12 +265,12 @@ def test_upkeep_integration_and_failure_isolation(monkeypatch):
 
 def test_mcp_tools_keep_twelve_and_shared_capture(monkeypatch):
     import anyio
-    from mcp.server.fastmcp import FastMCP
     from mnemos import simple_mcp
+    from mnemos.mcp_compat import Server
     from mnemos.simple_runtime import SIMPLE_TOOL_NAMES
     r = runtime(monkeypatch, "writer")
     monkeypatch.setattr(simple_mcp, "_get_runtime", lambda: r)
-    server = FastMCP("shared-test")
+    server = Server("shared-test")
     simple_mcp.register_simple_tools(server)
 
     async def check():
@@ -277,7 +278,7 @@ def test_mcp_tools_keep_twelve_and_shared_capture(monkeypatch):
         assert {t.name for t in tools} == set(SIMPLE_TOOL_NAMES)
         assert len(tools) == 12
         capture = next(t for t in tools if t.name == "mnemos_capture")
-        assert capture.inputSchema["properties"]["shared"]["default"] is False
+        assert wire(capture)["inputSchema"]["properties"]["shared"]["default"] is False
         result = await server.call_tool("mnemos_capture", {"content": WORDS, "shared": True})
         assert "Saved to shared memory" in str(result)
         assert not r.db_path.exists()

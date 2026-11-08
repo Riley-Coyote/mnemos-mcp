@@ -48,6 +48,7 @@ import anyio
 import pytest
 
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.simple_runtime import MnemosRuntime
 
@@ -313,7 +314,7 @@ def test_a_journal_entry_written_over_the_protocol_is_read_back_in_other_process
     defaults an agent actually calls): the entry is written through a server in
     one process, then read by the command in a second and shown by the real
     SessionStart hook in a third."""
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
 
@@ -340,14 +341,14 @@ def test_a_journal_entry_written_over_the_protocol_is_read_back_in_other_process
                     "text": "The tide ran out before I finished the thought.\nA second line.",
                     "signed_as": OPUS, "mood": "quiet",
                 })
-                seen["journal"] = (wrote.isError, text(wrote))
+                seen["journal"] = (wire(wrote)["isError"], text(wrote))
                 note = await session.call_tool("mnemos_note", {
                     "text": "The pier timetable changed; the ferry notes may be stale.",
                     "kind": "noticed", "signed_as": OPUS,
                 })
-                seen["note"] = (note.isError, text(note))
+                seen["note"] = (wire(note)["isError"], text(note))
                 read = await session.call_tool("mnemos_journal", {})
-                seen["read"] = (read.isError, text(read))
+                seen["read"] = (wire(read)["isError"], text(read))
 
     anyio.run(session_run)
 

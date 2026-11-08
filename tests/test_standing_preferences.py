@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
+from mnemos.mcp_compat import wire
 from mnemos.core.belief import Belief
 from mnemos.simple_runtime import MnemosRuntime
 from mnemos.store.sqlite_store import SCHEMA_VERSION, SQL_CREATE_TABLES, EngramStore
@@ -337,8 +338,8 @@ def test_the_tool_descriptions_carry_the_mark_and_the_instructions_do_not():
         tools["mnemos_capture"], tools["mnemos_correct"], tools["mnemos_recall"],
     )
     for tool in (capture, recall):
-        standing = tool.inputSchema["properties"].get("standing")
-        assert standing is not None and standing.get("type") == "boolean", tool.inputSchema
+        standing = wire(tool)["inputSchema"]["properties"].get("standing")
+        assert standing is not None and standing.get("type") == "boolean", wire(tool)["inputSchema"]
         assert standing.get("default") is False
     assert f"standing: {DESCRIPTION}" in " ".join(capture.description.split())
     correct_text = " ".join(correct.description.split())

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 from types import SimpleNamespace
+from mnemos.mcp_compat import wire
 
 
 def test_claude_cli_disables_tools_and_never_bypasses_permissions(monkeypatch):
@@ -75,7 +76,7 @@ def test_simple_tools_expose_no_sampling_context_or_sampling_calls():
 
     tools = {tool.name: tool for tool in asyncio.run(simple_mcp.list_tools())}
     for name in ("mnemos_capture", "mnemos_maintain"):
-        assert "ctx" not in tools[name].inputSchema.get("properties", {})
+        assert "ctx" not in wire(tools[name])["inputSchema"].get("properties", {})
 
     import mnemos.simple_mcp as module
 

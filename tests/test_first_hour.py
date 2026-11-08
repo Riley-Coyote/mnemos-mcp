@@ -150,9 +150,11 @@ def test_doctor_says_plainly_what_is_lost_without_embeddings(tmp_path, monkeypat
 def test_server_reports_mnemos_own_version(module):
     import importlib
 
+    from mnemos.mcp_compat import lowlevel_server
+
     mod = importlib.import_module(module)
     server = mod.simple_mcp if module == "mnemos.simple_mcp" else mod.mcp
-    options = server._mcp_server.create_initialization_options()
+    options = lowlevel_server(server).create_initialization_options()
     assert options.server_version == version("mnemos-continuity")
 
 

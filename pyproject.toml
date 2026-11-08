@@ -28,20 +28,22 @@ dependencies = [
     # mcp is core: the MCP server is the primary product, and it is imported
     # at module scope. Shipping it as an optional extra made a clean install
     # yield a dead `mnemos serve` with the failure hidden on stderr.
-    # Upper-bounded on purpose: mcp 2.0 removed `mcp.server.fastmcp`, which
-    # every server entrypoint imports, so an unbounded range makes a fresh
-    # `pip install` resolve 2.x and produce a server that dies on import. CI
-    # never caught it because the lockfile pinned an old 1.x; the wheel smoke
-    # job in release-hardening.yml now installs unlocked to close that gap.
-    # The floor is what CI tests, and the first 1.x with the fix for
-    # GHSA-84m7-p3x7-pcfv (an HTTP-transport leak; Mnemos serves over stdio
-    # and was never exposed, but an audit would rightly flag anything older).
-    "mcp[cli]>=1.30.0,<2",
-    "ulid-py>=1.1.0",
-    "python-dotenv>=1.0.0",
+    # Both majors work: mcp 2.0 renamed FastMCP to MCPServer and moved it, and
+    # mnemos/mcp_compat.py is the one place Mnemos meets either. 2.x has to
+    # work because Hermes pins it in its own environment, where its plugin
+    # catalog installs Mnemos. Capped below 3, a major nobody has tested: an
+    # unbounded range once let a fresh `pip install` resolve 2.0 and produce a
+    # server that died on import, while CI, pinned by the lockfile, passed.
+    # CI runs the tests on the locked 1.x and on 2.x, and the wheel smoke job
+    # in release-hardening.yml installs unlocked. The floor is the first 1.x
+    # with the fix for GHSA-84m7-p3x7-pcfv (an HTTP-transport leak; Mnemos
+    # serves over stdio and was never exposed, but an audit would rightly flag
+    # anything older).
+    "mcp[cli]>=1.30.0,<3",
+    "ulid-py>=1.1.0,<2",
     # `mnemos connect hermes` edits Hermes's config.yaml. As it came only with
     # the embeddings extra, a plain install stopped there and connected nothing.
-    "pyyaml>=6.0",
+    "pyyaml>=6.0,<7",
 ]
 
 [project.optional-dependencies]
