@@ -25,6 +25,10 @@ hermes memory setup mnemos
 Setup tells you who the agent is and where its memory is kept. Start a new session and
 it wakes with it. Mnemos needs no API key and no account.
 
+If you connected Mnemos to Hermes before, with `mnemos connect hermes`, install with
+`hermes plugins install mnemos --force`, which replaces the folder connect wrote. The
+agent keeps its memory and its settings.
+
 ## What the agent gets
 
 - **A wake.** Each session opens with what it kept: the note it left itself in this
