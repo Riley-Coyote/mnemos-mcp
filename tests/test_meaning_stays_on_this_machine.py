@@ -438,3 +438,32 @@ def test_doctor_says_it_before_there_is_a_store(home, google, monkeypatch, capsy
     assert said[1].startswith(f"{INDENT}A GEMINI_API_KEY is set in the environment, but Mnemos doesn't use it")
     assert not (home / "not-yet.db").exists()
     assert google.sent == []
+
+
+NOT_HERE = (
+    f"{INDENT}not installed here yet: recall will match words only. Add it with: "
+    'pip install "mnemos-continuity[embeddings]", then: mnemos embeddings download'
+)
+
+
+def test_doctor_says_local_is_not_installed_yet_before_there_is_a_store(
+    home, google, monkeypatch, capsys,
+):
+    """Choosing local is not having it. With a store the Semantic line says so
+    on the next line; before one there is no runtime to probe, and doctor used
+    to print the choice alone — on exactly the fresh install where the answer
+    decides what recall will do."""
+    monkeypatch.setattr(ei, "_check_local_deps", lambda: False)
+
+    said = _meaning(_doctor(home / "not-yet.db", capsys))
+
+    assert said == [DEFAULT, NOT_HERE]
+    assert google.sent == []
+
+
+def test_doctor_is_quiet_about_local_when_it_is_installed(
+    home, google, monkeypatch, capsys,
+):
+    monkeypatch.setattr(ei, "_check_local_deps", lambda: True)
+
+    assert _meaning(_doctor(home / "not-yet.db", capsys)) == [DEFAULT]

@@ -3976,6 +3976,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
             _print_wake_status(runtime)
             _print_background_status(runtime.scope)
             _print_meaning_status()
+            _print_meaning_availability()
             print(f"Simple tools: {', '.join(SIMPLE_TOOL_NAMES)}")
             print()
             print("No store yet for this scope — nothing has been captured here.")
@@ -4123,6 +4124,31 @@ def _print_meaning_status() -> None:
     print(f"Meaning:      {lines[0]}")
     for line in lines[1:]:
         print(f"              {line}")
+
+
+def _print_meaning_availability() -> None:
+    """Whether the chosen local backend is actually installed here.
+
+    ``_print_meaning_status`` reports a *choice*; on a scope with a store,
+    ``_print_semantic_status`` reports the *state* on the next line. Before a
+    store exists there is no runtime to probe, so doctor printed the choice
+    alone — and a fresh install with no embeddings extra read as
+    "Meaning: local, model all-MiniLM-L6-v2" with nothing to say that recall
+    would match words only. That is the moment the answer matters most. This
+    check imports, and touches no store.
+    """
+    from .store.embedding_index import GEMINI, _check_local_deps, embedding_choice
+
+    try:
+        if embedding_choice()["provider"] == GEMINI:
+            return
+        if _check_local_deps():
+            return
+    except Exception:
+        return
+    print("              not installed here yet: recall will match words only. "
+          'Add it with: pip install "mnemos-continuity[embeddings]", '
+          "then: mnemos embeddings download")
 
 
 def _describe_meaning(choice: dict[str, str]) -> list[str]:
