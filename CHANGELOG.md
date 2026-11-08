@@ -1,11 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- **A Perplexity key in OpenClaw's config no longer goes to OpenRouter.** With provider openrouter and no `OPENROUTER_API_KEY`, Mnemos borrowed OpenClaw's `tools.web.search.perplexity.apiKey` whatever it held; it now takes that key only when it's an OpenRouter key (`sk-or-`, or beside a `baseUrl` at openrouter.ai), and otherwise says so once.
-- **In Hermes 0.23.0, the first save is signed.** That Hermes tells a memory provider no model, so the first save came back unsigned and asked the model to introduce itself. The provider now starts with the model Hermes's `config.yaml` names; the model Hermes names for a turn, where a newer Hermes does, still signs it.
-- **In Hermes, the wake names the person's folder, not Hermes's own.** Hermes 0.23.0 runs every chat inside its gateway, in Hermes's install folder, so every wake began "in hermes-agent" and every note was placed there. The provider now uses the folder Hermes names for the session (`cwd`), and names none for a chat that has none.
-
 ## 0.6.6 (2026-11-08)
 
 Mnemos can be installed from Hermes's plugin catalog, and it runs on mcp 2, which Hermes pins.
@@ -60,6 +54,29 @@ Sessions keep the code they started with, so restart them after updating.
   from GitHub at the pin, setup, two sessions through Hermes's own provider loader, an update to a
   new pin, a fresh profile and a cloned one, Hermes's plugin-host isolation, and removal, which left
   every memory in place. The catalog's own checks pass at the pin.
+
+### On Hermes 0.23.0, the release people have
+
+- **The first save is signed.** Hermes 0.23.0 tells a memory provider no model, so the first save
+  came back unsigned and asked the model to introduce itself. The provider now starts with the model
+  Hermes's `config.yaml` names; the model Hermes names for a turn, where a newer Hermes does, still
+  signs it.
+- **The wake names the person's folder, never Hermes's own.** Hermes 0.23.0 runs every chat inside
+  its gateway, in Hermes's install folder, so every wake began "in hermes-agent" and every note was
+  placed there. The provider now uses the folder Hermes names for the session (`cwd`), and names
+  none for a chat that has none.
+- Checked in real `hermes chat` sessions on the 0.23.0 release, against a stand-in model: a save,
+  the next session waking with it and finding it, a write to USER.md kept in Mnemos, two chats at
+  once on one profile, and a damaged memory file, where Hermes keeps working and the save says
+  what's wrong. Python's audit hooks, on Mnemos's own code through those chats, saw no network use,
+  no write outside `~/.mnemos`, and no program started but the upkeep process, which exited.
+
+### Outside Hermes
+
+- **A Perplexity key in OpenClaw's config no longer goes to OpenRouter.** With provider openrouter
+  and no `OPENROUTER_API_KEY`, Mnemos borrowed OpenClaw's `tools.web.search.perplexity.apiKey`
+  whatever it held; it now takes that key only when it's an OpenRouter key (`sk-or-`, or beside a
+  `baseUrl` at openrouter.ai), and otherwise says so once.
 
 ## 0.6.5 (2026-11-07)
 
