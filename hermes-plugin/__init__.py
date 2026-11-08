@@ -12,4 +12,4 @@ def register(ctx):
 
     from mnemos.integrations.hermes import build_memory_provider_class
 
-    ctx.register_memory_provider(build_memory_provider_class(MemoryProvider)())
+    ctx.register_memory_provider(build_memory_provider_class(MemoryProvider, from_catalog=True)())

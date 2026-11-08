@@ -126,6 +126,42 @@ def test_the_plugin_hands_hermes_a_new_provider_each_time(monkeypatch):
     assert all(isinstance(p, base) and p.name == "mnemos" for p in registered)
 
 
+def test_a_catalog_install_offers_nothing_scheduled_outside_hermes(tmp_path, monkeypatch):
+    """Hermes installs the catalog's Mnemos into an environment it rebuilds when
+    it updates and deletes when the plugin is removed. The first session used to
+    offer `mnemos connect hermes --write` (upkeep, an OS scheduler job) and quiet
+    hours (Hermes cron jobs), each running the mnemos in that environment: a job
+    that breaks at Hermes's next update and outlives a removal."""
+    from mnemos.setup import connect
+    from mnemos.setup import harnesses as hs
+
+    module, _ = _load_plugin(monkeypatch)
+    registered = []
+    module.register(types.SimpleNamespace(register_memory_provider=registered.append))
+    home = tmp_path / "hermes"
+    home.mkdir()
+    provider = registered[0]
+    provider.initialize("20261107_210000_first", platform="cli", hermes_home=str(home), agent_context="primary")
+    monkeypatch.setattr(connect, "status", lambda *a, **k: types.SimpleNamespace(wake="set", cue="set", upkeep=False))
+    try:
+        assert provider._runtime.host_manages_install is True
+        settle, lines = provider._runtime._other_setup_part(hs.get("hermes"))
+    finally:
+        provider.shutdown()
+    said = "\n".join(settle + [lines or ""])
+    assert settle == [], said
+    assert "connect hermes" not in said and "--hours" not in said, said
+    assert "Quiet hours aren't offered" in said
+
+    # Mnemos connected by `mnemos connect hermes` (its own install) is asked as before.
+    other = MnemosMemoryProviderCore()
+    other.initialize("20261107_210000_other", platform="cli", hermes_home=str(home), agent_context="primary")
+    try:
+        assert other._runtime.host_manages_install is False
+    finally:
+        other.shutdown()
+
+
 def test_the_plugin_folder_holds_only_what_a_reviewer_can_read():
     """What the catalog scans at the pin: source and a picture, no compiled code."""
     files = sorted(
