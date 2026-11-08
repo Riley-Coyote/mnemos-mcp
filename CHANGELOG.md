@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.5 (2026-11-07)
+
+Sessions keep the code they started with, so restart them after updating. Until then a session
+keeps the old recall, and its notebook may fail to search or save a note.
 
 ### Recall: a longer list, with handoffs in their own rows
 
@@ -41,6 +44,31 @@ it can't say how much slower an agent gets, or how much of what comes back it us
   to a file once it's over 50,000 characters, unless the tool declares a higher limit, and long
   lists run past that. Recall is the only tool that declares one, and an answer over it is still
   saved to a file. We ran this through Claude Code 2.1.318.
+
+### Hooks on Windows
+
+jmac122 found this and worked out the fix in #8, and ParallionDev made it, with tests (#9).
+
+- **Both hooks read what Claude Code sends them on Windows.** They waited on stdin with
+  `select()`, which Windows allows only on sockets. The prompt hook failed on every message, so the
+  cue never ran, and Claude Code showed nothing because the hook ends in `|| true`. Session start
+  carried on without the session's id, folder or model, so its own handoff didn't come first and
+  folders weren't ranked. On Windows the hooks now ask the pipe itself whether anything has come;
+  elsewhere they keep `select()`. Its authors ran it on Windows 11. Our checks skip the Windows
+  tests, and GitHub's Windows check doesn't run a hook.
+- **Session start waits up to a quarter second for what Claude Code sends.** It read only what had
+  arrived the moment it started, so anything that came a moment later was lost, on every system,
+  and the id, folder and model with it. It now waits up to 0.25 seconds, as the prompt hook already
+  did, and stops when the pipe closes or a whole message has come. With stdin left open and empty,
+  session start takes that quarter second longer.
+
+### Doctor
+
+- **`mnemos doctor` says when meaning search is chosen but not installed.** Before a store exists,
+  a fresh install without the embeddings extra read "Meaning: local, model all-MiniLM-L6-v2", and
+  nothing said recall would match words only. The next line now says so, and how to add it. The
+  check only tries the import and creates nothing, so an extra that's installed but won't import
+  reads as not installed. From xf3s (#12).
 
 ## 0.6.4 (2026-11-07)
 
