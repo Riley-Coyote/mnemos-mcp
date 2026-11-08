@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.6.6 (2026-11-08)
+
+Mnemos can be installed from Hermes's plugin catalog, and it runs on mcp 2, which Hermes pins.
+Sessions keep the code they started with, so restart them after updating.
+
+### Runs on mcp 2 as well as 1
+
+- **A fresh install now gets mcp 2.** Hermes installs a catalog plugin's packages into its own
+  environment, where mcp is pinned to 2.3.0, and mcp 2.0 renamed FastMCP to MCPServer and moved it.
+  `mnemos/mcp_compat.py` is the one place Mnemos meets either major. CI runs the tests on the locked
+  1.30 and on 2.3.0, and the black box passes with a client of either major. The range is
+  `>=1.30.0,<3`, so an untested major can't arrive on its own.
+- **Every dependency has an upper bound now**, as Hermes's catalog asks, and python-dotenv is gone:
+  it was listed, and never imported.
+
+### Inside Hermes, keys come only from Hermes
+
+- **Every setting and key Mnemos reads inside Hermes comes through Hermes**
+  (`agent.secret_scope.get_secret`), for the profile that is speaking, and no file is read for one:
+  not a workspace's `.env`, not `~/.mnemos/.env`, not OpenClaw's config. Hermes's catalog asks it
+  (rule 11), and only Hermes knows which profile is speaking when a gateway serves several. Before,
+  a workspace's `.env` was read there, and a provider chosen in it would have been sent the
+  memory's words.
+- **The Claude CLI is no provider inside Hermes.** It's another program, signed in to its own
+  account.
+- **The upkeep a capture starts keeps the same rules.** It runs in a process of its own, where
+  Hermes's `get_secret` doesn't reach: it reads keys only from the environment Hermes gave it, reads
+  no file for one, and uses a model only where the provider would (`deep_maintenance`).
+- **The page an agent opens inside Hermes changes neither the quiet hours nor Jev.** Both are
+  Claude Code's (`claude -p` on your own account, and a key in a file), and are set there.
+
+### Hermes's plugin catalog
+
+- **`hermes-plugin/` is Mnemos as the catalog installs it**: `hermes plugins install mnemos`, then
+  `hermes memory setup mnemos`. Its README says what it does on your machine.
+- **A home Mnemos was never connected to gets one memory.** No `mnemos connect hermes` runs before
+  a catalog install, so on its first start the provider sets up what connect would: one agent, the
+  profile's own, with one memory in every chat. Left to itself it named the memory after each chat
+  and the person writing, so a renamed group or a private chat was another memory. A home that has
+  a memory keeps it.
+- **`hermes memory setup mnemos` makes Mnemos the provider of that one memory** and says who the
+  agent is and where its memory is kept, instead of asking six questions.
+- **A catalog install offers nothing scheduled outside Hermes.** Hermes rebuilds the environment it
+  installs a plugin into when it updates, and deletes it when the plugin is removed. A first session
+  offered upkeep between sessions (a launchd, systemd or crontab job) and quiet hours (Hermes cron
+  jobs), each running the mnemos in that environment: a job that breaks at the next update and
+  outlives a removal. The provider keeps the memory tidy in its sessions instead.
+- **`mnemos connect hermes` after a catalog install** keeps the catalog's plugin as Hermes installed
+  it (Hermes updates it) and connects the rest. It used to call the folder someone else's and make
+  nothing the provider.
+- Checked in a real catalog install, in a throwaway home on Hermes's main of Nov 7: install by name
+  from GitHub at the pin, setup, two sessions through Hermes's own provider loader, an update to a
+  new pin, a fresh profile and a cloned one, Hermes's plugin-host isolation, and removal, which left
+  every memory in place. The catalog's own checks pass at the pin.
+
 ## 0.6.5 (2026-11-07)
 
 Sessions keep the code they started with, so restart them after updating. Until then a session

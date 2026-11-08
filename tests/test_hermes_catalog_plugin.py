@@ -173,6 +173,28 @@ def test_the_plugin_folder_holds_only_what_a_reviewer_can_read():
     assert all(f.endswith(allowed) for f in files), files
 
 
+def test_the_plugin_is_released_with_the_mnemos_it_installs():
+    """The catalog shows plugin.yaml's version beside the pin and installs
+    mnemos-continuity by the range in the plugin's pyproject. A release that
+    moved one without the others would list one version and install another,
+    or nothing at all."""
+    import re
+
+    import yaml
+    from packaging.requirements import Requirement
+
+    def version(text: str) -> str:
+        return re.search(r'^version = "([^"]+)"$', text, re.M).group(1)
+
+    released = version((PLUGIN.parent / "pyproject.toml").read_text(encoding="utf-8"))
+    project = (PLUGIN / "pyproject.toml").read_text(encoding="utf-8")
+    manifest = yaml.safe_load((PLUGIN / "plugin.yaml").read_text(encoding="utf-8"))
+    assert manifest["version"] == version(project) == released
+    (wanted,) = [Requirement(r) for r in re.findall(r'"(mnemos-continuity[^"]*)"', project)]
+    assert wanted.specifier.contains(released), f"the plugin installs {wanted}, not {released}"
+    assert re.fullmatch(r">=\d+\.\d+\.\d+", manifest["requires_hermes"])  # a SemVer floor (catalog rule 14)
+
+
 def test_the_plugin_opens_as_connect_knows_it():
     from mnemos.integrations.hermes.installer import _CATALOG_OPENING
 

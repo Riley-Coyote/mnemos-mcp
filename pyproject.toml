@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "mnemos-continuity"
-version = "0.6.5"
+version = "0.6.6"
 description = "Continuity for the agent itself. An MCP server that gives an AI agent a memory of its own, written in its own words and kept on your machine, so it wakes as itself every session."
 readme = "README.md"
 license = "Apache-2.0"
