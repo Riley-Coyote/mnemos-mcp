@@ -233,7 +233,7 @@ def test_at_most_three_lines_lessons_first_each_one_line_under_200(tmp_path, mea
     cut = next(line for line in everything if line["id"] == memories[1].id)
     assert len(cut["text"]) < cue.CUE_LINE_CHARS
     assert cut["text"].endswith("in the damp. […]"), cut["text"]
-    assert cut["date"] == cue.local_day(memories[1].created_at)
+    assert cut["date"] == cue.local_day(memories[1].created_at)   # this machine's day, as the cue shows it
 
     block = cue.format_block(lines)
     rows = block.splitlines()

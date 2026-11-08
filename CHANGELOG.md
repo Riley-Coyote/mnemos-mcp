@@ -1,6 +1,9 @@
 # Changelog
 
-## Unreleased
+## 0.6.5 (2026-11-07)
+
+Sessions keep the code they started with, so restart them after updating. Until then a session
+keeps the old recall, and its notebook may fail to search or save a note.
 
 ### Recall: a longer list, with handoffs in their own rows
 
