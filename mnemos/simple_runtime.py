@@ -1199,6 +1199,7 @@ class MnemosRuntime:
         harness: str = "",
         conversation: str = "",
         host_manages_install: bool = False,
+        workdir: str | None = None,
     ) -> None:
         # Which agent this runtime serves, when its host says so (the Hermes
         # provider does), and the name an MCP client gave in its handshake
@@ -1216,6 +1217,10 @@ class MnemosRuntime:
         # Hermes gateway runs every topic in one process, a runtime for each,
         # so the environment can't say (``_note_session``).
         self.conversation = conversation
+        # The folder the session works in, when its host says so: Hermes names
+        # the person's (``""`` for a chat with none), while its gateway runs in
+        # Hermes's own install folder. ``None``: this process's own folder.
+        self._host_workdir = workdir
         self.scope = resolve_scope(
             db_path=db_path,
             agent_id=agent_id,
@@ -4365,6 +4370,12 @@ class MnemosRuntime:
 
         return resolve_author_model(self._session_introduction(), signed_as=signed_as)
 
+    def _workdir(self) -> str:
+        """The folder this session works in: the one its host named, else this
+        process's own."""
+
+        return _working_folder() if self._host_workdir is None else self._host_workdir
+
     def signs_for_host(self, model: str) -> None:
         """What the host says this session is running signs its writes, as an
         introduction does (the Hermes provider: one process, a runtime for each
@@ -4688,9 +4699,9 @@ class MnemosRuntime:
 
         Each input defaults to what this process can see: the model making the
         call, the session whose handoff is its own (``_note_session``) and the
-        working folder. Claude Code starts each session's server in the
-        session's own folder, so the folder ranks notes the way the hook's
-        payload does; it never chooses the scope.
+        working folder (``_workdir``). Claude Code starts each session's server
+        in the session's own folder, so the folder ranks notes the way the
+        hook's payload does; it never chooses the scope.
         """
         assert self._store is not None
         return build_context_packet(
@@ -4703,7 +4714,7 @@ class MnemosRuntime:
             reader_model=self.author_model() if reader_model is None else reader_model,
             reader_session=self._note_session() if reader_session is None else reader_session,
             session_counter=session_counter,
-            workdir=_working_folder() if workdir is None else workdir,
+            workdir=self._workdir() if workdir is None else workdir,
             older_than_store=self._older_than_store() is not None,
             person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
         )
@@ -4771,7 +4782,7 @@ class MnemosRuntime:
             author_model=author,
             author_session=session,
             # Claude Code starts each session's server in the session's folder.
-            author_place=place_of(_working_folder()),
+            author_place=place_of(self._workdir()),
             # Code older than the store replaces only this session's own note.
             # Retiring other sessions' notes by count is a rule; they stay
             # active until current code retires them.

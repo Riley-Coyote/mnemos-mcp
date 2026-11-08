@@ -144,6 +144,22 @@ def _take_hermes_secrets() -> None:
     llm.take_secrets_from(get_secret)
 
 
+def _configured_model(hermes_home: Path) -> str:
+    """The model Hermes starts a session with, as its config.yaml names it
+    (``model.default``, ``model.model``, or ``model`` as a plain name), or ``""``.
+    Hermes 0.23.0 tells a memory provider no model, so this is the one it has."""
+    try:
+        import yaml  # type: ignore
+
+        raw = yaml.safe_load((Path(hermes_home) / "config.yaml").read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    model = raw.get("model") if isinstance(raw, dict) else None
+    if isinstance(model, dict):
+        model = model.get("default") or model.get("model")
+    return model.strip() if isinstance(model, str) else ""
+
+
 def _json_ok(**payload: Any) -> str:
     payload.setdefault("ok", True)
     return json.dumps(payload, ensure_ascii=True, default=str)
@@ -273,12 +289,19 @@ class MnemosMemoryProviderCore:
             harness="hermes",
             conversation=self._scope.conversation,
             host_manages_install=self._from_catalog,
+            # The folder the person works in, as Hermes names it; "" for a chat
+            # with none. Never this process's own: Hermes's gateway runs every
+            # chat in Hermes's install folder.
+            workdir=str(kwargs.get("cwd") or ""),
         )
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         # Opened, not read: a wake counts what it shows as shown, so one built
         # here would spend what shows once on a read no model sees.
         self._runtime._ensure_init()
-        self._hear_model(kwargs.get("model"))
+        # A Hermes that names each turn's model (on_turn_start) signs with it from
+        # the first turn; one that names none (0.23.0) starts the session with
+        # the model in its config.yaml, so that one signs until a turn says.
+        self._hear_model(kwargs.get("model") or _configured_model(self._scope.hermes_home))
 
     @_one_at_a_time
     def system_prompt_block(self) -> str:
