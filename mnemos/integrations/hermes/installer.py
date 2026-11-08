@@ -35,7 +35,7 @@ DEFAULT_MCP_SERVER_NAME = "mnemos"
 _OWN_SERVER_KEYS = {"command", "args", "env", "timeout", "connect_timeout"}
 _OWN_SERVER_ENV = {"MNEMOS_HARNESS"}
 # Mnemos and what it imports, which Hermes' own environment has to be able to find.
-_NEEDS_IN_HERMES = ("mnemos", "ulid", "dotenv", "yaml", "mcp")
+_NEEDS_IN_HERMES = ("mnemos", "ulid", "yaml", "mcp")
 _SHIM_OPENING = '"""Mnemos memory provider shim for Hermes Agent.'
 PRELOAD_HOOK = "mnemos-preload"
 _HOOK_OPENING = '"""Mnemos: load the memory provider before the gateway takes messages.'

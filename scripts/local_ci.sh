@@ -57,6 +57,9 @@ rm -rf "$OUT" && mkdir -p "$OUT/logs" || exit 2
 SRC="$OUT/src"
 DIST="$OUT/dist"
 VERSIONS="3.10 3.11 3.12 3.13"
+# The mcp Hermes pins in its own environment, where its plugin catalog installs
+# Mnemos. The lockfile holds 1.x; keep this the same as in release-hardening.yml.
+MCP2=2.3.0
 
 echo "Mnemos local CI: $SHORT $SUBJECT"
 echo "logs: $OUT/logs"
@@ -197,6 +200,14 @@ bandit() {
         && echo "no high-severity findings"
 }
 
+# The tests on mcp 2, in an environment built by hand, since the lockfile holds 1.x.
+tests_mcp2() {
+    local venv="$OUT/env/mcp2"
+    uv venv -q "$venv" --python 3.12 \
+        && uv pip install -q --python "$venv/bin/python" -e ".[dev]" "mcp[cli]==$MCP2" \
+        && "$venv/bin/python" -m pytest -q
+}
+
 blackbox() {
     local venv="$OUT/blackbox"
     uv venv -q "$venv" --python 3.12 \
@@ -227,6 +238,7 @@ step "tests + coverage (3.13)" 'Total coverage|^[0-9]+ (passed|failed|error)' \
     in_env py3.13 uv run --python 3.13 --extra dev --extra mcp pytest -q --cov --cov-report=term
 step "tests, meaning search (3.13)" '^[0-9]+ (passed|failed|error)' \
     in_env meaning uv run --python 3.13 --extra dev --extra mcp --extra embeddings pytest -q
+step "tests on mcp $MCP2 (3.12)" '^[0-9]+ (passed|failed|error)' tests_mcp2
 
 SUMMARY="$OUT/summary.md"
 {

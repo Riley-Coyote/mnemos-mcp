@@ -36,6 +36,7 @@ import pytest
 
 import mnemos.store.embedding_index as ei
 from mnemos import simple_runtime
+from mnemos.mcp_compat import wire
 from mnemos.simple_runtime import MEMORY_ROW_CHARS, ROW_CHARS, MnemosRuntime
 
 SCOPE = {"agent_id": "nova", "person_id": "riley", "project_scope": "demo"}
@@ -146,7 +147,7 @@ def test_the_default_is_sixteen_at_the_tool_and_in_the_runtime():
 
     assert inspect.signature(MnemosRuntime.recall).parameters["max_results"].default == 16
     tools = {tool.name: tool for tool in asyncio.run(simple_mcp.simple_mcp.list_tools())}
-    schema = tools["mnemos_recall"].inputSchema["properties"]["max_results"]
+    schema = wire(tools["mnemos_recall"])["inputSchema"]["properties"]["max_results"]
     assert schema["default"] == 16, schema
 
 

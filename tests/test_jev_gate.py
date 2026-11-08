@@ -35,6 +35,7 @@ import pytest
 
 import mnemos.store.embedding_index as ei
 from mnemos.core.engram import Engram
+from mnemos.mcp_compat import wire
 from mnemos.store.embedding_index import EmbeddingIndex
 from mnemos.store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
@@ -805,7 +806,7 @@ def _health(db: Path, answerer, monkeypatch) -> tuple[str, dict]:
         result = simple_mcp.simple_mcp._tool_manager.get_tool("mnemos_health").fn()
     finally:
         simple_mcp.configure_runtime()
-    return result.content[0].text, result.structuredContent
+    return result.content[0].text, wire(result)["structuredContent"]
 
 
 def test_health_says_so_in_one_line_when_the_switch_is_on(tmp_path, meaning, home, key, monkeypatch):

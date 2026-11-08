@@ -1183,7 +1183,6 @@ version = "0.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "mcp", extra = ["cli"] },
-    { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "ulid-py" },
 ]
@@ -1218,16 +1217,15 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'anthropic'", specifier = ">=0.25.0" },
     { name = "google-generativeai", marker = "extra == 'all'", specifier = ">=0.5.0" },
     { name = "google-generativeai", marker = "extra == 'gemini'", specifier = ">=0.5.0" },
-    { name = "mcp", extras = ["cli"], specifier = ">=1.30.0,<2" },
+    { name = "mcp", extras = ["cli"], specifier = ">=1.30.0,<3" },
     { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0" },
-    { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "pyyaml", specifier = ">=6.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.12" },
     { name = "sentence-transformers", marker = "extra == 'all'", specifier = ">=2.2.0" },
     { name = "sentence-transformers", marker = "extra == 'embeddings'", specifier = ">=2.2.0" },
-    { name = "ulid-py", specifier = ">=1.1.0" },
+    { name = "ulid-py", specifier = ">=1.1.0,<2" },
 ]
 provides-extras = ["mcp", "embeddings", "gemini", "anthropic", "all", "dev"]
 

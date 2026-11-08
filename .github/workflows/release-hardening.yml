@@ -96,8 +96,9 @@ jobs:
           import asyncio
           import importlib.metadata as md
 
-          # Importing constructs the FastMCP server and registers every simple
-          # tool at module scope. Under mcp 2.0 this line raised
+          # Importing builds the server and registers every simple tool at
+          # module scope. Unlocked, this resolves the newest mcp the range
+          # admits; before mnemos/mcp_compat.py, mcp 2.0 made this line raise
           # ModuleNotFoundError: No module named 'mcp.server.fastmcp'.
           from mnemos.simple_mcp import SIMPLE_TOOL_NAMES, simple_mcp
 
@@ -136,6 +137,24 @@ jobs:
 
       - name: Run tests with meaning search
         run: uv run --extra dev --extra mcp --extra embeddings pytest -q
+
+  mcp2:
+    name: Python 3.12 on mcp 2.3.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+
+      - name: Run tests on the mcp Hermes pins
+        run: |
+          # The lockfile holds mcp 1.x. Hermes pins 2.3.0 in its own
+          # environment, which is where its plugin catalog installs Mnemos.
+          # Keep the version the same as MCP2 in scripts/local_ci.sh.
+          uv venv .mcp2 --python 3.12
+          uv pip install --python .mcp2/bin/python -e ".[dev]" "mcp[cli]==2.3.0"
+          .mcp2/bin/python -m pytest -q
 
   security:
     name: Dependency and code security

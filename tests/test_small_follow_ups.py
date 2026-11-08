@@ -49,6 +49,7 @@ import pytest
 
 import mnemos.store.embedding_index as ei
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.core.engram import Engram
 from mnemos.simple_runtime import MnemosRuntime, format_health_card
@@ -438,7 +439,7 @@ def test_a_briefing_fetched_by_mnemos_context_counts_as_shown(tmp_path, home, mo
 def test_mnemos_context_over_the_protocol_counts_as_shown_for_the_hook(tmp_path, home):
     """The real server, in its own process with the session's id, delivers the
     briefing; the prompt hook, in another, leaves that line out."""
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, get_default_environment, stdio_client
 
@@ -459,7 +460,7 @@ def test_mnemos_context_over_the_protocol_counts_as_shown_for_the_hook(tmp_path,
             async with ClientSession(read_stream, write_stream) as session:
                 await session.initialize()
                 result = await session.call_tool("mnemos_context", {})
-                assert not result.isError
+                assert not wire(result)["isError"]
                 return "\n".join(block.text for block in result.content if block.type == "text")
 
     briefing = anyio.run(run)

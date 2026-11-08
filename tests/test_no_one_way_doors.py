@@ -35,6 +35,7 @@ import anyio
 import pytest
 
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.code_version import MAINTENANCE_CODE_VERSION
 from mnemos.consolidation.decay import run_decay_pass
 from mnemos.core.engram import Connection, Engram
@@ -676,7 +677,7 @@ def test_mnemos_recall_takes_include_archived_over_the_protocol(tmp_path):
 
     async def capture(session):
         tools = {tool.name: tool for tool in (await session.list_tools()).tools}
-        assert "include_archived" in tools["mnemos_recall"].inputSchema["properties"]
+        assert "include_archived" in wire(tools["mnemos_recall"])["inputSchema"]["properties"]
         return _memory_id(text(await session.call_tool("mnemos_capture", {"content": FERRY})))
 
     async def recall(session):

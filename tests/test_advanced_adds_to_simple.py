@@ -31,6 +31,7 @@ import pytest
 import mnemos.mcp_server as mcp_server
 import mnemos.simple_mcp as simple_mcp
 from mnemos.cli import main
+from mnemos.mcp_compat import wire
 from mnemos.simple_runtime import SIMPLE_TOOL_NAMES
 from mnemos.simple_scope import resolve_scope
 
@@ -135,7 +136,7 @@ def test_every_simple_tool_is_the_same_in_advanced_mode(name):
     simple = _tools(simple_mcp.simple_mcp)[name]
     advanced = _tools(mcp_server.mcp)[name]
 
-    assert advanced.inputSchema == simple.inputSchema
+    assert wire(advanced)["inputSchema"] == wire(simple)["inputSchema"]
     # And the rest of what a client is shown: its description, annotations
     # and output schema.
     assert advanced.model_dump() == simple.model_dump()

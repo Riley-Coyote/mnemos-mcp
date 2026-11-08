@@ -68,7 +68,7 @@ def test_a_setup_saved_on_the_retired_question_moves_on():
     """Advanced setup's step 6 asked whether the substrate should run. A setup
     saved waiting on that answer goes on to the provider question, as step 5
     now does, instead of claiming setup is complete."""
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mnemos import mcp_server
     from mnemos.config.loader import load_config, save_config
 

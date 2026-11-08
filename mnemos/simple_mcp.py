@@ -16,8 +16,8 @@ from pathlib import Path
 from typing import Any
 
 from mcp import types
-from mcp.server.fastmcp import FastMCP
 
+from .mcp_compat import Context, Server, client_name as _handshake_client_name, make_server
 from .package_version import mnemos_version
 from .simple_runtime import MnemosRuntime, RECALL_RESULTS, SIMPLE_TOOL_NAMES, format_health_card
 from .simple_tools import (
@@ -51,8 +51,7 @@ logger = logging.getLogger("mnemos.simple_mcp")
 # to a file. Only Claude Code reads it, so it stays with this door.
 RECALL_RESULT_CHARS = 70_000
 
-simple_mcp = FastMCP("mnemos", instructions=SERVER_INSTRUCTIONS)
-simple_mcp._mcp_server.version = mnemos_version()
+simple_mcp = make_server("mnemos", instructions=SERVER_INSTRUCTIONS, version=mnemos_version())
 
 _runtime: MnemosRuntime | None = None
 _runtime_kwargs: dict[str, Any] = {}
@@ -139,17 +138,13 @@ def _get_runtime() -> MnemosRuntime:
         return _runtime
 
 
-def _client_name(server: FastMCP) -> str:
-    """The name the MCP client gave in its handshake (``clientInfo.name``), or
-    "". Claude Code says claude-code, Gemini CLI gemini-cli-mcp-client, Grok
-    grok-shell-<server>, OpenClaw openclaw-bundle-mcp; Hermes says "mcp" (the
-    SDK's default), which says nothing. Only read inside a tool call; any
-    failure is an empty name."""
-    try:
-        info = server.get_context().session.client_params.clientInfo
-        return str(info.name or "").strip()
-    except Exception:
-        return ""
+def _client_name(ctx: Context | None) -> str:
+    """The name the MCP client gave in its handshake, or "". Claude Code says
+    claude-code, Gemini CLI gemini-cli-mcp-client, Grok grok-shell-<server>,
+    OpenClaw openclaw-bundle-mcp; Hermes says "mcp" (the SDK's default), which
+    says nothing. ``ctx`` is the request the SDK handed the tool; a direct
+    call has none, and any failure is an empty name."""
+    return _handshake_client_name(ctx)
 
 
 def start_warm_up() -> threading.Thread | None:
@@ -188,16 +183,16 @@ def start_warm_up() -> threading.Thread | None:
     return thread
 
 
-def register_simple_tools(server: FastMCP) -> None:
-    """Register the simple continuity tools on a FastMCP server: all of them,
+def register_simple_tools(server: Server) -> None:
+    """Register the simple continuity tools on an MCP server: all of them,
     on either server. Advanced mode serves these unchanged and only adds.
 
     Tools that build their own ``CallToolResult`` must be annotated as
-    returning one. FastMCP derives an output schema from the return
+    returning one. The SDK derives an output schema from the return
     annotation, and for ``-> Any`` that schema wraps the value as
     ``{"result": ...}`` — which a hand-built result's ``structuredContent``
     does not satisfy, so the call fails validation. Annotating the real
-    type makes FastMCP skip structured validation, as intended for a tool
+    type makes the SDK skip structured validation, as intended for a tool
     returning a complete result.
 
     This only reproduced on Python 3.10: newer versions resolve ``Any`` to
@@ -221,6 +216,7 @@ def register_simple_tools(server: FastMCP) -> None:
         max_results: int = 5,
         include_graph: bool = False,
         graph_max_nodes: int = 18,
+        ctx: Context | None = None,
     ) -> types.CallToolResult:
         """Get the startup continuity packet for this agent/session.
 
@@ -238,7 +234,7 @@ def register_simple_tools(server: FastMCP) -> None:
         """
 
         runtime = _get_runtime()
-        runtime.client_name = _client_name(server)
+        runtime.client_name = _client_name(ctx)
         packet = _output(runtime.context(
             query=_text("query", query, MAX_QUERY_CHARS),
             max_results=_count("max_results", max_results, minimum=1, maximum=MAX_RESULTS),

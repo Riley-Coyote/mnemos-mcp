@@ -7,9 +7,10 @@ import anyio
 import pytest
 
 from mnemos.simple_runtime import SIMPLE_TOOL_NAMES
+from mnemos.mcp_compat import wire
 
 
-pytest.importorskip("mcp.server.fastmcp")
+pytest.importorskip("mcp")
 
 
 def _tool_names(server):
@@ -102,23 +103,23 @@ def test_simple_tools_have_protocol_risk_annotations():
 
     tools = _tools_by_name(simple_mcp)
 
-    assert tools["mnemos_context"].annotations.openWorldHint is False
-    assert tools["mnemos_context"].annotations.readOnlyHint is False
+    assert wire(tools["mnemos_context"])["annotations"]["openWorldHint"] is False
+    assert wire(tools["mnemos_context"])["annotations"]["readOnlyHint"] is False
     # maintain() runs a consolidation cycle, and decay archives engrams that
     # fall below threshold. Archival is not reversible through the tool
     # surface, so it must declare itself destructive. context() builds the
     # packet and runs no cycle.
-    assert tools["mnemos_context"].annotations.destructiveHint is False
-    assert tools["mnemos_maintain"].annotations.destructiveHint is True
-    assert tools["mnemos_recall"].annotations.readOnlyHint is False
-    assert tools["mnemos_capture"].annotations.destructiveHint is False
-    assert tools["mnemos_correct"].annotations.destructiveHint is True
-    assert tools["mnemos_introduce"].annotations.readOnlyHint is False
-    assert tools["mnemos_introduce"].annotations.destructiveHint is False
-    assert tools["mnemos_introduce"].annotations.idempotentHint is True
-    assert tools["mnemos_health"].annotations.readOnlyHint is True
-    assert tools["mnemos_health"].annotations.destructiveHint is False
-    assert tools["mnemos_health"].annotations.idempotentHint is True
+    assert wire(tools["mnemos_context"])["annotations"]["destructiveHint"] is False
+    assert wire(tools["mnemos_maintain"])["annotations"]["destructiveHint"] is True
+    assert wire(tools["mnemos_recall"])["annotations"]["readOnlyHint"] is False
+    assert wire(tools["mnemos_capture"])["annotations"]["destructiveHint"] is False
+    assert wire(tools["mnemos_correct"])["annotations"]["destructiveHint"] is True
+    assert wire(tools["mnemos_introduce"])["annotations"]["readOnlyHint"] is False
+    assert wire(tools["mnemos_introduce"])["annotations"]["destructiveHint"] is False
+    assert wire(tools["mnemos_introduce"])["annotations"]["idempotentHint"] is True
+    assert wire(tools["mnemos_health"])["annotations"]["readOnlyHint"] is True
+    assert wire(tools["mnemos_health"])["annotations"]["destructiveHint"] is False
+    assert wire(tools["mnemos_health"])["annotations"]["idempotentHint"] is True
 
 
 def test_simple_tool_schemas_do_not_expose_injected_context():
@@ -126,16 +127,16 @@ def test_simple_tool_schemas_do_not_expose_injected_context():
 
     tools = _tools_by_name(simple_mcp)
 
-    assert "ctx" not in tools["mnemos_capture"].inputSchema.get("properties", {})
-    assert "ctx" not in tools["mnemos_maintain"].inputSchema.get("properties", {})
-    assert "include_graph" in tools["mnemos_context"].inputSchema.get("properties", {})
-    assert "graph_max_nodes" in tools["mnemos_context"].inputSchema.get("properties", {})
+    assert "ctx" not in wire(tools["mnemos_capture"])["inputSchema"].get("properties", {})
+    assert "ctx" not in wire(tools["mnemos_maintain"])["inputSchema"].get("properties", {})
+    assert "include_graph" in wire(tools["mnemos_context"])["inputSchema"].get("properties", {})
+    assert "graph_max_nodes" in wire(tools["mnemos_context"])["inputSchema"].get("properties", {})
 
 
 def test_simple_capture_accepts_numeric_or_string_importance():
     from mnemos.simple_mcp import simple_mcp
 
-    schema = _tools_by_name(simple_mcp)["mnemos_capture"].inputSchema
+    schema = wire(_tools_by_name(simple_mcp)["mnemos_capture"])["inputSchema"]
     importance_schema = schema["properties"]["importance"]
 
     assert "anyOf" in importance_schema
@@ -250,12 +251,12 @@ def test_simple_stdio_server_lists_and_calls_context(tmp_path):
                 assert "Introduction recorded." in introduced_text
 
                 health = await session.call_tool("mnemos_health", {})
-                assert not health.isError
-                assert health.structuredContent is not None
-                assert health.structuredContent["scope"]["agent_id"] == "smoke"
+                assert not wire(health)["isError"]
+                assert wire(health)["structuredContent"] is not None
+                assert wire(health)["structuredContent"]["scope"]["agent_id"] == "smoke"
                 # The server answers for its own process: whether its recall
                 # can seed by meaning, and why not if not.
-                semantic = health.structuredContent["semantic"]
+                semantic = wire(health)["structuredContent"]["semantic"]
                 assert isinstance(semantic["active"], bool)
                 assert semantic["active"] or semantic["reason"]
                 health_text = "\n".join(
@@ -307,18 +308,18 @@ def test_simple_stdio_covers_recall_correct_maintain_reflect(tmp_path):
                 recall = await session.call_tool(
                     "mnemos_recall", {"query": "coffee preference"}
                 )
-                assert not recall.isError
+                assert not wire(recall)["isError"]
                 assert "roast" in _text(recall).lower(), _text(recall)
 
                 correct = await session.call_tool(
                     "mnemos_correct",
                     {"correction": "Riley prefers light roast now", "query": "coffee"},
                 )
-                assert not correct.isError
+                assert not wire(correct)["isError"]
                 assert _text(correct).strip()
 
                 maintain = await session.call_tool("mnemos_maintain", {})
-                assert not maintain.isError
+                assert not wire(maintain)["isError"]
                 assert _text(maintain).strip()
 
                 # reflect: surface a real pending target from the packet, then
@@ -331,7 +332,7 @@ def test_simple_stdio_covers_recall_correct_maintain_reflect(tmp_path):
                     "mnemos_reflect",
                     {"target_id": target, "text": "it grounds how I answer him"},
                 )
-                assert not reflect.isError
+                assert not wire(reflect)["isError"]
                 body = _text(reflect).lower()
                 assert ("recorded" in body) or ("nothing was pending" in body), body
 
@@ -376,11 +377,11 @@ def test_simple_stdio_context_can_return_identity_graph(tmp_path):
                     {"include_graph": True, "graph_max_nodes": 10},
                 )
 
-                assert not result.isError
+                assert not wire(result)["isError"]
                 assert [block.type for block in result.content] == ["text", "image"]
-                assert result.content[1].mimeType == "image/svg+xml"
-                assert result.structuredContent is not None
-                graph = result.structuredContent["identity_graph"]
+                assert wire(result.content[1])["mimeType"] == "image/svg+xml"
+                assert wire(result)["structuredContent"] is not None
+                graph = wire(result)["structuredContent"]["identity_graph"]
                 assert graph["scope"]["agent_id"] == "graph-smoke"
                 assert graph["nodes"]
                 assert graph["edges"]

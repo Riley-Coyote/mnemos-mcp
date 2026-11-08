@@ -50,6 +50,12 @@ HANDOFF = (
 )
 
 
+def failed(result: object) -> bool:
+    """Whether a tool call came back as an error. The field is is_error on
+    mcp 2.x and isError on 1.x, and this runs on whichever the install got."""
+    return bool(getattr(result, "is_error", getattr(result, "isError", False)))
+
+
 def text_of(result: object) -> str:
     return "\n".join(
         block.text
@@ -120,7 +126,7 @@ async def reflect_once_asked(
             "mnemos_reflect", {"target_id": target_id, "text": text},
         )
         pending = "nothing was pending" in text_of(reflected).lower()
-        if reflected.isError or not pending or time.monotonic() > deadline:
+        if failed(reflected) or not pending or time.monotonic() > deadline:
             return reflected
         await asyncio.sleep(1)
 
@@ -136,41 +142,41 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
             "mnemos_introduce",
             {"agent_model": "independent-blackbox", "agent_name": "Verifier"},
         )
-        assert not introduced.isError, text_of(introduced)
+        assert not failed(introduced), text_of(introduced)
 
         private = await session.call_tool("mnemos_capture", {"content": PRIVATE})
-        assert not private.isError, text_of(private)
+        assert not failed(private), text_of(private)
         match = re.search(r"engram_[A-Z0-9]+", text_of(private))
         assert match, text_of(private)
         captured_ids["private"] = match.group(0)
 
         injected = await session.call_tool("mnemos_capture", {"content": INJECTION})
-        assert not injected.isError, text_of(injected)
+        assert not failed(injected), text_of(injected)
 
         handoff = await session.call_tool("mnemos_handoff", {"text": HANDOFF})
-        assert not handoff.isError, text_of(handoff)
+        assert not failed(handoff), text_of(handoff)
 
         reflected = await reflect_once_asked(session, captured_ids["private"], REFLECTION)
-        assert not reflected.isError, text_of(reflected)
+        assert not failed(reflected), text_of(reflected)
         assert "recorded" in text_of(reflected).lower(), text_of(reflected)
 
         oversized = await session.call_tool(
             "mnemos_capture", {"content": "x" * 100_001}
         )
-        assert oversized.isError, "oversized capture was accepted"
+        assert failed(oversized), "oversized capture was accepted"
         oversized_handoff = await session.call_tool(
             "mnemos_handoff", {"text": "x" * 20_000}
         )
-        assert oversized_handoff.isError, "oversized handoff was accepted"
+        assert failed(oversized_handoff), "oversized handoff was accepted"
 
         health = await session.call_tool("mnemos_health", {})
-        assert not health.isError, text_of(health)
+        assert not failed(health), text_of(health)
 
         # The page, served by the server itself: it answers for this memory, and
         # the protocol it shares a process with still answers after it starts,
         # so starting it wrote nothing on stdout.
         page = await session.call_tool("mnemos_page", {})
-        assert not page.isError, text_of(page)
+        assert not failed(page), text_of(page)
         address = re.search(r"http://127\.0\.0\.1:\d+/[\w-]+/log/", text_of(page))
         assert address, text_of(page)
         with urllib.request.urlopen(address.group(0).replace("/log/", "/data/life.json"), timeout=10) as answer:
@@ -248,7 +254,7 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
                 "action": "forget",
             },
         )
-        assert not forgotten.isError, text_of(forgotten)
+        assert not failed(forgotten), text_of(forgotten)
         packet_after = text_of(await session.call_tool("mnemos_context", {}))
         recall_after = text_of(
             await session.call_tool(
@@ -260,7 +266,7 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
         assert REFLECTION not in packet_after, packet_after
 
         maintained = await session.call_tool("mnemos_maintain", {"deep": False})
-        assert not maintained.isError, text_of(maintained)
+        assert not failed(maintained), text_of(maintained)
 
     await with_session(
         executable, env, db, "riley", "mnemos", owner_read_and_forget
@@ -275,9 +281,9 @@ async def audit_mcp(executable: Path, env: dict[str, str], db: Path) -> None:
             "mnemos_introduce",
             {"agent_model": "independent-blackbox", "agent_name": "Verifier"},
         )
-        assert not introduced.isError, text_of(introduced)
+        assert not failed(introduced), text_of(introduced)
         woke = await session.call_tool("mnemos_context", {})
-        assert not woke.isError, text_of(woke)
+        assert not failed(woke), text_of(woke)
         packet = text_of(woke)
         assert "### where i was" in packet, packet
         assert "Next: verify the fresh session receives this exact handoff first." in packet, packet

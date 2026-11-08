@@ -22,7 +22,7 @@ class TestServerInstructions:
     """Without these, an agent has tools but no idea it should use them."""
 
     def test_both_surfaces_ship_instructions(self):
-        pytest.importorskip("mcp.server.fastmcp")
+        pytest.importorskip("mcp")
         from mnemos.mcp_server import mcp
         from mnemos.simple_mcp import simple_mcp
 
@@ -30,7 +30,7 @@ class TestServerInstructions:
             assert server.instructions, "server exposes no instructions to the client"
 
     def test_instructions_name_the_startup_and_capture_loop(self):
-        pytest.importorskip("mcp.server.fastmcp")
+        pytest.importorskip("mcp")
         from mnemos.simple_mcp import simple_mcp
 
         instructions = simple_mcp.instructions

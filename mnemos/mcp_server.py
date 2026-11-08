@@ -3,8 +3,8 @@ Mnemos MCP Server, advanced mode.
 
 Advanced mode is simple mode plus tools for inspecting and administering
 memory: every simple tool (``mnemos.simple_mcp``) is served here unchanged,
-with the same server start and shutdown. Uses the Anthropic MCP Python SDK
-(FastMCP).
+with the same server start and shutdown. Uses the MCP Python SDK, 1.x or 2.x
+(``mnemos.mcp_compat``).
 
 Tools added to simple mode's:
     mnemos_setup        — Walk through onboarding
@@ -45,8 +45,6 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from mcp.server.fastmcp import FastMCP
-
 from . import simple_mcp as _simple_mcp
 from .authorship import harness_session, resolve_author_model, session_introduction
 from .core.types import EngramKind, SourceType
@@ -54,6 +52,7 @@ from .store.sqlite_store import EngramStore
 from .store.embedding_index import EmbeddingIndex
 from .encoding.encoder import Encoder
 from .consolidation.daemon import ConsolidationDaemon
+from .mcp_compat import make_server
 from .interface.openclaw_export import OpenClawExporter
 from .interface.context_packet import build_context_packet
 from .interface.visual_snapshot import build_memory_visual_snapshot
@@ -85,8 +84,7 @@ ADVANCED_INSTRUCTIONS = (
     "mnemos_review_queue or mnemos_status only to inspect or administer memory."
 )
 
-mcp = FastMCP("mnemos", instructions=ADVANCED_INSTRUCTIONS)
-mcp._mcp_server.version = _simple_mcp.mnemos_version()
+mcp = make_server("mnemos", instructions=ADVANCED_INSTRUCTIONS, version=_simple_mcp.mnemos_version())
 # Every simple tool, whole: advanced mode only adds. It once kept an older
 # mnemos_recall of its own, which couldn't look a memory up by id, had no
 # standing filter, cut each row to 150 characters and waited on setup, so the

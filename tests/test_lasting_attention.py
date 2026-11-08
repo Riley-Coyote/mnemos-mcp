@@ -354,7 +354,7 @@ def test_setups_note_in_the_persons_words_never_becomes_a_memory(tmp_path, monke
     foundational note framing it ("Riley starting context: ..."). The old rule
     made that note a memory at the first cycle: the person's words, a second
     time, as nobody's."""
-    pytest.importorskip("mcp.server.fastmcp")
+    pytest.importorskip("mcp")
     from mnemos import mcp_server
     from mnemos.config.loader import save_config
 
