@@ -1042,8 +1042,8 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     #
     # Drain any payload the harness passed on stdin, but never block on it. A
     # bare read() waits for EOF, so a harness that spawns the hook and leaves
-    # stdin open would hang session start forever. select() drains only what is
-    # already there and returns the moment there is nothing more to read.
+    # stdin open would hang session start forever. The shared reader waits
+    # briefly for a complete JSON payload, on Windows pipes as well as POSIX.
     #
     # The payload can name the model starting the session (Claude Code sends
     # `model` on SessionStart when it has one), always names the session
@@ -1055,15 +1055,12 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     # never chooses whose memory this is.
     received = bytearray()
     try:
-        import select
+        import time
+        from .cue import read_payload
 
-        fd = sys.stdin.fileno()
-        while select.select([fd], [], [], 0.0)[0]:
-            chunk = os.read(fd, 65536)
-            if not chunk:
-                break  # EOF — writer closed its end
-            if len(received) < 1_048_576:
-                received.extend(chunk)
+        # Both hooks use one bounded reader. A SessionStart payload may arrive
+        # shortly after process launch, rather than being immediately ready.
+        received.extend(read_payload(sys.stdin, deadline=time.monotonic() + 0.25))
     except Exception:
         pass
     wake = (getattr(args, "wake", None) or os.environ.get("MNEMOS_WAKE", "") or "full").strip().lower()
