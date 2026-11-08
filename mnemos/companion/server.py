@@ -106,9 +106,9 @@ def _dumps(value: object) -> bytes:
 def _inside_hermes() -> bool:
     """Whether this page is served from inside Hermes, which hands Mnemos its keys.
     Hermes's plugin rules: a plugin uses no other program's sign-in and keeps no
-    key of its own outside Hermes, so from there the page turns on neither the
-    quiet hours (``claude -p``, on the person's own account) nor Jev (a key in a
-    file). Either can still be turned off."""
+    key of its own outside Hermes, so from there the page changes neither the
+    quiet hours (``claude -p``, on the person's own account, in the system's
+    scheduler) nor Jev (a key in a file): both are Claude Code's, and set there."""
     from ..llm import host_secrets_active
 
     return host_secrets_active()
@@ -286,12 +286,12 @@ class LogServer(ThreadingHTTPServer):
 
         from .. import cli
 
+        if _inside_hermes():
+            return {"error": "The quiet hours run through Claude Code on your own account, so they're "
+                             "set from Claude Code, not from inside Hermes."}
         on = request.get("on")
         if not isinstance(on, bool):
             return {"error": '"on" says whether the quiet hours run: true or false.'}
-        if on and _inside_hermes():
-            return {"error": "The quiet hours run through Claude Code on your own account, so they aren't "
-                             "turned on from inside Hermes."}
         times: dict[str, tuple[int, int] | None] = {}
         for key in ("mine", "ours", "dream"):
             value = request.get(key)
@@ -330,9 +330,9 @@ class LogServer(ThreadingHTTPServer):
         back: not in a reply, an error or a log line."""
         from .. import jev
 
-        if _inside_hermes() and request.get("on") is not False:
-            return {"error": "Jev judges the cue in Claude Code and never runs inside Hermes, so its key "
-                             "isn't kept from here."}
+        if _inside_hermes():
+            return {"error": "Jev judges the cue in Claude Code and never runs inside Hermes, so it's set "
+                             "from Claude Code, not from here."}
         with self._settings:
             try:
                 if request.get("remove_key") is True:
