@@ -46,7 +46,7 @@ def keys_all_around(tmp_path, monkeypatch):
     (home / ".mnemos" / ".env").write_text("MNEMOS_MODEL=gpt-from-a-file\n")
     (home / ".openclaw").mkdir(exist_ok=True)
     (home / ".openclaw" / "openclaw.json").write_text(json.dumps(
-        {"tools": {"web": {"search": {"perplexity": {"apiKey": "key-from-openclaw"}}}}}
+        {"tools": {"web": {"search": {"perplexity": {"apiKey": "sk-or-key-from-openclaw"}}}}}
     ))
     monkeypatch.chdir(work)
     monkeypatch.delenv("MNEMOS_DISABLE_DOTENV", raising=False)  # files are read, as on a real machine
@@ -74,7 +74,7 @@ def test_outside_hermes_the_files_are_read(keys_all_around):
     assert key == "key-from-the-workspace"
     assert Path(where).resolve() == (keys_all_around / ".env").resolve()
     assert llm.chosen_provider() == "openai"
-    assert llm._load_openclaw_openrouter_key() == "key-from-openclaw"
+    assert llm._load_openclaw_openrouter_key() == "sk-or-key-from-openclaw"
 
 
 def test_in_hermes_keys_come_from_hermes_and_no_file_is_opened(keys_all_around, tmp_path):

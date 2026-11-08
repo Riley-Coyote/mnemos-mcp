@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- **A Perplexity key in OpenClaw's config no longer goes to OpenRouter.** With provider openrouter and no `OPENROUTER_API_KEY`, Mnemos borrowed OpenClaw's `tools.web.search.perplexity.apiKey` whatever it held; it now takes that key only when it's an OpenRouter key (`sk-or-`, or beside a `baseUrl` at openrouter.ai), and otherwise says so once.
+
 ## 0.6.6 (2026-11-08)
 
 Mnemos can be installed from Hermes's plugin catalog, and it runs on mcp 2, which Hermes pins.

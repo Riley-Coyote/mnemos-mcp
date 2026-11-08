@@ -414,28 +414,41 @@ def _find_env_key(key_name: str) -> tuple[str, str]:
 
 
 def _load_openclaw_openrouter_key() -> str:
-    """Try to find OpenRouter API key from OpenClaw config."""
+    """The OpenRouter key in OpenClaw's config, or "".
+
+    ``tools.web.search.perplexity.apiKey`` is OpenClaw's Perplexity
+    web-search slot, and OpenClaw takes either kind of key there: a ``pplx-``
+    key goes to Perplexity's own API, and an ``sk-or-`` key, or one beside a
+    ``baseUrl`` at openrouter.ai, goes through OpenRouter. Only the OpenRouter
+    kind is Mnemos's to use; a Perplexity key sent to openrouter.ai would be a
+    credential given to the wrong company.
+    """
     from pathlib import Path
     import json
     if _dotenv_disabled():
         # Same ambient-machine-state class as .env files.
         return ""
     openclaw_config = Path.home() / ".openclaw" / "openclaw.json"
-    if openclaw_config.exists():
-        try:
-            with open(openclaw_config) as f:
-                cfg = json.load(f)
-            key = (
-                cfg.get("tools", {})
-                .get("web", {})
-                .get("search", {})
-                .get("perplexity", {})
-                .get("apiKey", "")
-            ).strip()
-            if key:
-                return key
-        except (json.JSONDecodeError, OSError):
-            pass
+    if not openclaw_config.exists():
+        return ""
+    try:
+        with open(openclaw_config) as f:
+            cfg = json.load(f)
+        perplexity = cfg["tools"]["web"]["search"]["perplexity"]
+        key = perplexity.get("apiKey", "")
+        base_url = perplexity.get("baseUrl", "")
+    except (json.JSONDecodeError, OSError, KeyError, TypeError, AttributeError):
+        return ""
+    # OpenClaw also takes a SecretRef object there, which isn't a key.
+    key = key.strip() if isinstance(key, str) else ""
+    if not key:
+        return ""
+    if key.startswith("sk-or-") or (isinstance(base_url, str) and "openrouter.ai" in base_url):
+        return key
+    _warn_once(
+        "OpenClaw's tools.web.search.perplexity.apiKey is not an OpenRouter key, "
+        "so Mnemos doesn't use it for openrouter; set OPENROUTER_API_KEY for Mnemos."
+    )
     return ""
 
 
