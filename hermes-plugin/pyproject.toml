@@ -1,0 +1,16 @@
+[project]
+name = "hermes-plugin-mnemos"
+version = "0.6.6"
+description = "Hermes Agent memory provider plugin: Mnemos"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+# Hermes installs these into its own environment, under its own exact pins, when the
+# plugin is installed or enabled, and again after `hermes update`. The range keeps to
+# one minor release of Mnemos: 0.6.6 is the first that runs on the mcp 2 Hermes pins.
+dependencies = [
+    "mnemos-continuity>=0.6.6,<0.7",
+]
+
+# Nothing to build: this folder is the plugin, not a package.
+[tool.uv]
+package = false

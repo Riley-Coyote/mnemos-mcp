@@ -16,6 +16,7 @@ from ...file_security import atomic_write_text
 from ...setup.state import mnemos_command
 from .scope import (
     HermesMnemosConfig,
+    _load_json_config,
     config_copied_from_elsewhere,
     default_hermes_home,
     profile_agent_id,
@@ -37,6 +38,8 @@ _OWN_SERVER_ENV = {"MNEMOS_HARNESS"}
 # Mnemos and what it imports, which Hermes' own environment has to be able to find.
 _NEEDS_IN_HERMES = ("mnemos", "ulid", "yaml", "mcp")
 _SHIM_OPENING = '"""Mnemos memory provider shim for Hermes Agent.'
+# How hermes-plugin/__init__.py opens: Mnemos as Hermes's plugin catalog installs it.
+_CATALOG_OPENING = '"""Mnemos for Hermes, from Hermes\'s plugin catalog'
 PRELOAD_HOOK = "mnemos-preload"
 _HOOK_OPENING = '"""Mnemos: load the memory provider before the gateway takes messages.'
 
@@ -182,7 +185,7 @@ def _hermes_load_check(home: Path) -> tuple[str, str]:
     shim = provider_plugin_dirs(home)[0] / "__init__.py"
     if not shim.is_file():
         return "no", f"there is no shim at {shim}"
-    if not shim.read_text(encoding="utf-8", errors="replace").startswith(_SHIM_OPENING):
+    if not _holds_mnemos_plugin(shim.parent):
         return "not tried", "the file there isn't one Mnemos wrote"
     python = _hermes_python(home)
     if python is None:
@@ -435,6 +438,12 @@ def install_hermes_plugin(
     hook_dir = home / "hooks" / PRELOAD_HOOK
     if selected_mode == PROVIDER_MODE:
         for provider_dir in plugin_dirs:
+            if _holds_catalog_plugin(provider_dir):
+                result.notes.append(
+                    f"Mnemos from Hermes's plugin catalog is in {provider_dir}: it stays as Hermes "
+                    "installed it, and Hermes updates it (hermes plugins update mnemos)."
+                )
+                continue
             files.update({
                 provider_dir / "__init__.py": render_plugin_shim(),
                 provider_dir / "plugin.yaml": render_plugin_manifest(),
@@ -562,6 +571,25 @@ def install_hermes_plugin(
     return result
 
 
+def _holds_catalog_plugin(folder: Path) -> bool:
+    """Whether a plugin folder holds Mnemos as Hermes's plugin catalog installed
+    it. Hermes keeps that at the commit it reviewed and updates it itself, so
+    Mnemos never rewrites or removes it."""
+
+    path = folder / "__init__.py"
+    try:
+        return path.is_file() and path.read_text(encoding="utf-8", errors="replace").startswith(_CATALOG_OPENING)
+    except OSError:
+        return False
+
+
+def _holds_mnemos_plugin(folder: Path) -> bool:
+    """Whether the plugin Hermes loads from a folder is Mnemos: the shim
+    ``mnemos connect hermes`` writes, or the catalog's plugin."""
+
+    return _wrote_this_folder(folder) or _holds_catalog_plugin(folder)
+
+
 def _wrote_this_folder(folder: Path) -> bool:
     """Whether a plugin or hook folder holds what Mnemos wrote: those go stale as
     Mnemos moves and changes, and are its own to rewrite."""
@@ -600,6 +628,38 @@ def _one_memory_scope(home: Path) -> tuple[str, str, str, str]:
     else:
         scope = resolve_scope(agent_id=profile_agent_id(home), db_path=profile_store(home))
     return str(scope.db_path), scope.agent_id, scope.person_id, scope.project_scope
+
+
+def settle_one_memory(hermes_home: str | Path | None = None) -> bool:
+    """Give a home Mnemos was never connected to the memory ``mnemos connect
+    hermes`` would (``_one_memory_scope``): one agent, the profile's own, with one
+    memory in every chat. A plugin installed from Hermes's catalog starts this
+    way, with no connect run first, and left to itself the provider would name
+    its memory after each chat and person. Nothing changes for a home whose
+    mnemos.json names a memory, one whose provider already keeps one where it
+    looked before, or one the environment names a memory for. Returns whether
+    it wrote."""
+
+    home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
+    raw = _load_json_config(home)
+    if raw.get("db_path") or raw.get("agent_id"):
+        return False
+    if os.environ.get("MNEMOS_DB_PATH") or os.environ.get("MNEMOS_AGENT_ID"):
+        return False
+    if (home / "mnemos" / "mnemos.db").exists():
+        return False  # the memory it has kept until now stays its memory
+    db_path, agent_id, person_id, project_scope = _one_memory_scope(home)
+    try:
+        save_hermes_mnemos_config(home, {
+            "db_path": db_path,
+            "agent_id": agent_id,
+            "person_id": person_id,
+            "project_scope": project_scope,
+            "hermes_home": str(home),
+        })
+    except OSError:
+        return False  # a home it can't write to: it goes on as it was
+    return True
 
 
 def _sidecar_scope(server: dict[str, Any]) -> Any:
@@ -690,7 +750,9 @@ def connect_would_change(home: Path) -> bool:
 
     shim = provider_plugin_dirs(home)[0] / "__init__.py"
     try:
-        stale = shim.read_text(encoding="utf-8", errors="replace") != render_plugin_shim()
+        stale = not _holds_catalog_plugin(shim.parent) and (
+            shim.read_text(encoding="utf-8", errors="replace") != render_plugin_shim()
+        )
     except OSError:
         stale = True
     server = _read_mcp_server(home, DEFAULT_MCP_SERVER_NAME)

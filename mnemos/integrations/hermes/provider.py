@@ -246,6 +246,9 @@ class MnemosMemoryProviderCore:
         hermes_home = kwargs.get("hermes_home")
         if self._config is None:
             settle_config_home(hermes_home)
+            from .installer import settle_one_memory
+
+            settle_one_memory(hermes_home)
         config = self._config or HermesMnemosConfig.load(hermes_home)
         self._scope = derive_hermes_scope(
             session_id=session_id,
@@ -479,6 +482,29 @@ class MnemosMemoryProviderCore:
             {"key": "auto_recall", "description": "Auto-inject scoped identity continuity", "default": "true", "choices": ["true", "false"]},
             {"key": "deep_maintenance", "description": "Enable optional model-assisted Mnemos maintenance when model keys exist", "default": "false", "choices": ["true", "false"]},
         ]
+
+    def post_setup(self, hermes_home: str, config: dict[str, Any]) -> None:
+        """``hermes memory setup`` with Mnemos chosen: the memory ``mnemos connect
+        hermes`` would set up, Mnemos made the provider, and where its memory is.
+        Without this, setup would ask six questions and leave the memory named
+        after each chat and person (``settle_one_memory``)."""
+        from hermes_cli.config import save_config  # the route Hermes's provider guide names
+
+        from .installer import settle_one_memory
+
+        settle_one_memory(hermes_home)
+        memory = config.get("memory")
+        if not isinstance(memory, dict):
+            memory = config["memory"] = {}
+        memory["provider"] = self.name
+        save_config(config, merge_existing=True)
+        settled = HermesMnemosConfig.load(hermes_home)
+        scope = derive_hermes_scope(hermes_home=hermes_home, config=settled)
+        store = Path(scope.db_path).expanduser()
+        state = "it's new" if not store.exists() else "it's there already"
+        print(f"\n  Mnemos is this agent's memory now. The agent is {scope.agent_id!r}, and its memory")
+        print(f"  is {store} ({state}). It stays when Mnemos is removed: it's the agent's.")
+        print("  Start a new session to wake with it.\n")
 
     def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
         save_hermes_mnemos_config(hermes_home, values)
