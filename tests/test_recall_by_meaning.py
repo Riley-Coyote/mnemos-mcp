@@ -35,7 +35,7 @@ import time
 import types
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -500,7 +500,7 @@ def test_recall_finds_a_handoff_by_its_words_and_says_whose_it_is(tmp_path, monk
     assert "Handoffs:" in out, out
     row = out.split("Handoffs:", 1)[1]
     assert "The harbour survey is half done" in row
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now().astimezone().date().isoformat()  # this machine's day, as Mnemos writes it
     assert f"kind=handoff; left {today}: Yours (Opus 5.5)" in row
 
 

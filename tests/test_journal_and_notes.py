@@ -1012,7 +1012,7 @@ def test_recall_finds_a_journal_entry_by_its_words_marked_as_journal(tmp_path, m
 
     assert "Journal:" in out, out
     row = out.split("Journal:", 1)[1]
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now().astimezone().date().isoformat()  # this machine's day, as Mnemos writes it
     assert "Tonight the east pier felt different" in row, out
     assert f"kind=journal; written {today} (in_conversation): Yours (Opus 5.5)" in row, out
     assert "Handoffs:" not in out
