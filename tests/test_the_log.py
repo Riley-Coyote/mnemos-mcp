@@ -808,6 +808,29 @@ def test_a_config_jev_cant_read_is_left_as_it_is(mind, jev_unset):
     assert config.read_text() == "{not json"
 
 
+def test_inside_hermes_the_page_turns_on_nothing_that_runs_on_another_account(mind, jev_unset, monkeypatch):
+    """Hermes's plugin rules: a plugin uses no other program's sign-in and keeps
+    no key of its own outside Hermes. The quiet hours run `claude -p` on the
+    person's own Claude account, and Jev's key is a file, so the page an agent
+    opens inside Hermes turns on neither. Either can still be turned off."""
+    from mnemos import cli, llm
+
+    asked = []
+    monkeypatch.setattr(cli, "_cmd_daemon", lambda args: asked.append(args.daemon_command) or 0)
+    monkeypatch.setattr(llm, "_host_secrets", lambda name, default=None: default)  # Hermes hands out the keys
+    key_path, config = jev_unset
+    with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
+        status, answer = post(server, {"command": "hours", "on": True, "mine": "07:15"})
+        assert status == 400 and "Claude Code" in answer["error"], answer
+        for request in ({"command": "jev", "key": KEY}, {"command": "jev", "on": True}):
+            status, answer = post(server, request)
+            assert status == 400 and "Hermes" in answer["error"], (request, answer)
+        assert post(server, {"command": "hours", "on": False})[0] == 200
+        assert post(server, {"command": "jev", "on": False}) == (200, {"result": "Jev is off."})
+    assert asked == ["uninstall"]
+    assert not key_path.exists()
+
+
 @pytest.mark.parametrize("hung_up", [BrokenPipeError, ConnectionResetError])
 def test_a_browser_that_hangs_up_mid_answer_ends_quietly(hung_up):
     """A page closed or reloaded while an answer was on its way raised
