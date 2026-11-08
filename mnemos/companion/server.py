@@ -103,6 +103,17 @@ def _dumps(value: object) -> bytes:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
+def _inside_hermes() -> bool:
+    """Whether this page is served from inside Hermes, which hands Mnemos its keys.
+    Hermes's plugin rules: a plugin uses no other program's sign-in and keeps no
+    key of its own outside Hermes, so from there the page turns on neither the
+    quiet hours (``claude -p``, on the person's own account) nor Jev (a key in a
+    file). Either can still be turned off."""
+    from ..llm import host_secrets_active
+
+    return host_secrets_active()
+
+
 # The mind the log was started for is named as Mnemos names it, by the model that signs its memories ("Opus 5.5").
 # A mind found beside it is named by its own agent id ("anima" is Anima, whatever model it runs on), unless that id
 # only says what runs it (one of these), when its model names it too.
@@ -278,6 +289,9 @@ class LogServer(ThreadingHTTPServer):
         on = request.get("on")
         if not isinstance(on, bool):
             return {"error": '"on" says whether the quiet hours run: true or false.'}
+        if on and _inside_hermes():
+            return {"error": "The quiet hours run through Claude Code on your own account, so they aren't "
+                             "turned on from inside Hermes."}
         times: dict[str, tuple[int, int] | None] = {}
         for key in ("mine", "ours", "dream"):
             value = request.get(key)
@@ -316,6 +330,9 @@ class LogServer(ThreadingHTTPServer):
         back: not in a reply, an error or a log line."""
         from .. import jev
 
+        if _inside_hermes() and request.get("on") is not False:
+            return {"error": "Jev judges the cue in Claude Code and never runs inside Hermes, so its key "
+                             "isn't kept from here."}
         with self._settings:
             try:
                 if request.get("remove_key") is True:
