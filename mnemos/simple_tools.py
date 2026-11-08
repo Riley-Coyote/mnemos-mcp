@@ -18,6 +18,12 @@ MAX_CONTEXT_CHARS = 32_768
 MAX_REFLECTION_CHARS = 16_384
 MAX_ID_CHARS = 256
 MAX_RESULTS = 20
+# The most rows a recall may ask for: 45 and 5 handoffs, the longest mix the lab
+# tested (L20c, 2026-11-06). It's on request because every row is read on every
+# search: 50 rows found 9 to 16 more of 118 facts than 15, for about 27,400 more
+# characters a search (L20). mnemos_context keeps MAX_RESULTS: nothing tested it
+# longer.
+MAX_RECALL_RESULTS = 50
 MAX_TOOL_OUTPUT_CHARS = 131_072
 
 

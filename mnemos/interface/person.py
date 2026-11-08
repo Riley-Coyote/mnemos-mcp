@@ -33,9 +33,9 @@ from typing import IO, Any
 from ..authorship import run_by_agent
 from ..companion.export import _Reading, open_read_only, when
 from ..simple_runtime import (
-    RECALL_RESULTS,
     MnemosRuntime,
     NothingChanged,
+    SEARCH_RESULTS,
     closeness,
     found_by,
     journal_view,
@@ -174,7 +174,7 @@ def memories_view(
 
 
 def search_view(
-    runtime: MnemosRuntime, query: str, max_results: int = RECALL_RESULTS,
+    runtime: MnemosRuntime, query: str, max_results: int = SEARCH_RESULTS,
 ) -> dict[str, Any]:
     """``mnemos search --json``: ``{"query", "results": [{"id", "words", "kept",
     "closeness", "found"}]}``, closest first. The mind's own recall over the
@@ -342,7 +342,7 @@ class Interface:
 
     def search(self, request: Mapping[str, Any]) -> Any:
         query = _words(request, "query")
-        max_results = _whole(request, "max_results", RECALL_RESULTS, least=1) or RECALL_RESULTS
+        max_results = _whole(request, "max_results", SEARCH_RESULTS, least=1) or SEARCH_RESULTS
         reader = self._reading()
         if reader is None:
             return {"query": query, "results": []}

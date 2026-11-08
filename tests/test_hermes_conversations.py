@@ -352,6 +352,19 @@ class TestTheWakeIsWhole:
         recalled = topic.prefetch("knee surgery recovery plan")
         assert recalled and len(recalled) <= 2200
 
+    def test_what_recall_adds_to_a_message_leaves_out_a_note_that_doesnt_match(self, home):
+        """The note it matched can come from another topic, one memory across
+        them. The newer note beside it is added only to a list long enough to
+        have a row for it, and this one isn't."""
+        other_topic = _topic(home, 7)
+        _leave(other_topic, "The knee surgery is on March 3.")
+        _leave(other_topic, "The biopsy results came back and I have told nobody yet.")
+
+        recalled = _topic(home, 9).prefetch("when is the knee surgery")
+
+        assert "The knee surgery is on March 3." in recalled, recalled
+        assert "biopsy" not in recalled, recalled
+
     def test_the_wake_can_still_be_bounded_on_purpose(self, home):
         save_hermes_mnemos_config(home, {"max_wake_chars": 1000})
         _leave(_topic(home, 7), "Health thread. " + "Step done and checked. " * 200)

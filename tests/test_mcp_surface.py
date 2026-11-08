@@ -156,6 +156,46 @@ def test_simple_tools_reject_oversized_inputs_before_runtime_work():
         context(max_results=10_000)
 
 
+def test_recall_may_ask_for_fifty_rows_and_no_more(monkeypatch):
+    """45 and 5 handoffs, the longest list the lab tested (L20b)."""
+    from mnemos import simple_mcp
+
+    asked = []
+
+    class Runtime:
+        def recall(self, query, max_results, include_archived, standing):
+            asked.append(max_results)
+            return "the rows"
+
+    monkeypatch.setattr(simple_mcp, "_get_runtime", Runtime)
+    recall = simple_mcp.simple_mcp._tool_manager.get_tool("mnemos_recall").fn
+
+    assert recall("the ferry", max_results=50) == "the rows"
+    assert asked == [50]
+    with pytest.raises(ValueError, match="between 1 and 50"):
+        recall("the ferry", max_results=51)
+
+
+def test_context_keeps_its_own_ceiling():
+    """It gives up to this many of each kind, under the packet's own room, and
+    nothing tested it longer."""
+    from mnemos.simple_mcp import simple_mcp
+
+    context = simple_mcp._tool_manager.get_tool("mnemos_context").fn
+    with pytest.raises(ValueError, match="between 1 and 20"):
+        context(max_results=21)
+
+
+def test_only_recall_declares_a_longer_answer_and_mnemos_lets_it_through():
+    from mnemos.simple_mcp import MAX_TOOL_OUTPUT_CHARS, RECALL_RESULT_CHARS, simple_mcp
+
+    assert 50_000 < RECALL_RESULT_CHARS < MAX_TOOL_OUTPUT_CHARS
+    declared = {
+        name: tool.meta for name, tool in _tools_by_name(simple_mcp).items() if tool.meta
+    }
+    assert declared == {"mnemos_recall": {"anthropic/maxResultSizeChars": RECALL_RESULT_CHARS}}
+
+
 def test_simple_stdio_server_lists_and_calls_context(tmp_path):
     from mcp.client.session import ClientSession
     from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -185,6 +225,11 @@ def test_simple_stdio_server_lists_and_calls_context(tmp_path):
                 tools = await session.list_tools()
                 names = {tool.name for tool in tools.tools}
                 assert names == set(SIMPLE_TOOL_NAMES)
+                # Claude Code reads the limit from this response, in `_meta`.
+                recall = next(tool for tool in tools.tools if tool.name == "mnemos_recall")
+                assert recall.model_dump(by_alias=True)["_meta"] == {
+                    "anthropic/maxResultSizeChars": 70_000,
+                }
 
                 result = await session.call_tool("mnemos_context", {})
                 text = "\n".join(

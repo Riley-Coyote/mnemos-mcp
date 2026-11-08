@@ -163,23 +163,30 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [{'name': 'mnemos_handoff',
                  'reply to one of your notes, including the ids the packet shows\n'
                  '(mnemos_recall("<id>")).\n'
                  '\n'
-                 'For a question about the past, ask for 15 (max_results=15), and\n'
-                 'search more than once, in other words too: a name, a place, the\n'
-                 "thing's own terms. A thin result isn't the memory saying no. When\n"
-                 'two memories disagree, the newer one usually holds.\n'
+                 'A recall returns 16 rows. When a result comes back thin or the\n'
+                 'thing matters, ask for more, up to 50 (max_results=50), and search\n'
+                 "more than once, in other words too: a name, a place, the thing's\n"
+                 "own terms. A thin result isn't the memory saying no. When two\n"
+                 'memories disagree, the newer one usually holds.\n'
                  '\n'
-                 'Handoffs are searched with the memories: the ones in use and the\n'
-                 'older ones a newer handoff replaced, each marked with who left\n'
-                 'it and when. Journal entries are searched too, marked as journal\n'
-                 'with who wrote them and when. A capture comes back once, as its\n'
-                 'memory. max_results counts your own rows. Up to three shared memories\n'
-                 'follow, marked with their author and day. A shared id returns it whole.\n'
+                 'Handoffs have their own search and 3 of the 16 rows: the best match,\n'
+                 'which may be an old draft; the newest from that session, marked so,\n'
+                 'matched or not; and the newest close match from another session. 50\n'
+                 'rows add the next best, for 5; under 11 rows there are 2, under 5\n'
+                 "there's 1, and a single row goes to the best memory. The ones in use\n"
+                 'and the older ones a newer handoff replaced are all searched, each\n'
+                 'marked with who left it and when. Journal\n'
+                 'entries are searched with the memories, marked as journal with who\n'
+                 'wrote them and when.\n'
+                 'A capture comes back once, as its memory. max_results counts your\n'
+                 'own rows. Up to three shared memories follow, marked with their\n'
+                 'author and day. A shared id returns it whole.\n'
                  '\n'
                  'A memory that has gone quiet comes back when the query matches it\n'
                  'well, and wakes. One that faded further, into the archive, comes\n'
                  'back only by its id, or when include_archived is true and the\n'
-                 'query names it; either way it is restored. What you forgot or\n'
-                 'replaced with a correction stays gone.\n'
+                 'query names it (16 at most); either way it is restored. What you\n'
+                 'forgot or replaced with a correction stays gone.\n'
                  '\n'
                  'Args:\n'
                  '    standing: True to list every memory marked standing, how the\n'
@@ -187,7 +194,7 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [{'name': 'mnemos_handoff',
                  '        whatever max_results says, the ones the query names first.\n'
                  '        The query may be empty.',
   'parameters': {'properties': {'query': {'type': 'string'},
-                                'max_results': {'default': 10, 'type': 'integer'},
+                                'max_results': {'default': 16, 'type': 'integer'},
                                 'include_archived': {'default': False, 'type': 'boolean'},
                                 'standing': {'default': False, 'type': 'boolean'}},
                  'required': ['query'],

@@ -11,7 +11,7 @@ Pipeline:
      by what happened. Each memory is in this list once, at the better of its
      two ranks (``better_rank``): two votes for the same words would put it
      above a memory whose words match better;
-   - words among the notes the caller passes (handoffs; bm25 over those notes);
+   - words among the notes the caller passes (bm25 over those notes);
    - meaning: memories and notes alike, each by its closest passage (a
      memory's lesson is one of them), above a similarity floor, and only then
      the top taken.
@@ -36,6 +36,11 @@ Pipeline:
 5. Reconsolidation of the memories returned, once per session per memory. A
    caller that filters further retrieves without it and reinforces what it
    finally shows (``ReactiveRetriever.reinforce``).
+
+A caller can search its notes alone (``only_notes``): no memory is searched or
+returned, so notes ranked this way, and memories ranked without them, take no
+place from each other in any list. Recall searches its handoffs this way
+(``MnemosRuntime._recall_rows`` says why).
 
 Why, from the review of 2026-09-26 on a copy of a real store: the meaning
 search took its top 20 over all 3,746 stored vectors before checking scope, so
@@ -120,6 +125,9 @@ MEANING_FLOOR = 0.35
 SPREAD_HOPS = 2
 # A result names at most this many of the words it was found by.
 MATCHED_WORDS = 3
+# A return links its first this many memories to each other, and any after
+# them to nothing (``ReactiveRetriever.reinforce``).
+LINKED_TOGETHER = 15
 
 
 def fuse(lists: Iterable[tuple[Sequence[str], float]], k: int = FUSION_K) -> dict[str, float]:
@@ -164,17 +172,20 @@ def _log_seed_failure_once(exc: Exception) -> None:
 @dataclass
 class RetrievalResult:
     """A scored retrieval result: a memory (``engram``), or a note the caller
-    asked to have ranked with the memories (``note``, a handoff), which is
+    asked to have ranked (``note``: a handoff, a journal entry), which is
     never an engram and has none.
 
     ``retrieval_path`` says how it was reached: "fts" for a match by words
     (whether or not its meaning matched too), "embedding" for one found by
-    meaning alone, "resonance" for a memory reached only through connections.
+    meaning alone, "resonance" for a memory reached only through connections,
+    "session" for a handoff recall added as its session's newest, which the
+    search never reached.
     ``score_breakdown`` holds its ranks in the lists it was fused from
     (``words_rank``, ``meaning_rank``), its ``similarity``, its ``fused``
     score, and ``matched_words``: the words searched for that its own text
     holds (a memory's words and its lesson, a note's words), in the cue's
-    order, at most ``MATCHED_WORDS``.
+    order, at most ``MATCHED_WORDS``. Recall marks a handoff it lists as its
+    session's newest ``newest_of_session``, whether the search reached it or not.
     """
 
     engram: Engram | None
@@ -295,6 +306,8 @@ class ReactiveRetriever:
         keep: Callable[[RetrievalResult], bool] | None = None,
         notes: Iterable[dict[str, Any]] | None = None,
         query_vector: Sequence[float] | None = None,
+        embed: bool = True,
+        only_notes: bool = False,
     ) -> list[RetrievalResult]:
         """Retrieve memories for ``cue``, best first.
 
@@ -317,15 +330,21 @@ class ReactiveRetriever:
            retrieves this way too, because how a return changes a memory is a
            rule newer code may have replaced.
 
-        ``notes`` (hypomnema rows with ``id`` and ``content``: the handoffs)
-        are ranked with the memories, by their words and their meaning. They
-        come back as results with ``note`` set and no engram, and never take
-        part in resonance: they relay nothing and receive nothing.
+        ``notes`` (hypomnema rows with ``id`` and ``content``) are ranked with
+        the memories, by their words and their meaning. They come back as
+        results with ``note`` set and no engram, and never take part in
+        resonance: they relay nothing and receive nothing. With ``only_notes``
+        they are ranked among themselves: no memory is searched or returned,
+        and the words are still cut by how common they are among the memories,
+        so a word means the same in either search.
 
         ``query_vector`` is the cue's own vector, when the caller has it
-        (``EmbeddingIndex.embed_query``); otherwise the cue is embedded here,
-        once, before anything is decided. With no vector (the embedding
-        failed), meaning is off for this cue: nothing is cut from the words.
+        (``cue_vector``, ``EmbeddingIndex.embed_query``); otherwise the cue is
+        embedded here, once, before anything is decided. With no vector (the
+        embedding failed), meaning is off for this cue: nothing is cut from
+        the words. ``embed=False`` says the caller already tried, for a cue it
+        searches more than once: with no vector it isn't tried again, and a
+        backend that is down holds those searches for one timeout.
         """
         if not cue or not cue.strip():
             return []
@@ -339,9 +358,9 @@ class ReactiveRetriever:
         # its own search (a stand-in) can't say, so nothing is cut for it.
         index = self._embedding_index
         vector = query_vector
+        if vector is None and embed:
+            vector = self.cue_vector(cue)
         embeds_first = index is not None and hasattr(index, "embed_query")
-        if vector is None and embeds_first and getattr(index, "available", False):
-            vector = self._cue_vector(cue)
         meaning_runs = index is not None and (vector is not None or not embeds_first)
 
         # 1a. WORDS among memories: the live ones in scope holding the cue's
@@ -374,7 +393,7 @@ class ReactiveRetriever:
         memory_query = or_query(terms) if terms else (None if common else every_word)
         ranked: list[tuple[Engram, float]] = []
         dormant: list[tuple[Engram, float]] = []
-        if memory_query is not None:
+        if memory_query is not None and not only_notes:
             ranked = self._store.search_fts_ranked(memory_query, limit=WORD_SEEDS, **scope)
             dormant = self._store.search_fts_ranked(
                 memory_query, limit=DORMANT_SEED_LIMIT, state="dormant", **scope,
@@ -392,7 +411,7 @@ class ReactiveRetriever:
         unusable: dict[str, set[str]] | None = {} if common else None
         if meaning_runs:
             try:
-                live = self._store.live_engram_ids(**scope)
+                live = set() if only_notes else self._store.live_engram_ids(**scope)
                 hits = self._meaning_hits(cue, live | set(note_by_id), note_texts, vector, unusable)
             except Exception as exc:
                 # Meaning is optional — words still work — but a failure here
@@ -405,7 +424,7 @@ class ReactiveRetriever:
         if common and live is not None:
             unseen, unseen_notes = self._unseen_by_meaning(live, note_texts, scope, unusable or {})
         none_found = bool(live) and unseen >= live
-        if (none_found or not common) and memory_query != every_word:
+        if (none_found or not common) and memory_query != every_word and not only_notes:
             # Meaning can find none of them, or its search failed: nothing is
             # cut, and every word is searched.
             ranked = self._store.search_fts_ranked(every_word, limit=WORD_SEEDS, **scope)
@@ -436,7 +455,7 @@ class ReactiveRetriever:
         # jargon". Only live memories in the scope have them here. Each
         # memory then counts once by words, at the better of its two ranks.
         lesson_words: list[str] = []
-        if lessons:
+        if lessons and not only_notes:
             # A lesson is found by meaning only by its own passage, cut from
             # its words now: one written after the capture waits for it.
             every_lesson_word = set(unseen)
@@ -457,7 +476,7 @@ class ReactiveRetriever:
         # search. Always by every word: how common a word is in this scope
         # says nothing about another store, and meaning never searches it.
         shared_words: list[str] = []
-        if self._shared_store:
+        if self._shared_store and not only_notes:
             try:
                 if hasattr(self._shared_store, "search_fts_ranked"):
                     shared = self._shared_store.search_fts_ranked(every_word, limit=20)
@@ -470,7 +489,7 @@ class ReactiveRetriever:
             except Exception:
                 pass  # Shared store is optional
 
-        # 1b. WORDS among the notes the caller passes (handoffs), by bm25 over them
+        # 1b. WORDS among the notes the caller passes, by bm25 over them
         note_words = [
             item_id for item_id, _score in rank_by_words(
                 cue, note_texts, limit=WORD_SEEDS, terms=terms, every_word_for=unseen_notes,
@@ -688,6 +707,14 @@ class ReactiveRetriever:
             return []
         return [(neighbour, weight / total) for neighbour, weight in carrying]
 
+    def cue_vector(self, cue: str) -> list[float] | None:
+        """The cue's vector, for ``retrieve``: None with no index that embeds
+        before it searches, or when embedding it failed."""
+        index = self._embedding_index
+        if index is None or not hasattr(index, "embed_query") or not getattr(index, "available", False):
+            return None
+        return self._cue_vector(cue)
+
     def _cue_vector(self, cue: str) -> list[float] | None:
         """The cue's vector from the index, or None when embedding it failed."""
         try:
@@ -728,7 +755,8 @@ class ReactiveRetriever:
         try:
             texts_of = getattr(self._store, "live_memory_texts", None)
             texts = {
-                memory_id: content for memory_id, content, _state in (texts_of(**scope) if texts_of else [])
+                memory_id: content
+                for memory_id, content, _state in (texts_of(**scope) if texts_of and live else [])
             }
             texts.update(note_texts)
             found = searchable(set(live) | set(note_texts), texts=texts, unusable=unusable)
@@ -790,9 +818,17 @@ class ReactiveRetriever:
 
         Retrieval strengthens a memory because it came back, so only what a
         caller actually returns, after all of its own filtering, may be
-        reinforced; results it drops were never seen. Memories returned
-        together are linked as co-activated with each other, and with nothing
-        that was dropped.
+        reinforced; results it drops were never seen. The first
+        ``LINKED_TOGETHER`` memories returned together are linked as
+        co-activated with each other, and with nothing that was dropped; any
+        after those are reinforced like the rest and linked to nothing. A
+        month of real searches replayed with linking and the night's upkeep on
+        (L21, 2026-11-07) found that asking for 50 every time with all of them
+        linked wrote 599 links a search, against 76 with the first 15, and
+        left searches 48% slower, the store 150 MB bigger and 2 fewer facts
+        found after the month. With the first 15 linked all of that stayed
+        where the default leaves it, and what fades was the same either way:
+        what keeps a memory awake is being shown, not its links on their own.
 
         Each memory is reinforced at most once per ``session`` (None reads
         ``CLAUDE_CODE_SESSION_ID``; an empty string means this process). A
@@ -800,15 +836,15 @@ class ReactiveRetriever:
         to a store that newer Mnemos code has opened: how a return changes a
         memory is a rule that newer code may have replaced.
 
-        A note ranked with the memories (a handoff) is never reinforced and
-        never linked: it is not a memory.
+        A note (a handoff) is never reinforced and never linked: it is not a
+        memory.
         """
         results = [r for r in results if r.engram is not None]
         if not self._reconsolidation_enabled or not results:
             return
-        returned_ids = [r.engram.id for r in results]
+        linked = [r.engram.id for r in results[:LINKED_TOGETHER]]
         older: dict[int, bool] = {}
-        for result in results:
+        for place, result in enumerate(results):
             # Reconsolidate in the engram's home store
             target_store = self._store
             if (
@@ -820,12 +856,11 @@ class ReactiveRetriever:
                 older[id(target_store)] = _code_older_than(target_store)
             if older[id(target_store)]:
                 continue
+            together = linked if place < LINKED_TOGETHER else []
             result.engram = reconsolidate(
                 engram=result.engram,
                 current_context=cue,
-                co_retrieved_ids=[
-                    eid for eid in returned_ids if eid != result.engram.id
-                ],
+                co_retrieved_ids=[eid for eid in together if eid != result.engram.id],
                 store=target_store,
                 session=session,
             )
