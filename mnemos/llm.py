@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Protocol, runtime_checkable
+from typing import Callable, Protocol, runtime_checkable
 
 logger = logging.getLogger("mnemos.llm")
 
@@ -325,7 +325,28 @@ class MockClient:
         return "A considered response."
 
 
+# A host that hands out settings and keys itself, and whose rules say a plugin
+# reads them from nowhere else: Hermes, whose get_secret answers for the profile
+# that is speaking (a gateway can serve several). None everywhere else.
+_host_secrets: Callable[[str], str | None] | None = None
+
+
+def take_secrets_from(get_secret: Callable[[str], str | None] | None) -> None:
+    """From now on, read every setting and key through ``get_secret`` and from
+    no file: no .env, no other tool's config. The Hermes provider calls it with
+    Hermes's own as it starts. ``None`` goes back to the environment and files."""
+    global _host_secrets
+    _host_secrets = get_secret
+
+
+def host_secrets_active() -> bool:
+    """Whether a host (Hermes) hands out the settings and keys."""
+    return _host_secrets is not None
+
+
 def _dotenv_disabled() -> bool:
+    if _host_secrets is not None:
+        return True
     return os.environ.get("MNEMOS_DISABLE_DOTENV", "").strip().lower() in (
         "1", "true", "yes",
     )
@@ -356,8 +377,16 @@ def _load_env_key(key_name: str) -> str:
 
 def _find_env_key(key_name: str) -> tuple[str, str]:
     """A setting's value, and where it was found: "the environment", or the
-    path of the .env file it was read from. ("", "") when it is nowhere
-    Mnemos looks. `mnemos doctor` says where."""
+    path of the .env file it was read from, or "Hermes" when Hermes hands
+    them out. ("", "") when it is nowhere Mnemos looks. `mnemos doctor` says
+    where."""
+    if _host_secrets is not None:
+        try:
+            val = str(_host_secrets(key_name) or "").strip()
+        except Exception:  # Hermes refuses a read outside a profile's scope
+            val = ""
+        return (val, "Hermes") if val else ("", "")
+
     # 1. Environment variable
     val = os.environ.get(key_name, "").strip()
     if val:
@@ -413,6 +442,8 @@ def _load_openclaw_openrouter_key() -> str:
 # Answers to "which provider?" that mean none, and the providers Mnemos knows.
 _NO_PROVIDER = frozenset({"", "none", "off", "no", "skip", "local", "rule-based"})
 _PROVIDERS = frozenset({"claude-cli", "claude_cli", "subscription", "openrouter", "anthropic", "openai"})
+# The providers that are another program on this machine, signed in to its own account.
+_CLI_PROVIDERS = frozenset({"claude-cli", "claude_cli", "subscription"})
 _WARNED: set[str] = set()
 
 
@@ -436,10 +467,7 @@ def chosen_provider() -> str:
     they're on, think over the memory through the person's own Claude Code
     (mnemos/life.py).
     """
-    provider = (
-        os.environ.get("MNEMOS_LLM_PROVIDER", "").strip()
-        or _load_env_key("MNEMOS_LLM_PROVIDER")
-    ).lower()
+    provider = _load_env_key("MNEMOS_LLM_PROVIDER").lower()
     if not provider:
         try:
             from .config.loader import load_config
@@ -455,6 +483,14 @@ def chosen_provider() -> str:
         _warn_once(
             f"Mnemos's provider {provider!r} is not one it knows (claude-cli, "
             "openrouter, anthropic or openai); no provider is used."
+        )
+        return ""
+    if _host_secrets is not None and provider in _CLI_PROVIDERS:
+        # Another program, signed in to its own account: inside Hermes a plugin
+        # reaches a model only with a key Hermes hands it.
+        _warn_once(
+            "Mnemos's provider is the Claude CLI, which Mnemos doesn't run inside "
+            "Hermes; no provider is used. A provider with a key in Hermes works."
         )
         return ""
     return provider
@@ -490,11 +526,9 @@ def _create_client_unchecked() -> "LLMClient | None":
     if not provider:
         return None
 
-    model_override = os.environ.get("MNEMOS_MODEL", "").strip()
-    if not model_override:
-        model_override = _load_env_key("MNEMOS_MODEL")
+    model_override = _load_env_key("MNEMOS_MODEL")
 
-    if provider in ("claude-cli", "claude_cli", "subscription"):
+    if provider in _CLI_PROVIDERS:
         return ClaudeCLIClient(model=model_override or "claude-haiku-4-5-20251001")
 
     if provider == "openai":

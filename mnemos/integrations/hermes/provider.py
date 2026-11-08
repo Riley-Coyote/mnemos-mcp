@@ -16,12 +16,14 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import re
 import threading
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
+from ... import llm
 from ...simple_runtime import RECALL_RESULTS, MnemosRuntime, format_health_card
 from ...simple_tools import (
     MAX_CAPTURE_CHARS,
@@ -129,6 +131,19 @@ def _make_room_for_files() -> None:
         logger.debug("Mnemos couldn't raise the open-file limit", exc_info=True)
 
 
+def _take_hermes_secrets() -> None:
+    """Every setting and key Mnemos reads inside Hermes comes through Hermes, and
+    no file is read for one: no .env, no other tool's config. Hermes's plugin
+    rules ask it, and only Hermes knows which profile is speaking when a gateway
+    serves several. A Hermes from before secret scopes hands them out through its
+    own environment."""
+    try:
+        from agent.secret_scope import get_secret
+    except ImportError:
+        get_secret = os.environ.get
+    llm.take_secrets_from(get_secret)
+
+
 def _json_ok(**payload: Any) -> str:
     payload.setdefault("ok", True)
     return json.dumps(payload, ensure_ascii=True, default=str)
@@ -227,6 +242,7 @@ class MnemosMemoryProviderCore:
     @_one_at_a_time
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         _make_room_for_files()
+        _take_hermes_secrets()
         hermes_home = kwargs.get("hermes_home")
         if self._config is None:
             settle_config_home(hermes_home)

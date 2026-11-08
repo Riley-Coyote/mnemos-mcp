@@ -44,7 +44,7 @@ def started(monkeypatch):
     """The background processes calls start, recorded instead of started."""
     scopes = []
     monkeypatch.setattr(
-        simple_runtime, "_spawn_upkeep", lambda scope, token="": scopes.append(scope) or True,
+        simple_runtime, "_spawn_upkeep", lambda scope, token="", **_: scopes.append(scope) or True,
         raising=False,
     )
     return scopes
@@ -125,7 +125,7 @@ def test_nothing_starts_until_maintenance_is_due(runtime, started):
 
 
 def test_when_the_process_cannot_start_the_cycle_runs_here(runtime, monkeypatch, cycles_here):
-    monkeypatch.setattr(simple_runtime, "_spawn_upkeep", lambda scope, token="": False, raising=False)
+    monkeypatch.setattr(simple_runtime, "_spawn_upkeep", lambda scope, token="", **_: False, raising=False)
 
     said = runtime.capture(content=FERRY)
 
