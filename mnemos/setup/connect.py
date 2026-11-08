@@ -334,7 +334,7 @@ def find(harness: table.Harness, agent_id: str, db_path: str) -> Verdict:
     if harness.cue_event:
         found.cue = has_hook(harness, "cue", agent_id, db_path)
     if harness.key == "hermes":
-        from ..integrations.hermes.installer import _read_active_provider, _wrote_this_folder, provider_plugin_dirs
+        from ..integrations.hermes.installer import _holds_mnemos_plugin, _read_active_provider, provider_plugin_dirs
         from ..integrations.hermes.scope import HermesMnemosConfig
 
         home = hermes_home()
@@ -344,7 +344,7 @@ def find(harness: table.Harness, agent_id: str, db_path: str) -> Verdict:
         kept = HermesMnemosConfig.load(home)
         here = _same_store((kept.agent_id, kept.db_path), agent_id, db_path)
         holds = found.hermes_provider == "mnemos"
-        found.wake = found.cue = holds and here and _wrote_this_folder(provider_plugin_dirs(home)[0])
+        found.wake = found.cue = holds and here and _holds_mnemos_plugin(provider_plugin_dirs(home)[0])
         found.hermes_elsewhere = holds and not here and bool(kept.agent_id or kept.db_path)
     return Verdict(found)
 

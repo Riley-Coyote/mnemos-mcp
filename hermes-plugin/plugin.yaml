@@ -1,0 +1,12 @@
+name: mnemos
+version: "0.6.6"
+kind: exclusive
+description: "A memory of the agent's own: written in its own words, kept on this machine, and woken to at the start of every session."
+license: Apache-2.0
+homepage: https://github.com/Riley-Coyote/mnemos-mcp
+requires_hermes: ">=0.23.0"
+hooks:
+  - on_turn_start
+  - on_session_end
+  - on_session_switch
+  - on_memory_write
