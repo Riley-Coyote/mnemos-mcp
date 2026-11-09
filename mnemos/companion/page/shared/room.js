@@ -560,7 +560,7 @@ export class Room {
     const plan = life.schedule || [], at = (k) => plan.find((p) => p.kind === k);
     const hhmm = (w) => (w ? `${String(w.Hour ?? 0).padStart(2, '0')}:${String(w.Minute ?? 0).padStart(2, '0')}` : '');
     const DEFAULT = { mine: '08:00', ours: '19:00', dream: '03:30' };
-    const saved = { ...{ runner: 'claude-code', model: '' }, ...life.hourSettings, on: plan.length > 0, mine: hhmm(at('mine')?.when) || DEFAULT.mine, ours: hhmm(at('ours')?.when) || DEFAULT.ours, dream: hhmm(at('dream')?.when) || DEFAULT.dream };
+    const saved = { runner: 'claude-code', model: '', ...life.hourSettings, on: plan.length > 0, mine: hhmm(at('mine')?.when) || DEFAULT.mine, ours: hhmm(at('ours')?.when) || DEFAULT.ours, dream: hhmm(at('dream')?.when) || DEFAULT.dream };
     const h = this.hours || saved, changed = JSON.stringify(h) !== JSON.stringify(saved);
     const notice = this.notices.get('hours');
     const off = plan.filter((p) => !p.loaded);

@@ -289,7 +289,7 @@ def test_native_cli_tool_boundary_and_scoped_mcp_write(ready, monkeypatch):
 
     def fixture_provider(*args, **kwargs):
         cmd = original(*args, **kwargs)
-        # A prior override stands in for a lower configuration layer.
+        # An earlier CLI override must not add another MCP server.
         at = cmd.index("-c")
         cmd[at:at] = ["-c", f"mcp_servers.earlier.command={json.dumps(str(other))}"]
         cmd[-1:-1] = [

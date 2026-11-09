@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import os
@@ -189,7 +188,6 @@ def model_catalog(model: str, config_dir: str | None = None) -> dict:
             f"Codex has no cached catalog entry for {model}. Run Codex once with that model "
             f"using {home}, then retry the dream."
         ) from exc
-    entry = copy.deepcopy(entry)
     entry.update(
         shell_type="disabled",
         apply_patch_tool_type=None,
@@ -233,8 +231,8 @@ def command(
     server = mcp["mcpServers"]["mnemos"]
     scoped = {key: server[key] for key in ("command", "args", "env")}
     scoped.update(enabled=True, required=True, enabled_tools=list(DREAM_TOOLS))
-    # Replace the table: leaf disables can recreate ignored user servers
-    # without a transport, or retain fields from a machine-wide connection.
+    # Replace earlier CLI registrations as a table; leaf disables can recreate
+    # ignored user servers without a transport.
     settings["mcp_servers"] = {"mnemos": scoped}
 
     def toml(value):
@@ -258,8 +256,8 @@ class Events:
         self.session_id = ""
         self.forbidden = ""
 
-    def accept(self, event: dict) -> list[dict]:
-        """Return accounting events, failing closed on a non-memory action."""
+    def accept(self, event: dict) -> dict | None:
+        """Return an accounting event, failing closed on a non-memory action."""
         kind = event.get("type")
         if kind == "thread.started":
             self.session_id = event.get("thread_id", "")
@@ -276,14 +274,12 @@ class Events:
                 self.forbidden = str(action)
         if kind in ("turn.failed", "error"):
             error = event.get("error") or event
-            return [
-                {
-                    "type": "result",
-                    "is_error": True,
-                    "result": error.get("message", "Codex failed."),
-                    "session_id": self.session_id,
-                }
-            ]
+            return {
+                "type": "result",
+                "is_error": True,
+                "result": error.get("message", "Codex failed."),
+                "session_id": self.session_id,
+            }
         if kind == "turn.completed":
             used = event.get("usage") or {}
             cached = used.get("cached_input_tokens", 0)
@@ -292,12 +288,10 @@ class Events:
                 "cache_read_input_tokens": cached,
                 "output_tokens": used.get("output_tokens", 0),
             }
-            return [
-                {
-                    "type": "result",
-                    "is_error": False,
-                    "usage": usage,
-                    "session_id": self.session_id,
-                }
-            ]
-        return []
+            return {
+                "type": "result",
+                "is_error": False,
+                "usage": usage,
+                "session_id": self.session_id,
+            }
+        return None

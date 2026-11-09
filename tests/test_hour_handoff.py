@@ -316,12 +316,11 @@ def test_grok_is_refused_for_the_reason_it_was_seen(db):
     assert "read /etc/hosts" in record["reason"]
 
 
-def test_codex_and_gemini_are_refused_as_not_shown_walled(db):
+def test_gemini_is_refused_as_not_shown_walled(db):
     from mnemos.life import run_hour
 
-    for runner in ("gemini",):
-        record = run_hour("dream", db_path=str(db), **SCOPE, runner=runner)
-        assert "has not been shown to limit it to Mnemos's tools" in record["reason"]
+    record = run_hour("dream", db_path=str(db), **SCOPE, runner="gemini")
+    assert "has not been shown to limit it to Mnemos's tools" in record["reason"]
 
 
 def test_an_unknown_runner_is_refused(db):

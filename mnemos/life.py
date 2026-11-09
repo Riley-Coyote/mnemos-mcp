@@ -812,12 +812,11 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
                 except json.JSONDecodeError:
                     continue
                 if codex:
-                    decoded = codex.accept(event)
+                    event = codex.accept(event)
                     if codex.forbidden:
                         stop("guard")
-                    if not decoded:
+                    if event is None:
                         continue
-                    event = decoded[0]
                 if event.get("type") == "system" and event.get("subtype") == "init":
                     model = event.get("model") or ""
                     if isinstance(model, str) and model and model not in (hour, "<synthetic>"):
@@ -876,7 +875,7 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
     elif result is not None:
         status, reason = "done", ""
     elif rc != 0:
-        status, reason = "failed", f"{'codex' if codex else 'claude'} exited with code {rc}: " + (folder / "stderr.txt").read_text()[-400:].strip()
+        status, reason = "failed", f"claude exited with code {rc}: " + (folder / "stderr.txt").read_text()[-400:].strip()
     else:
         status, reason = "failed", "codex ended without a result." if codex else "claude ended without a result."
     if status == "done" and not reason and last_synthetic:
@@ -898,7 +897,6 @@ def _answered(store, ids) -> list[str]:
 
 
 def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out, model=None) -> dict:
-    requested_model = model
     """An hour handed to the agent: the prompt the hour would get, printed to
     ``out`` for the agent to take in its own session, and recorded like any
     hour (a done hour on the live store) so the next one's material moves on
@@ -916,7 +914,7 @@ def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out, model=None) -
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         records = _records(records_path)
         since = since_for(kind, records)
-        model = hand_off_model(live, scope, requested_model)
+        model = hand_off_model(live, scope, model)
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model, resolved.agent_id, records)
         print(f"Dry run · {kind} hour · hand-off · nothing recorded", file=out)
         print(f"Store: {live}", file=out)
@@ -948,7 +946,7 @@ def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out, model=None) -
             if not live.exists():
                 record.update(status="failed", reason=f"There is no memory store at {live}.")
                 return record
-            model = hand_off_model(live, scope, requested_model)
+            model = hand_off_model(live, scope, model)
             record["model"] = model
             prompt, waiting, skip, said = _prepare(kind, live, since, scope, model, resolved.agent_id, records)
             record["waiting"] = waiting
@@ -983,7 +981,6 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
              max_minutes: float | None = None, max_tokens: int | None = None,
              max_seconds: float | None = None, out=sys.stdout,
              handoff: bool = False, runner: str = "claude-code", model: str | None = None) -> dict:
-    requested_model = model
     started_at = datetime.now(timezone.utc).isoformat()
     resolved = resolve_scope(db_path=db_path, agent_id=agent_id, person_id=person_id,
                              project_scope=project_scope)
@@ -994,7 +991,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
     records_path = hours / "hours.jsonl"
     if handoff:
         return _hand_off(kind, resolved=resolved, scope=scope, live=live, hours=hours,
-                         dry_run=dry_run, out=out, model=requested_model)
+                         dry_run=dry_run, out=out, model=model)
     refusal = builtin_refusal(runner, kind)
     if refusal:
         return {"kind": kind, "id": "", "status": "failed", "reason": refusal}
@@ -1008,7 +1005,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         records = _records(records_path)
         since = since_for(kind, records)
-        model, why = hour_model(live, scope, runner, requested_model)
+        model, why = hour_model(live, scope, runner, model)
         if runner == "codex" and not model:
             return {"status": "failed", "reason": why}
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model or HOUR_MODEL,
@@ -1090,7 +1087,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 if integrity != "ok":
                     record.update(status="failed", reason="The store copy failed its integrity check.")
                     return record
-            model, why = hour_model(store, scope, runner, requested_model)
+            model, why = hour_model(store, scope, runner, model)
             if not model:
                 record.update(status="failed" if runner == "codex" else "skipped", reason=why)
                 return record
