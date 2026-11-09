@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+Five fixes inside Hermes, from Nous's review of the catalog entry
+(NousResearch/hermes-agent#151540). Nothing changes anywhere else.
+
+### Inside Hermes
+
+- **The upkeep process is no longer handed Hermes's environment.** The upkeep a capture or the end
+  of a session starts runs in a process of its own, and it was given everything Hermes's process
+  holds: every provider's key, the bot tokens, all of it, for a process that uses one key at most.
+  Now it gets what a process needs to run (the path, the home folder, the language), Mnemos's own
+  plain settings, and what was chosen for Mnemos, read through Hermes for the profile that is
+  speaking: the chosen provider's one key, only when upkeep may use a model (`deep_maintenance`),
+  and Gemini's only when meaning search is set to it. On a gateway serving several profiles, a
+  profile's upkeep ran on the keys of the profile the gateway was started for; now it runs on its
+  own.
+- **A profile never takes the gateway's choice of provider.** `MNEMOS_LLM_PROVIDER` in Hermes's own
+  environment also read as `llm.provider` in Mnemos's config, so on such a gateway a profile that
+  had chosen nothing took the choice of the one it was started for. Inside Hermes the choice now
+  comes from Hermes, for the profile speaking, or from the config file.
+- **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
+  `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
+  of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass
+  now, about a millisecond.
+- **The page closes when it's done with.** A page an agent opened with `mnemos_page` was served
+  for as long as Hermes ran, which for a gateway is days. It stays while a conversation that
+  opened it goes on and while someone has it open, and closes ten minutes after both have ended.
+  Asked for again, it opens anew.
+- **A Hermes agent's page writes in no other agent's memory.** The page shows the other agents
+  whose memory is kept beside this one's, and the plugin's README said it only read them. It wrote
+  in them too: a note, a correction, a memory let go, in the memory of an agent Hermes doesn't run.
+  Inside Hermes it now reads them and writes only in its own. Anywhere else the page is yours over
+  all of them, as before.
+
 ## 0.6.6 (2026-11-08)
 
 Mnemos can be installed from Hermes's plugin catalog, and it runs on mcp 2, which Hermes pins.

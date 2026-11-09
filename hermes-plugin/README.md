@@ -100,11 +100,15 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
 - **A short background process.** When upkeep is due (at the end of a session, every 24
   turns, after the agent saves something) it runs in a Python process of its own,
   Hermes's Python, which ends when it's done. Nothing is scheduled, and it starts no
-  other program.
+  other program. It isn't given Hermes's environment: it gets what a process needs to
+  run (the path, your home folder, your language), Mnemos's own settings, and, only if
+  you chose a provider for Mnemos, that one provider's key, as the profile that is
+  speaking has it. No other key of Hermes's reaches it.
 - **The page.** `mnemos_page` serves the page from inside Hermes on 127.0.0.1, on a port
-  the system picks and a path made fresh each time, and answers only this machine, until
-  Hermes stops. Beside this agent's memory it shows, read only, the other agents whose
-  memory Mnemos keeps in `~/.mnemos`.
+  the system picks and a path made fresh each time, and answers only this machine. It
+  stays while the conversation that opened it goes on and while you have it open; ten
+  minutes after both have ended, it closes. Beside this agent's memory it shows, read
+  only, the other agents whose memory Mnemos keeps in `~/.mnemos`.
 - **The system prompt.** Mnemos adds its rules for keeping a memory, and the agent's wake.
 - **The open-file limit.** On its first start it raises Hermes's limit on open files to
   4,096 if it's lower, since every conversation holds a few files open on the memory. It
