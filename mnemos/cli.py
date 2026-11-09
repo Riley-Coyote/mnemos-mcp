@@ -1327,26 +1327,37 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
         blueprint["hours"] = scheduler.plan(
             agent_id=blueprint["agent_id"], mnemos_command=_mnemos_command(), backend=backend)["hours"]
         return _daemon_uninstall(blueprint, write=args.write, only_hours=hours)
-    if hours and args.write and blueprint.get("runner") == "codex" and blueprint.get("hour_env"):
-        from . import codex_dream, life
+    if hours and args.write and blueprint.get("runner") == "codex":
+        if not _codex_hours_ready(blueprint, _cli_scope(args)):
+            return 1
+    return _daemon_install(blueprint, write=args.write, hours=hours)
 
-        scope = _cli_scope(args)
-        model = blueprint.get("model")
-        if not model and Path(scope.db_path).exists():
-            model, _ = life.hour_model(scope.db_path, {
+
+def _codex_hours_ready(blueprint: dict, scope) -> bool:
+    """Check Codex's selected model and policy before scheduling a dream."""
+    from . import codex_dream, life
+
+    environment = blueprint.get("hour_env")
+    if not environment:
+        print("Codex dreams are not ready: the codex command was not found.", file=sys.stderr)
+        return False
+    model = blueprint.get("model")
+    store = Path(scope.db_path).expanduser()
+    try:
+        if not model and store.exists():
+            model, _ = life.hour_model(store, {
                 "agent_id": scope.agent_id, "person_id": scope.person_id,
                 "project_scope": scope.project_scope}, runner="codex")
         if not model:
             print("Choose a Codex model with --model, MNEMOS_HOUR_MODEL, or Quiet hours settings.", file=sys.stderr)
-            return 1
-        try:
-            config_dir = blueprint["hour_env"].get("CODEX_HOME")
-            codex_dream.model_catalog(model, config_dir)
-            codex_dream.isolation(blueprint["hour_env"]["MNEMOS_CODEX_BIN"], config_dir)
-        except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            print(f"Codex dreams are not ready: {exc}", file=sys.stderr)
-            return 1
-    return _daemon_install(blueprint, write=args.write, hours=hours)
+            return False
+        config_dir = environment.get("CODEX_HOME")
+        codex_dream.model_catalog(model, config_dir)
+        codex_dream.isolation(environment["MNEMOS_CODEX_BIN"], config_dir)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"Codex dreams are not ready: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def _blueprint(
@@ -1359,10 +1370,9 @@ def _blueprint(
 ) -> dict:
     """What would be scheduled for this command's scope (``scheduler.plan``).
 
-    With ``hours``, the quiet hours' environment is found now, the claude
-    command and the Claude login, because a job started in the background
-    finds neither. Without a claude command they can't be scheduled
-    (``hours_ready`` is false)."""
+    With ``hours``, the selected CLI and login are found now, because a job
+    started in the background finds neither. Without that CLI they can't be
+    scheduled (``hours_ready`` is false)."""
     from .setup import scheduler
 
     scope = _cli_scope(args)
@@ -1762,17 +1772,19 @@ def _quiet_hours_setup(blueprint: dict, scope) -> bool:
     the first session doesn't ask again. Without a terminal nothing is asked
     or scheduled: the question goes to whoever ran setup (an agent, mostly),
     with the command for each answer, and unanswered the agent asks in its
-    first session. Without a claude command they can't be scheduled, and that
+    first session. Without the selected CLI they can't be scheduled, and that
     is said. Returns whether scheduling them failed."""
     from .setup import scheduler
 
     agent_id = blueprint["agent_id"]
+    codex = blueprint.get("runner") == "codex"
     crontab = _read_crontab_safe() if blueprint["backend"] == "crontab" else ""
     if scheduler.installed(blueprint, blueprint["hours"], crontab):
         print(f"Quiet hours: on. Turn them off: {_HOURS_OFF}")
         return False
     if not blueprint["hours_ready"]:
-        print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {_HOURS_ON}")
+        reason = "the codex command was not found" if codex else _NO_CLAUDE
+        print(f"Quiet hours: off, because {reason}. Once it's there: {_HOURS_ON}")
         return False
     if not _can_ask():
         if _state.hours_choice(agent_id) == "no":
@@ -1803,20 +1815,29 @@ def _quiet_hours_setup(blueprint: dict, scope) -> bool:
         _state.record_hours_choice(agent_id, "no")
         print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
         return False
+    if codex and not _codex_hours_ready(blueprint, scope):
+        return True
     try:
         _apply_schedule(blueprint, blueprint["hours"], [])
     except (OSError, RuntimeError) as exc:
         print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
         return True
-    _state.record_hours_choice(agent_id, "yes")
-    mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
-    print(
-        f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
-        f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
-        f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
-    )
-    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
-          "--dream-at HH:MM --write")
+    _state.record_hours_choice(agent_id, "yes", runner=blueprint.get("runner", "claude-code"),
+                               model=blueprint.get("model"))
+    if codex:
+        dream = blueprint["hours"][0]["job"].daily_at
+        print(f"Quiet hours are on: its Codex dream daily at {dream[0]:02d}:{dream[1]:02d} "
+              "(skipped when nothing waits).")
+        print("  Other times: mnemos daemon install --hours --dream-at HH:MM --write")
+    else:
+        mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
+        print(
+            f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
+            f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
+            f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
+        )
+        print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
+              "--dream-at HH:MM --write")
     print(f"  Turn them off: {_HOURS_OFF}")
     return False
 
