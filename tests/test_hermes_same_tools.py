@@ -240,6 +240,53 @@ def test_the_page_opens_once_for_a_memory(tmp_path):
         _close_pages()
 
 
+def _page_act(url: str, agent: str, **request) -> dict:
+    """What the page's own script sends when the person writes on it, for the mind it is showing."""
+    base = url.rsplit("/log/", 1)[0]
+    port = re.search(r":(\d+)/", url).group(1)
+    asked = urllib.request.Request(
+        f"{base}/act?agent={agent}", data=json.dumps(request).encode(), method="POST",
+        headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}"},
+    )
+    try:
+        with urllib.request.urlopen(asked, timeout=10) as answer:
+            return json.loads(answer.read())
+    except urllib.error.HTTPError as refused:
+        return json.loads(refused.read())
+
+
+def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path):
+    """The page shows the other agents whose memory is kept beside this one's,
+    and the plugin's README and catalog entry said it only read them. It wrote
+    in them too: a note, a correction, a memory let go, in the memory of an
+    agent Hermes doesn't run (Nous's review of the catalog entry, 2026-11-09).
+    Inside Hermes it reads them, and writes in its own."""
+    from mnemos import llm
+
+    mine, other = _provider(tmp_path, "a"), _provider(tmp_path, "b")
+    try:
+        _call(mine, "mnemos_capture", content="The kiln at the studio fires on Tuesdays.")
+        _call(other, "mnemos_capture", content="The glaze room is locked after six.")
+        llm.take_secrets_from(lambda name, default=None: default)  # inside Hermes, as its provider says at its start
+        url = _page_address(_call(mine, "mnemos_page"))
+        base = url.rsplit("/log/", 1)[0]
+
+        with urllib.request.urlopen(f"{base}/data/memories.json?agent=b", timeout=10) as shown:
+            assert "glaze room" in shown.read().decode(), "the other agent's memory is no longer shown"
+
+        refused = _page_act(url, "b", command="note", text="Left through another agent's page.")
+        assert "only reads your other agents' memories" in refused.get("error", ""), refused
+        kept = sqlite3.connect(tmp_path / "b.db").execute("SELECT count(*) FROM notes").fetchone()[0]
+        assert kept == 0, "a note was written in another agent's memory"
+
+        own = _page_act(url, "a", command="note", text="Left on my own agent's page.")
+        assert own.get("result", {}).get("text") == "Left on my own agent's page.", own
+    finally:
+        mine.shutdown()
+        other.shutdown()
+        _close_pages()
+
+
 def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(tmp_path, monkeypatch):
     """A page an agent opened was served for as long as Hermes ran: on a gateway,
     for days after the conversation that opened it had ended (Nous's review of

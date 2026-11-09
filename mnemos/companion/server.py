@@ -249,6 +249,12 @@ class LogServer(ThreadingHTTPServer):
             for other in (self._others[1].values() if self._others else []):
                 other.forget()
             return answer
+        if mind is not self._home and _inside_hermes():
+            # A Hermes agent's page writes in that agent's memory and no other's:
+            # the others belong to agents Hermes doesn't run, and the page it
+            # serves is theirs only to show. (Until 0.6.7 it wrote in any of them.)
+            return {"error": "From inside Hermes this page only reads your other agents' memories. "
+                             "To write in one, open that agent's own page."}
         if request.get("command") == "jev":
             return self._jev(request, mind)
         if UNFILED in (mind.exporter.scope.person_id, mind.exporter.scope.project_scope):
