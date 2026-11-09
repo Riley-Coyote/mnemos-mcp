@@ -30,7 +30,7 @@ from .defaults import DEFAULT_CONFIG
 
 def load_config(
     config_path: str | Path | None = None,
-    env_prefix: str = "MNEMOS_",
+    env_prefix: str | None = "MNEMOS_",
 ) -> dict[str, Any]:
     """Load Mnemos configuration from defaults, JSON file, and env vars.
 
@@ -42,7 +42,8 @@ def load_config(
     Args:
         config_path: Path to a JSON configuration file. If None, looks for
             ~/.mnemos/config.json. If that doesn't exist, uses defaults only.
-        env_prefix: Prefix for environment variable overrides.
+        env_prefix: Prefix for environment variable overrides. None reads
+            the file alone, with no override from the environment.
 
     Returns:
         Merged configuration dictionary.
@@ -64,7 +65,8 @@ def load_config(
         config = _deep_merge(config, file_config)
 
     # Apply environment variable overrides
-    config = _apply_env_overrides(config, env_prefix)
+    if env_prefix is not None:
+        config = _apply_env_overrides(config, env_prefix)
 
     return config
 

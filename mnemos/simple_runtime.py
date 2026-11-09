@@ -468,6 +468,72 @@ def _maintenance_stopped(failure: str) -> str:
 # too, it reads them from the environment it was given and from no file.
 _SECRETS_FROM_HOST_ENV = "MNEMOS_SECRETS_FROM_HOST"
 
+# What that process is given of the host's environment (``_hosted_upkeep_env``).
+# What any process needs to run, and where the caches of a local embedding
+# model are, none of it a key:
+_PLAIN_ENV = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TEMP", "TMP",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "HF_HOME", "HF_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME", "TRANSFORMERS_CACHE", "XDG_CACHE_HOME",
+    # Windows, where Python doesn't start without the system's own.
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE",
+    "HOMEPATH", "USERNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+})
+# The way out through a proxy, given only to a process that will reach a
+# provider: a proxy's address can hold a password.
+_PROXY_ENV = frozenset({"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"})
+# Mnemos's own settings go too (MNEMOS_*), but never one named like a secret,
+# and never the three the host answers for each profile, which are read from it.
+_SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
+_CHOSEN_THROUGH_HOST = frozenset({"MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "MNEMOS_EMBEDDING_PROVIDER"})
+
+
+def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
+    """The whole environment of the upkeep process when a host (Hermes) hands
+    out the keys: what a process needs to run, Mnemos's own plain settings, and
+    what the person chose for Mnemos, read here through the host, which answers
+    for the profile that is speaking. The chosen provider's one key goes only
+    if this process would use a model (``dedicated_model``), and Gemini's only
+    if meaning search is set to it; a proxy's address only with one of those.
+
+    Until 0.6.7 the process was given the host's whole environment and read its
+    settings there. Hermes keeps every provider's key in it, so all of them went
+    to a process that needed at most one; and on a gateway serving several
+    profiles it is the environment of the profile the gateway was started for,
+    so another profile's upkeep ran on that one's keys and choice of provider."""
+    from .llm import PROVIDER_KEYS, _find_env_key, chosen_provider
+    from .store.embedding_index import GEMINI, embedding_choice
+
+    env = {
+        name: value for name, value in os.environ.items()
+        if name.upper() in _PLAIN_ENV or name.upper().startswith("LC_")
+        or (
+            name.startswith("MNEMOS_") and name not in _CHOSEN_THROUGH_HOST
+            and not any(word in name for word in _SECRET_WORDS)
+        )
+    }
+    reaches_a_provider = False
+    if dedicated_model:
+        provider = chosen_provider()
+        key_name = PROVIDER_KEYS.get(provider, "")
+        key = _find_env_key(key_name)[0] if key_name else ""
+        if key:
+            env["MNEMOS_LLM_PROVIDER"], env[key_name] = provider, key
+            model = _find_env_key("MNEMOS_MODEL")[0]
+            if model:
+                env["MNEMOS_MODEL"] = model
+            reaches_a_provider = True
+    meaning = embedding_choice()
+    if meaning["chosen"]:
+        env["MNEMOS_EMBEDDING_PROVIDER"] = meaning["chosen"]
+    if meaning["provider"] == GEMINI:
+        env["GEMINI_API_KEY"] = _find_env_key("GEMINI_API_KEY")[0]
+        reaches_a_provider = True
+    if reaches_a_provider:
+        env.update({name: value for name, value in os.environ.items() if name.upper() in _PROXY_ENV})
+    env[_SECRETS_FROM_HOST_ENV] = "1"
+    return env
+
 
 def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = True) -> bool:
     """Start ``scope``'s maintenance in a process of its own, detached, so it
@@ -496,7 +562,7 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
     from .llm import host_secrets_active
 
     if host_secrets_active():
-        options["env"] = {**os.environ, _SECRETS_FROM_HOST_ENV: "1"}
+        options["env"] = _hosted_upkeep_env(dedicated_model)
     if os.name == "nt":
         options["creationflags"] = (
             getattr(subprocess, "DETACHED_PROCESS", 0)

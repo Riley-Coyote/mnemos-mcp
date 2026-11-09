@@ -455,6 +455,13 @@ def _load_openclaw_openrouter_key() -> str:
 # Answers to "which provider?" that mean none, and the providers Mnemos knows.
 _NO_PROVIDER = frozenset({"", "none", "off", "no", "skip", "local", "rule-based"})
 _PROVIDERS = frozenset({"claude-cli", "claude_cli", "subscription", "openrouter", "anthropic", "openai"})
+# The one key each provider is reached with (``_create_client_unchecked`` reads
+# it): the only key a process started for upkeep inside a host is handed.
+PROVIDER_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
 # The providers that are another program on this machine, signed in to its own account.
 _CLI_PROVIDERS = frozenset({"claude-cli", "claude_cli", "subscription"})
 _WARNED: set[str] = set()
@@ -485,7 +492,12 @@ def chosen_provider() -> str:
         try:
             from .config.loader import load_config
 
-            llm = load_config().get("llm")
+            # Inside a host, the file's choice alone. The environment there is
+            # the gateway's, set for the profile it was started for, and it
+            # overrides the file (MNEMOS_LLM_PROVIDER reads as llm.provider):
+            # the host has just said the profile speaking chose nothing, and
+            # another profile's choice isn't its own.
+            llm = load_config(env_prefix=None if _host_secrets is not None else "MNEMOS_").get("llm")
         except Exception:
             llm = None
         if isinstance(llm, dict):

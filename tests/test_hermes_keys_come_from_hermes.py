@@ -153,3 +153,138 @@ def test_the_upkeep_process_keeps_the_rules_and_the_providers_choice(keys_all_ar
     assert made and made[0]._use_dedicated_model is False
     assert llm.host_secrets_active()
     assert llm._find_env_key("OPENAI_API_KEY") == ("", "")  # the workspace's .env, unread
+
+
+# What Hermes's own process holds: every provider's key, set for the profile the
+# gateway was started for, and that profile's choices for Mnemos.
+_GATEWAY_ENV = {
+    "OPENAI_API_KEY": "the-gateway's-openai-key",
+    "OPENROUTER_API_KEY": "the-gateway's-openrouter-key",
+    "ANTHROPIC_API_KEY": "the-gateway's-anthropic-key",
+    "GEMINI_API_KEY": "the-gateway's-gemini-key",
+    "TELEGRAM_BOT_TOKEN": "a-bot-token",
+    "AWS_SECRET_ACCESS_KEY": "an-aws-secret",
+    "API_SERVER_KEY": "the-api-server's-key",
+    "MNEMOS_LLM_PROVIDER": "openrouter",
+    "MNEMOS_MODEL": "the-gateway's-model",
+    "MNEMOS_EMBEDDING_PROVIDER": "gemini",
+    "MNEMOS_JEV_KEY_FILE": "/somewhere/a-key",
+    "MNEMOS_SHARED_MEMORY": "off",
+    "HTTPS_PROXY": "http://someone:a-password@proxy.example:3128",
+    "LC_ALL": "en_US.UTF-8",
+}
+
+
+def _hermes_says(monkeypatch, **profile):
+    """Hermes, speaking for a profile that has set just this, on a gateway
+    serving several: what the profile hasn't set is nothing, never the
+    gateway's own (``agent.secret_scope.get_secret``, multiplexing)."""
+    for name, value in _GATEWAY_ENV.items():
+        monkeypatch.setenv(name, value)
+    llm.take_secrets_from(lambda name, default=None: profile.get(name, default))
+
+
+def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tmp_path, monkeypatch):
+    """The upkeep a capture starts was handed Hermes's whole environment: every
+    provider's key, the bot tokens, all of it, for a process that uses no key at
+    all unless a provider was chosen for Mnemos (Nous's review of the catalog
+    entry, 2026-11-09). It gets what a process needs to run and Mnemos's own
+    plain settings."""
+    started = []
+
+    class Child:
+        def __init__(self, command, **options):
+            started.append((command, options))
+
+        def poll(self):
+            return 0
+
+    for name, value in _GATEWAY_ENV.items():
+        monkeypatch.setenv(name, value)
+    provider = _start(tmp_path)
+    monkeypatch.setattr(simple_runtime.subprocess, "Popen", Child)
+    monkeypatch.setattr(simple_runtime, "_upkeep_inline", lambda: False)
+    provider.handle_tool_call("mnemos_capture", {"content": "The spare lamp oil is under the stair."})
+    provider.shutdown()
+
+    assert started, "the capture started no upkeep"
+    env = started[-1][1]["env"]
+    held = set(_GATEWAY_ENV.values()) | set(_HERMES_KEYS.values())
+    assert not held & set(env.values()) - {"off", "en_US.UTF-8"}, sorted(env)
+    assert {"PATH", "HOME"} <= set(env) and env["LC_ALL"] == "en_US.UTF-8"
+    assert env["MNEMOS_SHARED_MEMORY"] == "off", "the person's own setting for Mnemos didn't reach its upkeep"
+    assert env[simple_runtime._SECRETS_FROM_HOST_ENV] == "1"
+    # And nothing in it that isn't one of those: a name added to Hermes's
+    # environment tomorrow doesn't go either.
+    for name in env:
+        assert name.upper() in simple_runtime._PLAIN_ENV or name.startswith(("LC_", "MNEMOS_")), name
+    assert not any(word in name for name in env for word in ("KEY", "TOKEN", "PASSWORD")), sorted(env)
+
+
+def test_the_upkeep_process_is_given_the_one_key_the_profile_chose(monkeypatch):
+    """With a provider chosen for Mnemos and upkeep allowed a model, the process
+    gets that provider's key and no other, as the profile that is speaking has
+    them, and it is the one a client is then made with."""
+    _hermes_says(
+        monkeypatch, MNEMOS_LLM_PROVIDER="openai", MNEMOS_MODEL="the-profile's-model",
+        OPENAI_API_KEY="the-profile's-openai-key", ANTHROPIC_API_KEY="the-profile's-anthropic-key",
+    )
+    env = simple_runtime._hosted_upkeep_env(True)
+    assert env["MNEMOS_LLM_PROVIDER"] == "openai" and env["MNEMOS_MODEL"] == "the-profile's-model"
+    assert env["OPENAI_API_KEY"] == "the-profile's-openai-key"
+    assert not {"ANTHROPIC_API_KEY", "OPENROUTER_API_KEY", "GEMINI_API_KEY"} & set(env)
+    assert env["HTTPS_PROXY"] == _GATEWAY_ENV["HTTPS_PROXY"], "a chosen provider behind a proxy can't be reached"
+
+    # The process itself, reading what it was given and nothing else.
+    llm.take_secrets_from(env.get)
+    client = llm.create_client()
+    assert (client._api_key, client._model) == ("the-profile's-openai-key", "the-profile's-model")
+
+    # Upkeep that isn't allowed a model is given no provider's key at all.
+    _hermes_says(monkeypatch, MNEMOS_LLM_PROVIDER="openai", OPENAI_API_KEY="the-profile's-openai-key")
+    quiet = simple_runtime._hosted_upkeep_env(False)
+    assert not {"OPENAI_API_KEY", "MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "HTTPS_PROXY"} & set(quiet)
+
+
+@pytest.mark.parametrize("provider", sorted(llm.PROVIDER_KEYS))
+def test_each_providers_key_is_the_one_its_client_reads(monkeypatch, provider):
+    """The key named for a provider is the one its client is made with: the
+    upkeep process is handed exactly it."""
+    if provider == "anthropic":
+        pytest.importorskip("anthropic")
+    key_name = llm.PROVIDER_KEYS[provider]
+    _hermes_says(monkeypatch, MNEMOS_LLM_PROVIDER=provider, **{key_name: f"the-profile's-{provider}-key"})
+    env = simple_runtime._hosted_upkeep_env(True)
+    assert [name for name in env if name.endswith("_API_KEY")] == [key_name]
+    llm.take_secrets_from(env.get)
+    assert llm.create_client()._api_key == f"the-profile's-{provider}-key"
+
+
+def test_a_profile_never_runs_on_the_gateways_choice(monkeypatch):
+    """One gateway can serve several profiles, and its environment is the one it
+    was started for. A profile that chose nothing for Mnemos took that one's
+    provider (the environment overrides the config file) and, in the upkeep
+    process, its keys."""
+    _hermes_says(monkeypatch)  # this profile has set nothing
+    assert llm.chosen_provider() == "", "the gateway's own choice of provider was this profile's"
+    env = simple_runtime._hosted_upkeep_env(True)
+    assert not set(_GATEWAY_ENV) & set(env) - {"MNEMOS_SHARED_MEMORY", "LC_ALL"}, sorted(env)
+
+    # And one that chose its own gets its own.
+    _hermes_says(monkeypatch, MNEMOS_LLM_PROVIDER="anthropic", ANTHROPIC_API_KEY="the-profile's-anthropic-key")
+    env = simple_runtime._hosted_upkeep_env(True)
+    assert env["MNEMOS_LLM_PROVIDER"] == "anthropic"
+    assert env["ANTHROPIC_API_KEY"] == "the-profile's-anthropic-key"
+    assert "OPENROUTER_API_KEY" not in env and "MNEMOS_MODEL" not in env
+
+
+def test_geminis_key_goes_only_when_meaning_search_is_set_to_it(monkeypatch):
+    """A Gemini key the profile holds for something else goes nowhere."""
+    _hermes_says(monkeypatch, GEMINI_API_KEY="the-profile's-gemini-key")
+    env = simple_runtime._hosted_upkeep_env(False)
+    assert "GEMINI_API_KEY" not in env and "MNEMOS_EMBEDDING_PROVIDER" not in env and "HTTPS_PROXY" not in env
+
+    _hermes_says(monkeypatch, MNEMOS_EMBEDDING_PROVIDER="gemini", GEMINI_API_KEY="the-profile's-gemini-key")
+    env = simple_runtime._hosted_upkeep_env(False)
+    assert (env["MNEMOS_EMBEDDING_PROVIDER"], env["GEMINI_API_KEY"]) == ("gemini", "the-profile's-gemini-key")
+    assert "HTTPS_PROXY" in env
