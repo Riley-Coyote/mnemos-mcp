@@ -95,6 +95,51 @@ def test_codex_dream_uses_its_store_and_preserves_full_continuity(ready):
     assert "features.hooks=false" in used["argv"]
 
 
+@pytest.mark.parametrize("runner", ["Codex", " CODEX "])
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_accepted_codex_names_never_dispatch_to_claude(ready, monkeypatch, runner, dry_run):
+    db, home = ready
+    claude = Path(__file__).with_name("fake_claude.py")
+    claude_log = home / "claude.json"
+    monkeypatch.setenv("MNEMOS_CLAUDE_BIN", str(claude))
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(claude_log))
+    out = io.StringIO()
+
+    record = life.run_hour(
+        "dream", db_path=str(db), runner=runner, model=MODEL, dry_run=dry_run,
+        out=out, **SCOPE,
+    )
+
+    assert not claude_log.exists(), "An accepted Codex name must never use the Claude account."
+    if dry_run:
+        assert record["dry_run"]
+        assert str(Path(__file__).with_name("fake_codex.py")) in out.getvalue()
+        assert str(claude) not in out.getvalue()
+    else:
+        assert record["status"] == "done", record
+        assert record["runner"] == "codex" and record["session_id"] == "codex-test"
+        assert (home / "fake.json").is_file()
+
+
+def test_codex_alias_requires_a_model_for_a_claude_resident(ready, monkeypatch):
+    _, home = ready
+    db = home / "claude.db"
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **SCOPE)
+    try:
+        runtime.capture("The spring timetable is ready.", signed_as="claude-opus-5-5")
+    finally:
+        runtime.close()
+    claude_log = home / "claude.json"
+    monkeypatch.setenv("MNEMOS_CLAUDE_BIN", str(Path(__file__).with_name("fake_claude.py")))
+    monkeypatch.setenv("FAKE_CLAUDE_LOG", str(claude_log))
+
+    record = life.run_hour("dream", db_path=str(db), runner=" Codex ", **SCOPE)
+
+    assert not claude_log.exists()
+    assert not (home / "fake.json").exists()
+    assert record["status"] == "failed" and "choose a Codex --model" in record["reason"]
+
+
 @pytest.mark.parametrize(
     "scenario,reason",
     [

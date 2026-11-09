@@ -193,6 +193,45 @@ def test_the_export_carries_the_minds_days(mind):
     assert life["memory"]["version"] == memories["version"]
 
 
+def test_codex_export_reads_completed_tool_calls_and_closing_words(mind):
+    ids = mind["ids"]
+    folder = Path.home() / ".mnemos" / "hours" / AGENT / HOUR
+    call = {
+        "id": "item-1", "type": "mcp_tool_call", "server": "mnemos",
+        "tool": "mnemos_recall", "arguments": {"query": ids[0]},
+        "result": {"content": [{"type": "text", "text": f"found [{ids[2]}]"}],
+                   "structured_content": {"memory": ids[1]}},
+        "error": None, "status": "completed",
+    }
+    events = [
+        {"type": "item.started", "item": {**call, "status": "in_progress", "result": None}},
+        {"type": "item.completed", "item": call},
+        {"type": "item.completed", "item": call},
+        {"type": "item.completed", "item": {
+            **call, "id": "failed", "status": "failed", "result": None,
+            "arguments": {"query": "engram_" + "0" * 26},
+            "error": {"message": "The tool call was denied."},
+        }},
+        {"type": "item.started", "item": {
+            **call, "id": "pending", "status": "in_progress", "result": None,
+            "arguments": {"query": "engram_" + "1" * 26},
+        }},
+        {"type": "item.completed", "item": None},
+        {"type": "item.completed", "item": {
+            "id": "final", "type": "agent_message", "text": "The dream checked its memory.",
+        }},
+        {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}},
+    ]
+    (folder / "stream.jsonl").write_text("\n".join(json.dumps(event) for event in events))
+    before = digest(store_path())
+
+    [hour] = Exporter.for_scope(agent_id=AGENT).export()[0]["hours"]
+
+    assert hour["trail"] == {"woke": [], "waiting": [ids[0]], "reached": [ids[0], ids[2], ids[1]]}
+    assert hour["said"] == "The dream checked its memory."
+    assert digest(store_path()) == before
+
+
 def test_the_memories_version_changes_only_with_the_memories(mind):
     exporter = Exporter.for_scope(agent_id=AGENT)
     first = exporter.export()[1]["version"]

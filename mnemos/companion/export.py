@@ -368,7 +368,19 @@ class _Reading:
 def _blocks(event: dict) -> list[dict]:
     message = event.get("message")
     content = message.get("content") if isinstance(message, dict) else None
-    return [b for b in content if isinstance(b, dict)] if isinstance(content, list) else []
+    if isinstance(content, list):
+        return [b for b in content if isinstance(b, dict)]
+    item = event.get("item")
+    if (event.get("type") == "item.completed" and isinstance(item, dict)
+            and item.get("type") == "mcp_tool_call" and item.get("status") == "completed"):
+        # Codex records a completed MCP call and its result in the same item.
+        return [
+            {"type": "tool_use", "id": item.get("id"),
+             "name": f"mcp__{item.get('server', '')}__{item.get('tool', '')}",
+             "input": item.get("arguments")},
+            {"type": "tool_result", "tool_use_id": item.get("id"), "content": item.get("result")},
+        ]
+    return []
 
 
 def _events(folder: Path) -> list[dict]:
@@ -394,6 +406,11 @@ def _last_words(events: list[dict]) -> str:
     for event in events:
         if event.get("type") == "result" and isinstance(event.get("result"), str):
             said = event["result"]
+        elif event.get("type") == "item.completed":
+            item = event.get("item")
+            if (isinstance(item, dict) and item.get("type") == "agent_message"
+                    and isinstance(item.get("text"), str)):
+                said = item["text"]
     return said
 
 

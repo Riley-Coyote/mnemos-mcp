@@ -983,6 +983,11 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
              max_minutes: float | None = None, max_tokens: int | None = None,
              max_seconds: float | None = None, out=sys.stdout,
              handoff: bool = False, runner: str = "claude-code", model: str | None = None) -> dict:
+    from .setup.harnesses import get
+
+    harness = get(runner)
+    if harness is not None:
+        runner = harness.key
     started_at = datetime.now(timezone.utc).isoformat()
     resolved = resolve_scope(db_path=db_path, agent_id=agent_id, person_id=person_id,
                              project_scope=project_scope)
