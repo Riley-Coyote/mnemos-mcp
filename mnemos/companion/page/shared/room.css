@@ -361,3 +361,7 @@
 .shared-list .acts .hint{flex:1 1 180px}
 .shared-list :disabled:not(.send,.cancel,.reply-open){cursor:default;opacity:.55}
 .shared-list .field:disabled:hover{background:var(--plate)}
+
+/* Quiet-hour settings share the existing compact form controls. */
+.set-choice,.set-model{font:400 var(--t-body)/20px var(--sans);color:var(--ink-1);background:var(--field);border:1px solid transparent;border-radius:var(--r-s);padding:6px 8px;max-width:52%;min-width:0}
+.set-model{width:14em}.set-choice:focus-visible,.set-model:focus-visible{outline:2px solid currentColor;outline-offset:3px}

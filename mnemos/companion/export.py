@@ -727,6 +727,7 @@ class Exporter:
 
     def export(self, now: datetime | None = None) -> tuple[dict, dict]:
         """The page's two documents, ``(life, memories)``. Writes nothing."""
+        from ..setup.state import hour_settings
         from ..shared_memory import notebook
 
         shared = notebook()
@@ -761,6 +762,7 @@ class Exporter:
             "identity": who,
             "hours": hours,
             "schedule": self.schedule(),
+            "hourSettings": hour_settings(self.scope.agent_id),
             "jev": self.jev(),
             "shared": shared,
             "journal": journal,

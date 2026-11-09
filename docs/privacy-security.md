@@ -14,7 +14,7 @@ With no dedicated provider configured, Mnemos:
 - avoids OpenRouter, Anthropic, OpenAI, and OpenClaw requirements
 - does not read arbitrary files or browser history
 - does not transmit memory data over the network, except through your own
-  Claude Code in the quiet hours, when they're on, or through another agent's
+  Claude Code or Codex in the quiet hours, when they're on, or through another agent's
   own model when you hand it an hour or ask its scheduler to ([Quiet Hours](#quiet-hours)),
   and to the cue's judge, when you switch it on ([The Cue's Judge](#the-cues-judge))
 - loads its local meaning model offline; the one step that uses the network is
@@ -119,7 +119,7 @@ they are and what they cost. They go on unless you say no, and never before
 you've been told. Your answer is kept in `~/.mnemos/hours/<agent>/choice.json`,
 so you're asked once. An app that runs Mnemos for you may keep them on.
 
-**How.** Each hour runs your own Claude Code on its own (`claude -p`), on your
+**Claude Code.** The default runner runs each hour with `claude -p`, on your
 Claude plan. It loads none of your own Claude Code settings or hooks: only the
 hour's own, with Mnemos as its one MCP server. Claude Code settings left in
 the agent's studio are moved aside, into the hour's record, before each hour
@@ -127,7 +127,19 @@ starts, and the hour may not write any. It may not read the keys and
 credentials (`~/.ssh`, `~/.aws`, `.env` files and the like) in the home it
 runs with, nor in your account's own home when an app runs it under another.
 
-**What goes to Anthropic**, as from any Claude Code session:
+**Codex.** Choosing `--runner codex` runs only the nightly dream with `codex
+exec`, on the selected Codex account. The prompt, startup context and whatever
+it recalls through Mnemos go to OpenAI. Codex CLI 0.167.0 or newer is required.
+The run preserves its cached model instructions but disables shell, file,
+image, web, app, plugin, hook and delegation tools. Its only MCP server is
+Mnemos, scoped to this memory, with an explicit tool allowlist and shared
+memory disabled. Managed policy that requires incompatible capabilities stops
+the run before a dream starts. Choose a model in Settings, with `--model`, or
+with `MNEMOS_HOUR_MODEL`; otherwise it uses the memory's resident model. An
+empty memory needs an explicit selection. The selected model must be in that
+Codex account's cached model catalog. The other two hours use a handoff.
+
+**What goes to Anthropic for Claude hours**, as from any Claude Code session:
 
 - the hour's prompt: the agent's own words for the hour, and short excerpts of
   what's waiting for it (recent handoffs, captures and open questions, and its
@@ -141,17 +153,19 @@ runs with, nor in your account's own home when an app runs it under another.
 What it keeps goes into its memory, on this machine, and the record of each
 hour into `~/.mnemos/hours/<agent>/`, under the home the hour runs with. An
 hour stops at its time or its token ceiling: 60 minutes and 400,000 tokens for
-its own, 30 minutes and 200,000 for the day's work, unless `life.minutes` and
+its own, 30 minutes and 200,000 for the day's work, and 20 minutes and 200,000
+for the dream, unless `life.minutes` and
 `life.token_ceiling` in Mnemos's config, or an app for the one hour it runs
 (`MNEMOS_HOUR_MINUTES`, `MNEMOS_HOUR_TOKEN_CEILING`), set them otherwise.
+Codex checks uncached input and output tokens at turn completion, so a turn
+can exceed the ceiling before it stops; its time limit stops the process group.
 `mnemos life --hour mine --dry-run` prints an hour's prompt and command, and
 runs nothing.
 
 **To turn them off:** `mnemos daemon uninstall --hours --write`, or the app's
 own setting when an app runs Mnemos for you.
 
-**Other agents.** Mnemos runs no hour for any agent but Claude Code, because
-none of the others' flags could be shown to limit a run to Mnemos's tools. An
+**Other agents and broader Codex hours.** An
 hour can be handed to an agent instead (`mnemos life --hour mine --handoff`):
 Mnemos prints the same prompt, records the hour in `~/.mnemos/hours/<agent>/`,
 and runs nothing and writes nothing into the memory. The agent takes the hour in
@@ -161,13 +175,13 @@ where that session goes:
 
 | Agent | What an hour handed to it sends | Where | Runs by itself? |
 |---|---|---|---|
-| Codex | the prompt and what the agent recalls and writes, in its session | OpenAI | no |
+| Codex handoff | the prompt and what the agent recalls and writes, in its session | OpenAI | no; the native dream is scheduled separately |
 | Grok | the same | xAI | no |
 | Gemini CLI | the same | Google | no |
 | Hermes | the same, in a session its own cron starts | the provider Hermes is set to use | only if you ran `connect hermes --hours --write` |
 | OpenClaw | the same, in a turn its own cron starts | the provider OpenClaw is set to use | only if you ran `connect openclaw --hours --write` |
 
-Such an hour is not walled in the way Claude Code's is: the agent has its usual
+Such an hour is not walled in the way built-in hours are: the agent has its usual
 tools, and the prompt asks it to keep to what the hour is for (a dream: no
 files, no shell, no web). Each cron job's reply goes nowhere: Hermes
 `--deliver local` keeps it on this machine, and OpenClaw `--no-deliver` sends it

@@ -825,7 +825,7 @@ def test_inside_hermes_the_page_changes_nothing_that_is_claude_codes(mind, jev_u
     with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
         for request in ({"command": "hours", "on": True, "mine": "07:15"}, {"command": "hours", "on": False}):
             status, answer = post(server, request)
-            assert status == 400 and "Claude Code" in answer["error"], (request, answer)
+            assert status == 400 and "host" in answer["error"], (request, answer)
         for request in ({"command": "jev", "key": "ts_other_key"}, {"command": "jev", "on": True},
                         {"command": "jev", "on": False}, {"command": "jev", "remove_key": True}):
             status, answer = post(server, request)
@@ -1041,3 +1041,25 @@ def test_shared_acts_have_the_pages_guards_and_export_separate_rows(mind, monkey
         assert life["shared"]["rows"][0]["content"] == request["text"]
         assert life["shared"]["rows"][0]["person"]
         assert all(m["content"] != request["text"] for m in memories["memories"])
+
+
+def test_quiet_hour_settings_round_trip_runner_and_model_without_enabling(mind, monkeypatch):
+    from mnemos import cli
+    from mnemos.setup import state
+
+    def change(args):
+        state.record_hours_choice(args.agent_id, 'yes' if args.daemon_command == 'install' else 'no',
+                                  runner=args.runner, model=args.model)
+        print('Saved.')
+        return 0
+
+    monkeypatch.setattr(cli, '_cmd_daemon', change)
+    exporter = Exporter.for_scope(agent_id=AGENT)
+    with serving(exporter) as server:
+        status, reply = post(server, {'command': 'hours', 'on': False, 'runner': 'codex', 'model': 'user-model'})
+        assert status == 200 and reply['result'] == 'Saved.'
+        data = exporter.export()[0]
+        assert data['hourSettings'] == {'runner': 'codex', 'model': 'user-model'}
+        for request in ({'runner': 'unknown'}, {'runner': []}, {'model': ['bad']}, {'model': 'bad\nmodel'}):
+            status, reply = post(server, {'command': 'hours', 'on': True, **request})
+            assert status == 400 and 'error' in reply

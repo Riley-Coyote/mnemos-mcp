@@ -323,7 +323,7 @@ def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd,
     # on the person's own plan.
     assert ("up to an hour a day that's its own, half an hour for the day's work, and a short "
             "time each night to dream over its memory") in asked[0]
-    assert "they run Claude on its own and use your Claude plan" in asked[0]
+    assert "choose Codex for the dream on your Codex account" in asked[0]
     assert asked[0].endswith("[Y/n] ")
     assert launchd.loaded == LABELS | HOURS
 
@@ -417,7 +417,7 @@ def test_daemon_install_hours_previews_then_schedules(launchd, claude, capsys):
     assert not _agents().exists() and launchd.calls == []
     assert "hour-mine — The agent's own hour" in preview
     assert f"env:      MNEMOS_CLAUDE_BIN={claude}" in preview
-    assert "they run Claude on its own and use your Claude plan" in preview
+    assert "choose Codex for the dream on your Codex account" in preview
 
     assert main(["daemon", "install", *SCOPE, "--hours", "--mine-at", "07:30",
                  "--ours-at", "21:15", "--write"]) == 0

@@ -407,7 +407,7 @@ def test_openclaw_is_asked_the_same_in_its_own_words(agents, tmp_path):
     assert "Anthropic" not in text
 
 
-@pytest.mark.parametrize("key,vendor", [("codex", "OpenAI"), ("grok", "xAI"), ("gemini", "Google")])
+@pytest.mark.parametrize("key,vendor", [("grok", "xAI"), ("gemini", "Google")])
 def test_an_agent_that_cannot_schedule_says_who_sees_an_hour_and_offers_the_hand_off(agents, tmp_path, key, vendor):
     text = _first_session(key, key, tmp_path / f"{key}.db")
 
@@ -454,3 +454,10 @@ def test_claude_codes_words_in_the_table_are_the_words_it_always_told():
     from mnemos.simple_runtime import _HOURS_TOLD
 
     assert hs.get("claude-code").hours.cost == _HOURS_TOLD
+
+
+def test_codex_first_session_offers_the_native_dream(agents, tmp_path):
+    text = _first_session("codex", "codex", tmp_path / "codex.db")
+    assert "daemon install --hours --runner codex --write" in text
+    assert "Codex account" in text and "OpenAI" in text and "--handoff" in text
+    assert "Claude plan" not in text

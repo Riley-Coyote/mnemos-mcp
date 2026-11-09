@@ -287,8 +287,7 @@ class LogServer(ThreadingHTTPServer):
         from .. import cli
 
         if _inside_hermes():
-            return {"error": "The quiet hours run through Claude Code on your own account, so they're "
-                             "set from Claude Code, not from inside Hermes."}
+            return {"error": "Quiet hours use your selected CLI account and are set on the host, not inside Hermes."}
         on = request.get("on")
         if not isinstance(on, bool):
             return {"error": '"on" says whether the quiet hours run: true or false.'}
@@ -302,9 +301,18 @@ class LogServer(ThreadingHTTPServer):
             if not match:
                 return {"error": f'"{key}" is a time of day, like 08:00.'}
             times[key] = (int(match.group(1)), int(match.group(2)))
+        from ..setup.state import hour_settings
+
+        selected = hour_settings(mind.exporter.scope.agent_id)
+        runner = request.get("runner", selected["runner"])
+        model = request.get("model", selected["model"])
+        if runner not in ("claude-code", "codex"):
+            return {"error": '"runner" must be claude-code or codex.'}
+        if not isinstance(model, str) or (model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model)):
+            return {"error": '"model" must be a model ID, or empty for the default.'}
         scope = mind.exporter.scope
         args = argparse.Namespace(
-            daemon_command="install" if on else "uninstall", hours=True, write=True,
+            daemon_command="install" if on else "uninstall", hours=True, write=True, runner=runner, model=model,
             mine_at=times["mine"] if on else None, ours_at=times["ours"] if on else None,
             dream_at=times["dream"] if on else None,
             db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
