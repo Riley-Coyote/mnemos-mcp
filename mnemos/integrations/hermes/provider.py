@@ -59,7 +59,10 @@ except ImportError:  # pragma: no cover - Windows only
 
 logger = logging.getLogger(__name__)
 
-_CONTEXT_TAG_RE = re.compile(r"<[^>]*memory-context[^>]*>[\s\S]*?</[^>]*memory-context>", re.IGNORECASE)
+# One tag of the fence Hermes puts around what a memory provider adds to a
+# message, opening or closing, in Hermes's own bounded shape (its
+# agent/memory_context.py).
+_CONTEXT_TAG_RE = re.compile(r"<\s*(/\s*)?memory-context\s*>", re.IGNORECASE)
 # The headings the provider opens what it adds with, alone on a line, and those it used
 # to. Words about recall, the agent's or the person's, are theirs.
 _MNEMOS_CONTEXT_RE = re.compile(
@@ -180,9 +183,32 @@ def _cleaned(args: dict[str, Any], name: str) -> str:
     return _clean_text(args.get(name))
 
 
+def _without_fenced_context(value: str) -> str:
+    """``value`` without each ``<memory-context>…</memory-context>`` span: from
+    an opening tag to the next closing one, in one pass over the tags.
+
+    Until 0.6.7 one pattern did this, ``<[^>]*memory-context[^>]*>`` to a
+    closing tag, and it tried every ``<`` in the text against all that
+    followed: a pasted page of markup, 51,000 characters with many ``<``, took
+    seconds, on every message, while Hermes waited for its recall (Nous's
+    review of the catalog entry, 2026-11-09)."""
+    kept: list[str] = []
+    at, opened = 0, -1
+    for tag in _CONTEXT_TAG_RE.finditer(value):
+        closing = tag.group(1) is not None
+        if opened < 0 and not closing:
+            opened = tag.start()
+        elif opened >= 0 and closing:
+            kept.append(value[at:opened])
+            at, opened = tag.end(), -1
+    if not kept:
+        return value
+    kept.append(value[at:])
+    return "".join(kept)
+
+
 def _clean_text(text: Any) -> str:
-    value = str(text or "")
-    value = _CONTEXT_TAG_RE.sub("", value)
+    value = _without_fenced_context(str(text or ""))
     value = _MNEMOS_CONTEXT_RE.sub("", value)
     return value.strip()
 

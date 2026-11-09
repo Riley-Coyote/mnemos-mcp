@@ -385,6 +385,44 @@ def test_what_the_provider_put_in_a_message_still_comes_off(pasted, left):
     assert provider_module._clean_text(pasted) == left
 
 
+_FENCED = "<memory-context>\n[System note: recalled memory]\n\n- an older memory\n</memory-context>"
+
+
+@pytest.mark.parametrize("message, left", [
+    (f"which port is staging on?\n\n{_FENCED}", "which port is staging on?"),
+    (f"{_FENCED}\n\nwhich port is staging on?", "which port is staging on?"),
+    (f"first {_FENCED} then {_FENCED} last", "first  then  last"),
+    ("< MEMORY-CONTEXT >what Hermes added< / memory-context >my own words", "my own words"),
+    # Words about the fence are the person's own: a tag alone fences nothing.
+    ("the <memory-context> tag opens it", "the <memory-context> tag opens it"),
+    ("and </memory-context> closes it", "and </memory-context> closes it"),
+])
+def test_what_hermes_fenced_into_a_message_comes_off(message, left):
+    assert provider_module._clean_text(message) == left
+
+
+@pytest.mark.parametrize("pasted", [
+    "<" * 51_000,
+    "< " * 25_500,
+    "<" + " " * 51_000,
+    "</" * 25_500,
+    "<memory-context>" * 3_187,
+    "<div class='row'><span>cell</span><a href='#'>more</a></div>\n" * 850,
+    "#" + " " * 51_000,
+], ids=["angle-brackets", "brackets-and-spaces", "a-bracket-then-spaces", "closing-brackets",
+        "fences-never-closed", "a-page-of-markup", "a-heading-of-spaces"])
+def test_a_long_paste_of_markup_is_cleaned_at_once(pasted):
+    """The pattern that took the fence off tried every ``<`` against all that
+    followed: 51,000 of them took seconds (3.7 on the machine this was written
+    on), on every message, with Hermes waiting on its recall. Now one pass, a
+    millisecond; the bound is loose so a slow machine doesn't fail it."""
+    import time
+
+    began = time.perf_counter()
+    provider_module._clean_text(pasted)
+    assert time.perf_counter() - began < 0.25
+
+
 def test_what_comes_with_a_message_says_it_isnt_a_search(tmp_path):
     # Headed "recall", it read as a search already done: asked to check its memory, an agent
     # took it for the answer and said it had nothing about what was in shared memory.
