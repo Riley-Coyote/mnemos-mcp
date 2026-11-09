@@ -95,6 +95,21 @@ def test_codex_dream_uses_its_store_and_preserves_full_continuity(ready):
     assert "features.hooks=false" in used["argv"]
 
 
+@pytest.mark.parametrize("source", ["flag", "environment"])
+def test_relative_codex_home_keeps_the_preflight_account(ready, monkeypatch, source):
+    db, home = ready
+    monkeypatch.chdir(home)
+    monkeypatch.setenv("CODEX_HOME", ".codex" if source == "environment" else "wrong-account")
+    kwargs = {"config_dir": "./.codex"} if source == "flag" else {}
+
+    record = run(db, **kwargs)
+
+    assert record["status"] == "done", record
+    used = json.loads((home / "fake.json").read_text())
+    assert used["codex_home"] == str(home / ".codex")
+    assert (Path(used["codex_home"]) / "models_cache.json").is_file()
+
+
 @pytest.mark.parametrize("runner", ["Codex", " CODEX "])
 @pytest.mark.parametrize("dry_run", [False, True])
 def test_accepted_codex_names_never_dispatch_to_claude(ready, monkeypatch, runner, dry_run):

@@ -1004,6 +1004,10 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
     refusal = builtin_refusal(runner, kind)
     if refusal:
         return {"kind": kind, "id": "", "status": "failed", "reason": refusal}
+    if runner == "codex":
+        config_dir = str(Path(
+            config_dir or os.environ.get("CODEX_HOME") or Path.home() / ".codex"
+        ).expanduser().absolute())
     max_seconds, max_tokens, unbudgeted = budget(
         kind, max_minutes=max_minutes, max_tokens=max_tokens, max_seconds=max_seconds,
     )

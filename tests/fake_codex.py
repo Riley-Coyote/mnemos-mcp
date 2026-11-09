@@ -51,6 +51,7 @@ log = {
     "prompt": prompt,
     "hour": os.environ.get("MNEMOS_HOUR_ID"),
     "app_pipe": os.environ.get("CODEX_APP_TOOLS_PIPE_PATH"),
+    "codex_home": os.environ.get("CODEX_HOME"),
 }
 scenario = os.environ.get("FAKE_CODEX_SCENARIO", "ok")
 if scenario == "descendant":
