@@ -681,7 +681,7 @@ def _set_aside(studio: Path, folder: Path):
         yield str(path)
 
 
-def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL,
+def _files_and_command(kind, hour_id, folder, store, scope, runner_bin, mnemos_bin, model=HOUR_MODEL,
                        runner="claude-code", config_dir=None):
     folders = read_dirs()
     mcp = {"mcpServers": {"mnemos": {
@@ -693,8 +693,10 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
     if runner == "codex":
         from . import codex_dream
 
-        mcp["mcpServers"]["mnemos"]["env"]["MNEMOS_SHARED_MEMORY"] = "off"
-        return mcp, codex_dream.model_catalog(model, config_dir), codex_dream.command(claude_bin, model, folder, mcp, config_dir)
+        mcp["mcpServers"]["mnemos"]["env"].update(
+            MNEMOS_SHARED_MEMORY="off", MNEMOS_WAKE="light",
+        )
+        return mcp, codex_dream.model_catalog(model, config_dir), codex_dream.command(runner_bin, model, folder, mcp, config_dir)
     from .setup import scheduler
 
     deny = []
@@ -741,7 +743,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
     # in the agent's hour): only its studio's, this file and its own MCP
     # config, as Mnemos's model does (mnemos/llm.py). The wake still comes
     # from Mnemos's own hook, in this file.
-    cmd = [claude_bin, "--model", model, "--restricted",
+    cmd = [runner_bin, "--model", model, "--restricted",
            "--tools", TOOLS[kind],
            "--setting-sources", "project",
            "--strict-mcp-config", "--mcp-config", str(folder / "mcp.json"),
@@ -1011,14 +1013,14 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model or HOUR_MODEL,
                                                resolved.agent_id, records)
         skip = why or skip
-        claude_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
+        runner_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
         mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
-        if not claude_bin or not mnemos_bin:
-            return {"status": "failed", "reason": f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not claude_bin else "The mnemos command wasn't found."}
+        if not runner_bin or not mnemos_bin:
+            return {"status": "failed", "reason": f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not runner_bin else "The mnemos command wasn't found."}
         folder = hours / "dry-run"
         store = folder / "store.db" if store_copy else live
         try:
-            mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, claude_bin, mnemos_bin,
+            mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, runner_bin, mnemos_bin,
                                                     model or HOUR_MODEL, runner, config_dir)
         except (OSError, ValueError, RuntimeError) as exc:
             return {"status": "failed", "reason": str(exc)}
@@ -1102,13 +1104,13 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             if skip:
                 record.update(status="skipped", reason=skip)
                 return record
-            claude_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
+            runner_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
             mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
-            if not claude_bin or not mnemos_bin:
-                record.update(status="failed", reason=f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not claude_bin else "The mnemos command wasn't found.")
+            if not runner_bin or not mnemos_bin:
+                record.update(status="failed", reason=f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not runner_bin else "The mnemos command wasn't found.")
                 return record
             folder.mkdir(exist_ok=True)
-            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model, runner, config_dir)
+            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, runner_bin, mnemos_bin, model, runner, config_dir)
             if runner == "codex":
                 from .codex_dream import PREAMBLE
 

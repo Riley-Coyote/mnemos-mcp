@@ -62,6 +62,23 @@ if scenario == "descendant":
         ]
     )
     log["child"] = child.pid
+if scenario == "context":
+    from mnemos.simple_runtime import MnemosRuntime
+
+    server = json.loads(Path("mcp.json").read_text())["mcpServers"]["mnemos"]
+    os.environ.update(server["env"])
+    runtime = MnemosRuntime(
+        db_path=args[args.index("--db-path") + 1],
+        agent_id=args[args.index("--agent-id") + 1],
+        person_id=args[args.index("--person-id") + 1],
+        project_scope=args[args.index("--project-scope") + 1],
+        use_dedicated_model=False,
+    )
+    try:
+        runtime.introduce(model)
+        log["context"] = runtime.context()
+    finally:
+        runtime.close()
 Path(os.environ["FAKE_CODEX_LOG"]).write_text(json.dumps(log))
 
 

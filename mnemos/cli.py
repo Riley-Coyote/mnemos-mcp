@@ -1381,13 +1381,14 @@ def _blueprint(
     runner = getattr(args, "runner", None) or selected["runner"]
     model = getattr(args, "model", None)
     if model is None:
-        model = (selected["model"] if runner == selected["runner"] else "") or os.environ.get("MNEMOS_HOUR_MODEL") or None
+        model = selected["model"] if runner == selected["runner"] else ""
+    model = model or os.environ.get("MNEMOS_HOUR_MODEL") or None
     hour_env = None
     if hours:
-        claude = scheduler.find_codex() if runner == "codex" else scheduler.find_claude()
-        if claude:
+        runner_bin = scheduler.find_codex() if runner == "codex" else scheduler.find_claude()
+        if runner_bin:
             hour_env = scheduler.hour_environment(
-                claude_bin=claude,
+                claude_bin=runner_bin,
                 mnemos_command=mnemos_command,
                 config_dir=os.environ.get("CODEX_HOME" if runner == "codex" else "CLAUDE_CONFIG_DIR") or None,
                 runner=runner,
@@ -1435,7 +1436,7 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
     entries = list(blueprint["entries"])
-    no_claude = hours and not blueprint["hours_ready"]
+    runner_missing = hours and not blueprint["hours_ready"]
 
     print(f"Scheduler:   {backend}")
     print(f"Agent:       {agent_id}")
@@ -1447,7 +1448,7 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
             f"\n  {job.name} — skipped: needs a model provider "
             f"(set MNEMOS_LLM_PROVIDER and a key, then reinstall)"
         )
-    if no_claude:
+    if runner_missing:
         reason = "the codex command was not found" if blueprint.get("runner") == "codex" else _NO_CLAUDE
         print(f"\n  The quiet hours are not scheduled: {reason}.")
     elif hours:
@@ -1472,9 +1473,9 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
 
     if not write:
         print("\nThis is a preview. Re-run with --write to schedule these jobs.")
-        return 1 if no_claude else 0
+        return 1 if runner_missing else 0
 
-    if no_claude and blueprint.get("runner") == "codex":
+    if runner_missing and blueprint.get("runner") == "codex":
         return 1
 
     try:
@@ -1486,7 +1487,7 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
     except (OSError, RuntimeError) as exc:
         print(f"Failed to activate background maintenance: {exc}", file=sys.stderr)
         return 1
-    if hours and not no_claude:
+    if hours and not runner_missing:
         _state.record_hours_choice(agent_id, "yes", runner=blueprint.get("runner", "claude-code"),
                                    model=blueprint.get("model"))
 
@@ -1494,7 +1495,7 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
     if retired:
         print(f"Removed {len(retired)} job(s) an earlier install scheduled.")
     print("Check them any time with: mnemos daemon status")
-    return 1 if no_claude else 0
+    return 1 if runner_missing else 0
 
 
 def _apply_schedule(blueprint: dict, entries: list[dict], retired: list[dict]) -> None:

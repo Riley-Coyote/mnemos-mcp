@@ -165,7 +165,7 @@ def hours_choice(agent_id: str) -> str | None:
 
 
 def hour_settings(agent_id: str) -> dict:
-    """The last successfully installed runner and optional model for this agent."""
+    """The saved quiet-hour runner and optional model for this agent."""
     try:
         kept = json.loads((hours_dir(agent_id) / CHOICE_FILE).read_text())
     except (OSError, ValueError):

@@ -196,6 +196,14 @@ def hour_jobs(
     return jobs
 
 
+def _find_cli(command: str, setting: str) -> str | None:
+    found = os.environ.get(setting, "").strip() or shutil.which(command)
+    if not found:
+        return None
+    path = os.path.abspath(os.path.expanduser(found))
+    return path if os.path.isfile(path) and os.access(path, os.X_OK) else None
+
+
 def find_claude() -> str | None:
     """The ``claude`` command a quiet hour runs, as an absolute path, or None.
 
@@ -205,23 +213,12 @@ def find_claude() -> str | None:
     followed through its links: Claude Code updates itself by moving the link,
     and a job pinned to the version behind it breaks once that version goes.
     """
-    named = os.environ.get("MNEMOS_CLAUDE_BIN", "").strip()
-    found = named or shutil.which("claude")
-    if not found:
-        return None
-    path = os.path.abspath(os.path.expanduser(found))
-    if not (os.path.isfile(path) and os.access(path, os.X_OK)):
-        return None
-    return path
+    return _find_cli("claude", "MNEMOS_CLAUDE_BIN")
 
 
 def find_codex() -> str | None:
     """Resolve the chosen Codex executable without pinning its symlink target."""
-    found = os.environ.get("MNEMOS_CODEX_BIN", "").strip() or shutil.which("codex")
-    if not found:
-        return None
-    path = os.path.abspath(os.path.expanduser(found))
-    return path if os.path.isfile(path) and os.access(path, os.X_OK) else None
+    return _find_cli("codex", "MNEMOS_CODEX_BIN")
 
 
 # launchd's default PATH omits many CLI installations; include the selected
@@ -234,11 +231,11 @@ def hour_environment(
     runner: str = "claude-code",
 ) -> dict[str, str]:
     """What a quiet hour needs from its environment when no shell made it:
-    a PATH holding the selected CLI’s folder (an npm installation needs
+    a PATH holding the selected CLI's folder (an npm installation needs
     the node beside it), and both commands' absolute paths, which the runner
-    reads before any PATH lookup (``MNEMOS_CLAUDE_BIN``,
-    ``MNEMOS_LIFE_MNEMOS_BIN``). ``config_dir`` is the Claude login the hours
-    use (``CLAUDE_CONFIG_DIR``), when the person set one."""
+    reads before any PATH lookup (``MNEMOS_CLAUDE_BIN`` or ``MNEMOS_CODEX_BIN``,
+    and ``MNEMOS_LIFE_MNEMOS_BIN``). ``config_dir`` selects the login through
+    ``CLAUDE_CONFIG_DIR`` or ``CODEX_HOME``, when the person set one."""
     folders = dict.fromkeys([str(Path(claude_bin).parent), *_SYSTEM_PATH])
     environment = {
         "PATH": os.pathsep.join(folders),

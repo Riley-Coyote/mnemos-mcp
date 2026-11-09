@@ -125,6 +125,41 @@ def test_a_successful_dream_may_write_nothing(ready, monkeypatch):
     assert record["status"] == "done" and record["journal_ids"] == []
 
 
+def test_dream_context_preserves_pending_interactive_delivery(ready, monkeypatch):
+    db, home = ready
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **SCOPE)
+    try:
+        runtime.person_note("The spring timetable is ready.")
+        runtime.handoff("Check the spring timetable.", signed_as=MODEL)
+    finally:
+        runtime.close()
+    monkeypatch.setenv("FAKE_CODEX_SCENARIO", "context")
+
+    record = run(db)
+
+    assert record["status"] == "done", record
+    briefing = json.loads((home / "fake.json").read_text())["context"]
+    assert "Check the spring timetable." in briefing
+    assert "The spring timetable is ready." not in briefing
+    store = EngramStore(db)
+    try:
+        assert len(store.undelivered_replies(**SCOPE)) == 1
+        assert store._get_conn().execute(
+            "SELECT surfaced_count FROM reflection_queue"
+        ).fetchone()[0] == 0
+        assert store._get_conn().execute(
+            "SELECT value FROM meta WHERE key LIKE '%:last_context_delivery_at'"
+        ).fetchone() is None
+    finally:
+        store.close()
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **SCOPE)
+    try:
+        assert "The spring timetable is ready." in runtime.context()
+        assert "The spring timetable is ready." not in runtime.context()
+    finally:
+        runtime.close()
+
+
 def test_store_copy_keeps_live_store_untouched(ready):
     db, _ = ready
     record = run(db, store_copy=True)

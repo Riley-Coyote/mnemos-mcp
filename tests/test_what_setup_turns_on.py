@@ -629,6 +629,25 @@ finally:
     assert not {"com.mnemos.review.hour-mine", "com.mnemos.review.hour-ours"} & launchd.loaded
 
 
+@pytest.mark.parametrize("model_args,saved", [([], ""), (["--model", ""], "previous-model")])
+def test_codex_schedule_preserves_the_environment_model(launchd, codex, monkeypatch, model_args, saved):
+    from mnemos.setup import state
+    from mnemos.store.sqlite_store import EngramStore
+
+    state.record_hours_choice("nova", "no", runner="codex", model=saved)
+    EngramStore(Path.home() / ".mnemos/nova.db").close()
+    monkeypatch.setenv("MNEMOS_HOUR_MODEL", "environment-model")
+
+    assert main(["daemon", "install", *SCOPE, "--hours", "--runner", "codex",
+                 *model_args, "--write"]) == 0
+
+    assert codex[1] == [("model", "environment-model"), ("isolation", str(codex[0]))]
+    dream = _plist("com.mnemos.nova.hour-dream")["ProgramArguments"]
+    assert dream[-2:] == ["--model", "environment-model"]
+    monkeypatch.delenv("MNEMOS_HOUR_MODEL")
+    assert state.hour_settings("nova") == {"runner": "codex", "model": "environment-model"}
+
+
 def test_claude_setup_reenables_only_the_saved_codex_dream(tmp_path, launchd, codex, monkeypatch, capsys):
     from mnemos.setup import state
 
