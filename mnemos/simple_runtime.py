@@ -4620,6 +4620,7 @@ class MnemosRuntime:
         packet = self._briefing_packet(session_counter=self._current_session())
         if packet["wake"] == "light":
             # Dreams leave delivery markers for the next interactive session.
+            self._traced_read(*sorted(shown_ids(packet)))
             return packet["prompt"]
         self._record_briefing_shown(packet)
         shown = packet.get("shown") or {}

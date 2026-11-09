@@ -872,6 +872,8 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
         status, reason = "done", f"Stopped at the time limit ({max_seconds / 60:g} minutes)."
     elif codex and rc != 0:
         status, reason = "failed", f"codex exited with code {rc}: " + (folder / "stderr.txt").read_text()[-400:].strip()
+        if result is not None and result.get("is_error"):
+            reason = "The session ended with an error: " + _line(str(result.get("result", ""))) + "; " + reason
     elif result is not None and result.get("is_error"):
         status, reason = "failed", "The session ended with an error: " + _line(str(result.get("result", "")))
     elif result is not None:

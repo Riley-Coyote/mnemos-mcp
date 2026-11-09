@@ -53,7 +53,7 @@ def _store(tmp_path: Path):
         reply = store.write_note(REPLY, author="person", in_reply_to=note, **SCOPE)
     finally:
         runtime.close()
-    return db, {"handoff": handoff, "question": question, "reply": reply}
+    return db, {"handoff": handoff, "question": question, "reply": reply, "standing": standing_id}
 
 
 def _hook(db: Path, tmp_path: Path, *, env: dict[str, str] | None = None,
@@ -85,6 +85,21 @@ def _rows(db, sql, params=()):
         return conn.execute(sql, params).fetchall()
     finally:
         conn.close()
+
+
+def test_light_context_traces_shown_memories_without_spending_delivery(tmp_path, monkeypatch):
+    db, ids = _store(tmp_path)
+    monkeypatch.setenv("MNEMOS_WAKE", "light")
+    runtime = MnemosRuntime(db_path=db, use_dedicated_model=False, **SCOPE)
+    try:
+        assert STANDING in runtime.context()
+    finally:
+        runtime.close()
+    [reads] = _rows(db, "SELECT read_ids FROM memory_trace WHERE tool = 'context'")
+    assert ids["standing"] in json.loads(reads[0])
+    assert _rows(db, "SELECT delivered_at FROM notes WHERE id = ?", (ids["reply"],)) == [(None,)]
+    assert _rows(db, "SELECT surfaced_count FROM reflection_queue WHERE id = ?", (ids["question"],)) == [(0,)]
+    assert not _rows(db, "SELECT value FROM meta WHERE key LIKE '%:last_context_delivery_at'")
 
 
 def test_light_names_who_and_where_but_asks_nothing(tmp_path):

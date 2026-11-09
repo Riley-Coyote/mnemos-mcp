@@ -111,8 +111,12 @@ if scenario == "forbidden":
         }
     )
     time.sleep(60)
-elif scenario == "failed":
+elif scenario in ("failed", "failed_exit", "failed_exit_stderr"):
     emit({"type": "turn.failed", "error": {"message": "rate limited"}})
+    if scenario == "failed_exit_stderr":
+        print("request retry exhausted", file=sys.stderr)
+    if scenario != "failed":
+        sys.exit(1)
 else:
     print("a non-event line", flush=True)
     emit(

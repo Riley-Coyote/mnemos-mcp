@@ -164,6 +164,18 @@ def test_codex_errors_are_recorded_and_forbidden_writes_discarded(
             store.close()
 
 
+@pytest.mark.parametrize("scenario", ["failed_exit", "failed_exit_stderr"])
+def test_nonzero_codex_exit_preserves_structured_failure(ready, monkeypatch, scenario):
+    monkeypatch.setenv("FAKE_CODEX_SCENARIO", scenario)
+    record = run(ready[0])
+    assert record["status"] == "failed"
+    assert "rate limited" in record["reason"]
+    assert "code 1" in record["reason"]
+    assert record["reason"].index("rate limited") < record["reason"].index("code 1")
+    if scenario == "failed_exit_stderr":
+        assert "request retry exhausted" in record["reason"]
+
+
 def test_a_successful_dream_may_write_nothing(ready, monkeypatch):
     monkeypatch.setenv("FAKE_CODEX_SCENARIO", "nothing")
     record = run(ready[0])
