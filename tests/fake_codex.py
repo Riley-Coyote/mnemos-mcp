@@ -42,7 +42,7 @@ for i, arg in enumerate(argv):
         key, _, value = argv[i + 1].partition("=")
         settings[key] = value
 args, _ = json.JSONDecoder().raw_decode(
-    settings["mcp_servers.mnemos"].split('"args" = ', 1)[1]
+    settings["mcp_servers"].split('"args" = ', 1)[1]
 )
 model = argv[argv.index("--model") + 1]
 prompt = sys.stdin.read()

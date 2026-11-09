@@ -45,11 +45,11 @@ def environment(source: dict) -> dict:
     }
 
 
-def isolation(binary: str, config_dir: str | None = None) -> list[str]:
+def isolation(binary: str, config_dir: str | None = None) -> None:
     """Read native configuration before running, honoring managed restrictions.
 
-    Ignoring user config does not remove machine-wide MCP servers or managed
-    requirements. Ask Codex itself, so Python needs no second TOML parser.
+    Ignoring user config does not remove managed requirements. Ask Codex
+    itself, so Python needs no second TOML parser.
     """
     env = environment(dict(os.environ))
     if config_dir:
@@ -113,9 +113,8 @@ def isolation(binary: str, config_dir: str | None = None) -> list[str]:
                 },
             )
             send({"jsonrpc": "2.0", "method": "initialized"})
-            config = request(2, "config/read", {"includeLayers": False})["config"]
             requirements = (
-                request(3, "configRequirements/read", {}).get("requirements") or {}
+                request(2, "configRequirements/read", {}).get("requirements") or {}
             )
             required = requirements.get("featureRequirements") or {}
             conflicts = [
@@ -132,9 +131,6 @@ def isolation(binary: str, config_dir: str | None = None) -> list[str]:
                     + ", ".join(conflicts or ["managed hooks or model catalog"])
                     + ". No dream was launched."
                 )
-            return [
-                name for name in (config.get("mcp_servers") or {}) if name != "mnemos"
-            ]
         except queue.Empty as exc:
             raise ValueError(
                 "Codex configuration inspection timed out; no dream was launched."
@@ -233,15 +229,13 @@ def command(
     }
     for feature in DISABLED_FEATURES:
         settings[f"features.{feature}"] = False
-    for name in isolation(binary, config_dir):
-        settings[f"mcp_servers.{json.dumps(name)}.enabled"] = False
+    isolation(binary, config_dir)
     server = mcp["mcpServers"]["mnemos"]
-    settings["mcp_servers.mnemos"] = {
-        key: server[key] for key in ("command", "args", "env")
-    }
-    settings["mcp_servers.mnemos"].update(
-        enabled=True, required=True, enabled_tools=list(DREAM_TOOLS)
-    )
+    scoped = {key: server[key] for key in ("command", "args", "env")}
+    scoped.update(enabled=True, required=True, enabled_tools=list(DREAM_TOOLS))
+    # Replace the table: leaf disables can recreate ignored user servers
+    # without a transport, or retain fields from a machine-wide connection.
+    settings["mcp_servers"] = {"mnemos": scoped}
 
     def toml(value):
         if isinstance(value, dict):

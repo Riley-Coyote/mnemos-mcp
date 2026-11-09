@@ -89,7 +89,7 @@ def test_codex_dream_uses_its_store_and_preserves_full_continuity(ready):
         == "Keep the real model instructions."
     )
     assert "--ignore-user-config" in used["argv"]
-    server = next(v for v in used["argv"] if v.startswith("mcp_servers.mnemos="))
+    server = next(v for v in used["argv"] if v.startswith("mcp_servers="))
     assert '"required" = true' in server and '"enabled" = true' in server
     assert '"MNEMOS_SHARED_MEMORY" = "off"' in server
     assert "features.hooks=false" in used["argv"]
@@ -214,6 +214,9 @@ def test_native_cli_tool_boundary_and_scoped_mcp_write(ready, monkeypatch):
     ][0]
     entry["slug"] = MODEL
     (folder / ".codex/models_cache.json").write_text(json.dumps({"models": [entry]}))
+    (folder / ".codex/config.toml").write_text(
+        '[mcp_servers.inherited]\ncommand = "/must-not-run"\n'
+    )
     requests = []
 
     class Provider(BaseHTTPRequestHandler):
@@ -277,9 +280,18 @@ def test_native_cli_tool_boundary_and_scoped_mcp_write(ready, monkeypatch):
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     original = codex_dream.command
+    marker = folder / "outside-started"
+    other = folder / "outside-mcp"
+    other.write_text(
+        f"#!{os.sys.executable}\nfrom pathlib import Path\nPath({str(marker)!r}).touch()\n"
+    )
+    other.chmod(0o755)
 
     def fixture_provider(*args, **kwargs):
         cmd = original(*args, **kwargs)
+        # A prior override stands in for a lower configuration layer.
+        at = cmd.index("-c")
+        cmd[at:at] = ["-c", f"mcp_servers.earlier.command={json.dumps(str(other))}"]
         cmd[-1:-1] = [
             "-c",
             'model_provider="fixture"',
@@ -308,6 +320,7 @@ def test_native_cli_tool_boundary_and_scoped_mcp_write(ready, monkeypatch):
     assert record["status"] == "done", record
     assert len(record["journal_ids"]) == 1 and record["live_store_untouched"] is True
     assert len(requests) == 2
+    assert not marker.exists(), "An inherited MCP server must never start."
 
     def tool_names(tools):
         return {
