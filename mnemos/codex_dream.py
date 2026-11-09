@@ -239,10 +239,10 @@ def command(
         if isinstance(value, dict):
             return (
                 "{"
-                + ", ".join(f"{json.dumps(k)} = {toml(v)}" for k, v in value.items())
+                + ", ".join(f"{json.dumps(k, ensure_ascii=False)} = {toml(v)}" for k, v in value.items())
                 + "}"
             )
-        return json.dumps(value)
+        return json.dumps(value, ensure_ascii=False)
 
     for key, value in settings.items():
         cmd += ["-c", f"{key}={toml(value)}"]
