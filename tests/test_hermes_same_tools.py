@@ -255,18 +255,40 @@ def _page_act(url: str, agent: str, **request) -> dict:
         return json.loads(refused.read())
 
 
-def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path):
+def _held(path) -> list[tuple]:
+    """Every memory and note a store holds, to see that nothing in it moved."""
+    conn = sqlite3.connect(path)
+    try:
+        return [
+            *conn.execute("SELECT id, content, state FROM engrams ORDER BY id").fetchall(),
+            *(conn.execute("SELECT * FROM notes ORDER BY 1").fetchall()
+              if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'notes'").fetchone() else []),
+        ]
+    finally:
+        conn.close()
+
+
+def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path, monkeypatch):
     """The page shows the other agents whose memory is kept beside this one's,
     and the plugin's README and catalog entry said it only read them. It wrote
     in them too: a note, a correction, a memory let go, in the memory of an
-    agent Hermes doesn't run (Nous's review of the catalog entry, 2026-11-09).
-    Inside Hermes it reads them, and writes in its own."""
+    agent Hermes doesn't run, and in the shared memory, where it could let go
+    of what another agent had shared (Nous's review of the catalog entry,
+    2026-11-09). Inside Hermes it reads them, and writes in its own."""
     from mnemos import llm
 
+    shared = tmp_path / "shared.db"
+    monkeypatch.setenv("MNEMOS_SHARED_MEMORY_DB", str(shared))
+    monkeypatch.delenv("MNEMOS_SHARED_MEMORY", raising=False)
     mine, other = _provider(tmp_path, "a"), _provider(tmp_path, "b")
     try:
         _call(mine, "mnemos_capture", content="The kiln at the studio fires on Tuesdays.")
         _call(other, "mnemos_capture", content="The glaze room is locked after six.")
+        _call(other, "mnemos_capture", content="Everyone should know the studio closes at nine.", shared=True)
+        theirs = _row(tmp_path, "The glaze room is locked after six.", "b")["id"]
+        conn = sqlite3.connect(shared)
+        (shared_id,) = conn.execute("SELECT id FROM engrams").fetchone()
+        conn.close()
         llm.take_secrets_from(lambda name, default=None: default)  # inside Hermes, as its provider says at its start
         url = _page_address(_call(mine, "mnemos_page"))
         base = url.rsplit("/log/", 1)[0]
@@ -274,10 +296,24 @@ def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path):
         with urllib.request.urlopen(f"{base}/data/memories.json?agent=b", timeout=10) as shown:
             assert "glaze room" in shown.read().decode(), "the other agent's memory is no longer shown"
 
-        refused = _page_act(url, "b", command="note", text="Left through another agent's page.")
-        assert "only reads your other agents' memories" in refused.get("error", ""), refused
-        kept = sqlite3.connect(tmp_path / "b.db").execute("SELECT count(*) FROM notes").fetchone()[0]
-        assert kept == 0, "a note was written in another agent's memory"
+        before = _held(tmp_path / "b.db"), _held(shared)
+        for asked in (
+            {"command": "note", "text": "Left through another agent's page."},
+            {"command": "correct", "memory_id": theirs, "text": "The glaze room is never locked."},
+            {"command": "forget", "memory_id": theirs, "confirmed": True},
+            {"command": "read", "note_ids": ["any"]},
+        ):
+            refused = _page_act(url, "b", **asked)
+            assert "only reads your other agents' memories" in refused.get("error", ""), (asked, refused)
+        for asked in (
+            {"action": "add", "text": "Written into the shared memory from a Hermes page."},
+            {"action": "correct", "memory_id": shared_id, "text": "The studio never closes."},
+            {"action": "forget", "memory_id": shared_id, "confirmed": True},
+        ):
+            for agent in ("a", "b"):  # whichever mind the page is showing
+                refused = _page_act(url, agent, command="shared", **asked)
+                assert "only reads the shared memory" in refused.get("error", ""), (asked, refused)
+        assert (_held(tmp_path / "b.db"), _held(shared)) == before, "the page wrote outside its own agent's memory"
 
         own = _page_act(url, "a", command="note", text="Left on my own agent's page.")
         assert own.get("result", {}).get("text") == "Left on my own agent's page.", own
@@ -285,6 +321,32 @@ def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path):
         mine.shutdown()
         other.shutdown()
         _close_pages()
+
+
+def test_anywhere_else_the_page_is_the_persons_over_all_of_it(tmp_path, monkeypatch):
+    """Outside Hermes the page is the person's own, as it was: they write in
+    any of their agents' memories, and in the shared one."""
+    from mnemos import llm
+    from mnemos.companion.server import open_page
+
+    monkeypatch.setenv("MNEMOS_SHARED_MEMORY_DB", str(tmp_path / "shared.db"))
+    monkeypatch.delenv("MNEMOS_SHARED_MEMORY", raising=False)
+    for name, words in (("a", "The kiln fires on Tuesdays."), ("b", "The glaze room is locked after six.")):
+        provider = _provider(tmp_path, name)
+        _call(provider, "mnemos_capture", content=words)
+        provider.shutdown()
+    llm.take_secrets_from(None)  # no host hands out the keys: an agent's own server, or `mnemos page`
+    said, page = open_page({"db_path": str(tmp_path / "a.db"), "agent_id": "a",
+                            "person_id": "user", "project_scope": "global"})
+    try:
+        url = _page_address(said)
+        there = _page_act(url, "b", command="note", text="Left through another agent's page.")
+        assert there.get("result", {}).get("text") == "Left through another agent's page.", there
+        added = _page_act(url, "a", command="shared", action="add", text="The studio closes at nine.")
+        assert "result" in added, added
+    finally:
+        page.shutdown()
+        page.server_close()
 
 
 def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(tmp_path, monkeypatch):
