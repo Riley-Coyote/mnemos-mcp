@@ -586,7 +586,10 @@ class MnemosMemoryProviderCore:
         assert self._runtime is not None
         assert self._config is not None
         if self._writes_enabled:
-            packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
+            try:
+                packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
+            except sqlite3.OperationalError:
+                packet = self._read_without_waking()
             body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
         else:
             # Read, not woken: a wake counts a session and spends what shows
@@ -598,6 +601,35 @@ class MnemosMemoryProviderCore:
             body = f"# Mnemos Identity Continuity\n{rules}" + (f"\n\n{packet}" if packet else "")
         wake_limit = self._config.max_wake_chars
         return _truncate(body, wake_limit) if wake_limit else body
+
+    def _read_without_waking(self) -> str:
+        """What a session starts on when its wake couldn't write: where things
+        stand, read and not counted (``glance``, as a run nobody is in reads).
+
+        A wake counts a session and spends what shows once. With another
+        process deep in one long write, past the wait the store gives, it
+        raised, and Hermes builds its prompt once: the whole session ran with
+        no Mnemos in it, though every read would have answered. A store that
+        couldn't even be opened to write (that records this code's version) is
+        opened to read."""
+        assert self._runtime is not None and self._scope is not None
+        logger.debug("Mnemos's store was busy past its wait: this session starts on a read", exc_info=True)
+        if self._runtime._store is not None:
+            return self._runtime.glance()
+        reader = MnemosRuntime(
+            db_path=self._scope.db_path,
+            agent_id=self._scope.agent_id,
+            person_id=self._scope.person_id,
+            project_scope=self._scope.project_scope,
+            read_only=True,
+            harness="hermes",
+            conversation=self._scope.conversation,
+            workdir=str(self._started_with.get("cwd") or ""),
+        )
+        try:
+            return reader.glance()
+        finally:
+            reader.close()
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         # Before the lock: while this waits its turn, the last message's count
