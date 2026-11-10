@@ -48,10 +48,13 @@ def clean_origin(value: Any) -> dict[str, str]:
         elif key.endswith("_id"):
             if not text or _ID.fullmatch(text):
                 result[key] = text
+        elif key == "cwd":
+            if len(text) <= 4096 and "\x00" not in text:
+                result[key] = text
         else:
             result[key] = " ".join(
                 "".join(c for c in text if c.isprintable() or c.isspace()).split()
-            )[: 4096 if key == "cwd" else 160]
+            )[:160]
     return result
 
 

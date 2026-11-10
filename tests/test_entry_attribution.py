@@ -92,6 +92,47 @@ def test_project_change_does_not_reuse_the_registered_name(tmp_path, replacement
         assert origin.get("project_name") == replacement.get("project_name")
 
 
+@pytest.mark.parametrize("kind,read", [
+    ("handoff", "query"), ("handoff", "id"),
+    ("journal", "query"), ("journal", "id"), ("journal", "journal"),
+])
+def test_handoff_and_journal_reads_show_recorded_origin(tmp_path, kind, read):
+    runtime = MnemosRuntime(db_path=str(tmp_path / "memory.db"), use_dedicated_model=False)
+    try:
+        with bind_origin(ORIGIN):
+            getattr(runtime, kind)("The copper lantern marks the source project.", signed_as="gpt-6.1-sol")
+        store = runtime._store
+        if kind == "handoff":
+            entry = store.get_latest_handoff(**runtime._scope_args())
+        else:
+            entry = store.journal_entries(**runtime._scope_args())[0]
+        with bind_origin({"thread_id": SECOND, "session_id": SECOND, "project_id": "elsewhere"}):
+            runtime.introduce("gpt-6.1-sol")
+            result = runtime.journal() if read == "journal" else runtime.recall(
+                entry["id"] if read == "id" else "copper lantern",
+            )
+        assert result.count("project=Mnemos (project-one)") == 1
+        assert result.count(f"task=Attribution ({FIRST})") == 1
+    finally:
+        runtime.close()
+
+
+def test_request_cwd_preserves_repository_whitespace_for_handoffs(tmp_path):
+    repository = tmp_path / "Project  Alpha"
+    (repository / ".git").mkdir(parents=True)
+    workdir = repository / "src"
+    workdir.mkdir()
+    runtime = MnemosRuntime(db_path=str(tmp_path / "memory.db"), use_dedicated_model=False)
+    try:
+        with bind_origin({"thread_id": FIRST, "cwd": str(workdir)}):
+            runtime.handoff("Continue in the repository with two spaces.")
+        entry = runtime._store.get_latest_handoff(**runtime._scope_args())
+        assert stored_origin(entry)["cwd"] == str(workdir)
+        assert entry["author_place"] == str(repository)
+    finally:
+        runtime.close()
+
+
 @pytest.mark.parametrize("cold", [False, True])
 @pytest.mark.parametrize("operation", ["capture", "correct"])
 def test_shared_writes_keep_hook_registered_source_labels(tmp_path, monkeypatch, cold, operation):

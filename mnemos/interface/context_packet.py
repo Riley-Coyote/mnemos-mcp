@@ -571,15 +571,15 @@ def whose_handoff(
     where = {True: "from this session", False: "from another session"}.get(session)
     if whose == _COLLEAGUE:
         during = ", earlier in this session" if session is True else ""
-        return f"From {name}, a colleague{during}, {age}", _COLLEAGUE
+        return f"From {name}, a colleague{during}, {age}" + origin_suffix(note), _COLLEAGUE
     if whose == _OWN:
         if name:
-            return _joined(f"Yours ({name})", where, age), _OWN
-        return f"Yours, from this session, {age} (unsigned)", _OWN
+            return _joined(f"Yours ({name})", where, age) + origin_suffix(note), _OWN
+        return f"Yours, from this session, {age} (unsigned)" + origin_suffix(note), _OWN
     elsewhere = " in another session" if session is False else ""
     if name:
-        return f"From {name}{elsewhere}, {age} (yours if you are {name})", _UNPLACED
-    return f"Unsigned{elsewhere}, {age} (maybe yours, maybe a colleague's)", _UNPLACED
+        return f"From {name}{elsewhere}, {age} (yours if you are {name})" + origin_suffix(note), _UNPLACED
+    return f"Unsigned{elsewhere}, {age} (maybe yours, maybe a colleague's)" + origin_suffix(note), _UNPLACED
 
 
 def when_left(
