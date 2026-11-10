@@ -16,6 +16,42 @@ except ImportError:  # pragma: no cover - mcp is a core dependency
     pass
 
 
+_THIS_MACHINE = {None, "", "127.0.0.1", "::1", "localhost", "0.0.0.0", "::"}
+
+
+@pytest.fixture(autouse=True)
+def _nothing_leaves_this_machine(monkeypatch):
+    """No test reaches past this machine.
+
+    A test stands in a made-up key for a provider's and sees that nothing is
+    sent with it. When what it guards against is there after all (the fix
+    switched off to see the test fail, 2026-11-09), the words it made up went
+    to the real provider, with the made-up key. A name looked up or a
+    connection opened anywhere but here is refused in the test's own process,
+    before anything leaves. A process a test starts is its own to keep here.
+    """
+    import socket
+
+    connect, look_up = socket.socket.connect, socket.getaddrinfo
+
+    def here(host) -> bool:
+        host = host.decode() if isinstance(host, bytes) else host
+        return host in _THIS_MACHINE or (isinstance(host, str) and host.startswith("127."))
+
+    def connect_here(self, address):
+        if isinstance(address, tuple) and not here(address[0]):
+            raise OSError(f"a test reached for {address[0]}: tests stay on this machine")
+        return connect(self, address)
+
+    def look_up_here(host, *args, **kwargs):
+        if not here(host):
+            raise socket.gaierror(f"a test looked up {host}: tests stay on this machine")
+        return look_up(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket.socket, "connect", connect_here)
+    monkeypatch.setattr(socket, "getaddrinfo", look_up_here)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_mnemos_env(monkeypatch, tmp_path_factory):
     """No developer's real environment bleeds into tests.
