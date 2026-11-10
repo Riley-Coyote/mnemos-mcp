@@ -5449,17 +5449,7 @@ class MnemosRuntime:
             from . import shared_memory
             if self._trace is not None:
                 self._trace["shared"] = True
-            origin = current_origin()
-            if origin.get("thread_id"):
-                if self._store is not None:
-                    origin = self._store.entry_origin(**self._scope_args())
-                else:
-                    try:
-                        with closing(ReadOnlyEngramStore(self.db_path)) as source:
-                            origin = source.entry_origin(**self._scope_args())
-                    except (OSError, sqlite3.Error):
-                        pass
-            with bind_origin(origin):
+            with bind_origin(self._entry_origin()):
                 return shared_memory.capture(
                     content, context=context, agent_id=self.scope.agent_id,
                     model=shared_memory.author_model(self, signed_as), standing=standing,
@@ -5948,6 +5938,19 @@ class MnemosRuntime:
             "person_id": self.scope.person_id,
             "project_scope": self.scope.project_scope,
         }
+
+    def _entry_origin(self) -> dict[str, str]:
+        """Resolve source provenance without initializing the runtime."""
+        origin = current_origin()
+        if origin.get("thread_id"):
+            if self._store is not None:
+                return self._store.entry_origin(**self._scope_args())
+            try:
+                with closing(ReadOnlyEngramStore(self.db_path)) as source:
+                    return source.entry_origin(**self._scope_args())
+            except (OSError, sqlite3.Error):
+                pass
+        return origin
 
     def _latest(self, pair_id: str) -> str:
         """The id a line of corrections has reached from ``pair_id``: the
@@ -6630,10 +6633,11 @@ class MnemosRuntime:
         if target_id.strip().startswith(shared_memory.PREFIX):
             if self._trace is not None:
                 self._trace["shared"] = True
-            return shared_memory.correct(
-                target_id.strip(), correction, action=(action or "update").strip().lower(),
-                agent_id=self.scope.agent_id, model=shared_memory.author_model(self, signed_as),
-            )
+            with bind_origin(self._entry_origin()):
+                return shared_memory.correct(
+                    target_id.strip(), correction, action=(action or "update").strip().lower(),
+                    agent_id=self.scope.agent_id, model=shared_memory.author_model(self, signed_as),
+                )
 
         action = (action or "").strip().lower() or "update"
         forget = action in _FORGET_ACTIONS

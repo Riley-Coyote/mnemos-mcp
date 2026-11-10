@@ -93,7 +93,8 @@ def test_project_change_does_not_reuse_the_registered_name(tmp_path, replacement
 
 
 @pytest.mark.parametrize("cold", [False, True])
-def test_shared_capture_keeps_hook_registered_source_labels(tmp_path, monkeypatch, cold):
+@pytest.mark.parametrize("operation", ["capture", "correct"])
+def test_shared_writes_keep_hook_registered_source_labels(tmp_path, monkeypatch, cold, operation):
     import re
 
     target = tmp_path / "shared.db"
@@ -108,15 +109,36 @@ def test_shared_capture_keeps_hook_registered_source_labels(tmp_path, monkeypatc
             runtime = MnemosRuntime(db_path=str(tmp_path / "private.db"), use_dedicated_model=False)
         with bind_origin({"thread_id": FIRST, "session_id": FIRST}):
             result = runtime.capture("The copper lantern source stays attached.", shared=True, signed_as="gpt-6.1-sol")
+            original_id = re.search(r"shared_engram_\w+", result)[0]
+            expected = ORIGIN
+            if operation == "correct":
+                expected = {
+                    **ORIGIN, "project_id": "project-two",
+                    "project_name": "Other", "thread_title": "Correction",
+                }
+                with closing(EngramStore(runtime.db_path)) as source:
+                    register_hook_origin(source, {"session_id": FIRST, "mnemos_origin": expected}, runtime.scope)
+                result = runtime.correct(
+                    "The corrected copper lantern source stays attached.",
+                    target_id=original_id, signed_as="gpt-6.1-sol",
+                )
         memory_id = re.search(r"shared_engram_\w+", result)[0]
         with closing(EngramStore(target)) as store:
-            assert store.get_engram(memory_id).origin == ORIGIN
+            original = store.get_engram(original_id)
+            written = store.get_engram(memory_id)
+            assert original.origin == ORIGIN
+            assert written.origin == expected
+            if operation == "correct":
+                assert original.state == "archived"
+                assert original.lineage.superseded_by == memory_id
+                assert written.state == "active"
+                assert written.lineage.supersedes == [original_id]
         recalled = subprocess.check_output(
             [sys.executable, "-c", "import sys; from mnemos.shared_memory import recall; "
              "print(recall(sys.argv[1], agent_id='another-agent'))", memory_id],
             text=True,
         )
-        assert "The copper lantern source stays attached." in recalled
+        assert written.content in recalled
     finally:
         runtime.close()
 
