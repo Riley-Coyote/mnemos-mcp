@@ -1479,6 +1479,7 @@ def _graph_line(item: dict[str, Any]) -> str:
     return (
         f"- {item['display']} "
         f"[{item['kind']}, score {float(item['score']):.2f}, confidence {confidence}%]"
+        f"{origin_suffix(item)}"
     )
 
 

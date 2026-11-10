@@ -5920,7 +5920,8 @@ class MnemosRuntime:
             quiet = " It has gone quiet." if row["state"] == "dormant" else ""
             lines.append(f"- {standing_words(row['content'])}")
             lines.append(
-                f"  id={row['id']} marked {_mark_signature(row['standing_by'], row['standing_at'])}.{quiet}"
+                f"  id={row['id']} marked {_mark_signature(row['standing_by'], row['standing_at'])}"
+                f"{origin_suffix(row)}.{quiet}"
             )
         self._traced_read(*(row["id"] for row in rows))
         return "\n".join(lines)

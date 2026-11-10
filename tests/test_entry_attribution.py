@@ -76,6 +76,55 @@ def test_origin_is_snapshotted_for_captures_handoffs_journals_and_notes(tmp_path
         runtime.close()
 
 
+@pytest.mark.parametrize("known", [False, True])
+def test_standing_recall_shows_recorded_origin_from_another_chat(tmp_path, known):
+    runtime = MnemosRuntime(db_path=str(tmp_path / "memory.db"), use_dedicated_model=False)
+    try:
+        with bind_origin(ORIGIN if known else {}):
+            runtime.capture("Keep the copper lantern near the storm shutters.", standing=True)
+        with bind_origin({"thread_id": SECOND, "project_id": "elsewhere", "project_name": "Reader"}):
+            result = runtime.recall("", standing=True)
+        assert "Keep the copper lantern near the storm shutters." in result
+        if known:
+            assert result.count("project=Mnemos (project-one)") == 1
+            assert result.count(f"task=Attribution ({FIRST})") == 1
+        else:
+            assert "project=" not in result and "task=" not in result
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize("known", [False, True])
+def test_startup_graph_shows_recorded_origin_from_another_chat(tmp_path, known):
+    from mnemos.interface.context_packet import build_context_packet
+
+    runtime = MnemosRuntime(db_path=str(tmp_path / "memory.db"), use_dedicated_model=False)
+    try:
+        runtime._ensure_init()
+        memory = Engram(
+            content="The copper lantern keeper closes the storm shutters.", author_kind="agent",
+            owner_agent_id=runtime.scope.agent_id, person_id=runtime.scope.person_id,
+            project_scope=runtime.scope.project_scope,
+        )
+        with bind_origin(ORIGIN if known else {}):
+            runtime._store.save_engram(memory)
+        with bind_origin({"thread_id": SECOND, "project_id": "elsewhere", "project_name": "Reader"}):
+            packet = build_context_packet(
+                runtime._store, "copper lantern", **runtime._scope_args(),
+                reader_session=SECOND, reader_project_id="elsewhere", mark_surfaced=False,
+            )
+        assert packet["mnemos_engrams"][0]["origin"] == (ORIGIN if known else {})
+        graph = packet["prompt"].split("### Mnemos Graph\n", 1)[1]
+        assert memory.content in graph
+        if known:
+            assert graph.count("project=Mnemos (project-one)") == 1
+            assert graph.count(f"task=Attribution ({FIRST})") == 1
+        else:
+            assert "project=" not in graph and "task=" not in graph
+    finally:
+        runtime.close()
+
+
 @pytest.mark.parametrize("replacement", [{}, {"project_name": "Beta"}])
 def test_project_change_does_not_reuse_the_registered_name(tmp_path, replacement):
     with closing(EngramStore(tmp_path / "memory.db")) as store:
