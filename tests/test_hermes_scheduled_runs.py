@@ -151,3 +151,31 @@ def test_a_scheduled_run_opens_no_page(tmp_path):
     chat = _provider(tmp_path, "chat-1")
     assert "mnemos_page" in {tool["name"] for tool in chat.get_tool_schemas()}
     chat.shutdown()
+
+
+def test_a_run_called_on_after_it_ended_is_still_the_run_it_was(tmp_path, monkeypatch):
+    """Hermes can call a provider it has already shut down (a late hook, a
+    tool call that was still on its way). The provider starts again, and it
+    started with nothing Hermes had told it: the default home in place of the
+    profile's, and a scheduled run taken for a conversation."""
+    monkeypatch.setenv("MNEMOS_MAINTENANCE", "inline")
+    _a_memory_in_use(tmp_path)
+    before = _everything(tmp_path / "a.db")
+
+    job = _provider(tmp_path, "cron-1", platform="cron", agent_context="cron", gateway_session_key="cron:digest")
+    was = (job._scope.hermes_home, job._scope.conversation, job._writes_enabled)
+    job.shutdown()
+    woke = job.system_prompt_block()  # after the end
+    assert (job._scope.hermes_home, job._scope.conversation, job._writes_enabled) == was
+    assert "a scheduled run" in woke
+    job.shutdown()
+    assert _everything(tmp_path / "a.db") == before
+
+
+def test_a_conversation_started_twice_leaves_nothing_open(tmp_path):
+    chat = _provider(tmp_path, "chat-1")
+    first = chat._runtime
+    assert first._store is not None
+    chat.initialize("chat-1", hermes_home=str(tmp_path), platform="cli")
+    assert first._store is None and chat._runtime is not first
+    chat.shutdown()

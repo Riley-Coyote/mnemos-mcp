@@ -307,7 +307,8 @@ def _one_at_a_time(method):
 
     @functools.wraps(method)
     def locked(self, *args, **kwargs):
-        with self._lock, running_for_home(self._scope.hermes_home if self._scope else None):
+        home = self._scope.hermes_home if self._scope else self._started_with.get("hermes_home")
+        with self._lock, running_for_home(home):
             return method(self, *args, **kwargs)
 
     return locked
@@ -325,6 +326,10 @@ class MnemosMemoryProviderCore:
         self._scope: HermesScope | None = None
         self._runtime: MnemosRuntime | None = None
         self._session_id = ""
+        # What Hermes said when it started this conversation (initialize's
+        # keywords): whose home, which chat, what kind of run. A call that
+        # comes after shutdown starts it again as the same one.
+        self._started_with: dict[str, Any] = {}
         self._conversation_follows_session = True
         # What prefetch last recalled for each session: the query, the store's
         # revision then (_store_revision), the context, and how many rows it
@@ -355,6 +360,11 @@ class MnemosMemoryProviderCore:
     def initialize(self, session_id: str, **kwargs: Any) -> None:
         _make_room_for_files()
         _take_hermes_secrets()
+        self._started_with = dict(kwargs)
+        if self._runtime is not None:
+            # Started twice: the first one's store and index aren't left open.
+            self._runtime.close()
+            self._runtime = None
         hermes_home = kwargs.get("hermes_home")
         if self._config is None:
             settle_config_home(hermes_home)
@@ -845,9 +855,13 @@ class MnemosMemoryProviderCore:
         return said
 
     def _ensure_runtime(self) -> None:
+        """A call after shutdown starts the conversation again, as Hermes
+        started it. Until 0.6.7 it started with nothing Hermes had said: the
+        default home in place of the profile's, a new conversation, and a
+        scheduled run taken for a conversation, its automatic writes back on."""
         if self._runtime is not None:
             return
-        self.initialize(self._session_id or "mnemos-hermes")
+        self.initialize(self._session_id or "mnemos-hermes", **self._started_with)
 
     def _mirrored_entry(self, target: str, *, whole: str = "", piece: str = "") -> str | None:
         """The one memory in use here mirrored from this Hermes ``target``
