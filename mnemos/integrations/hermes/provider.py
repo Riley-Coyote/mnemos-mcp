@@ -469,6 +469,10 @@ class MnemosMemoryProviderCore:
         # comes after shutdown starts it again as the same one.
         self._started_with: dict[str, Any] = {}
         self._conversation_follows_session = True
+        # The session this provider is at and the conversation it has there. On
+        # the command line a compression goes on as the same conversation under
+        # a new session id, which the id alone can't say when it starts again.
+        self._conversation_under: tuple[str, str] = ("", "")
         # What prefetch last recalled for each session: the query, the store's
         # revision then (_store_revision), the context, and how many rows it
         # holds. Any write, here or by another process, changes the revision.
@@ -477,7 +481,8 @@ class MnemosMemoryProviderCore:
         self._last_recalled = 0
         self._writes_enabled = True
         self._turn_count = 0
-        self._host_model = ""
+        self._host_model = ""  # the model this runtime was told signs
+        self._named_model = ""  # the one Hermes itself last named, at a start or a turn
         self._page_key: tuple[Any, ...] | None = None  # the page this conversation holds open
         self._lock = threading.RLock()
 
@@ -499,6 +504,11 @@ class MnemosMemoryProviderCore:
         _make_room_for_files()
         _take_hermes_secrets()
         self._started_with = dict(kwargs)
+        # Started again (twice, or by a call after shutdown), on a new
+        # connection: it counts the store's revision from the start, so what
+        # was recalled before isn't served by it, and it has been told no model.
+        self._prefetch_cache.clear()
+        self._host_model = ""
         if self._runtime is not None:
             # Started twice: the first one's store and index aren't left open.
             self._runtime.close()
@@ -519,6 +529,11 @@ class MnemosMemoryProviderCore:
         self._config = config
         self._session_id = self._scope.session_id
         self._conversation_follows_session = not str(kwargs.get("gateway_session_key") or "").strip()
+        at_session, conversation = self._conversation_under
+        if self._conversation_follows_session and conversation and at_session == self._session_id:
+            # Started again at the session it was at: the conversation it was.
+            self._scope = replace(self._scope, conversation=conversation)
+        self._conversation_under = (self._session_id, self._scope.conversation)
         self._writes_enabled = self._scope.agent_context in {"", "primary"}
         self._runtime = MnemosRuntime(
             db_path=self._scope.db_path,
@@ -536,14 +551,18 @@ class MnemosMemoryProviderCore:
             # In a run nobody is in, a save is followed by no upkeep either.
             upkeep_waits=not self._writes_enabled,
         )
+        # A Hermes that names each turn's model (on_turn_start) signs with it from
+        # the first turn; one that names none (0.23.0) starts the session with
+        # the model in its config.yaml, so that one signs until a turn says.
+        # Started again, the model Hermes last named still signs. Told before
+        # the store is opened: a start the store was too busy for goes on at
+        # the next call, and what that keeps is signed too.
+        self._hear_model(kwargs.get("model"))
+        self._signs_with(self._named_model or _configured_model(self._scope.hermes_home))
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         # Opened, not read: a wake counts what it shows as shown, so one built
         # here would spend what shows once on a read no model sees.
         self._runtime._ensure_init()
-        # A Hermes that names each turn's model (on_turn_start) signs with it from
-        # the first turn; one that names none (0.23.0) starts the session with
-        # the model in its config.yaml, so that one signs until a turn says.
-        self._hear_model(kwargs.get("model") or _configured_model(self._scope.hermes_home))
 
     @_one_at_a_time
     def system_prompt_block(self) -> str:
@@ -736,15 +755,13 @@ class MnemosMemoryProviderCore:
         # A gateway conversation is its key, which a switch doesn't move. On
         # the command line it is the session, except that a compression
         # continues the same conversation under a new id.
-        if (
-            self._conversation_follows_session
-            and kwargs.get("reason") != "compression"
-            and self._scope is not None
-            and self._runtime is not None
-        ):
+        conversation = self._conversation_under[1]
+        if self._conversation_follows_session and kwargs.get("reason") != "compression":
             conversation = conversation_id(session_id=self._session_id)
-            self._scope = replace(self._scope, conversation=conversation)
-            self._runtime.conversation = conversation
+            if self._scope is not None and self._runtime is not None:
+                self._scope = replace(self._scope, conversation=conversation)
+                self._runtime.conversation = conversation
+        self._conversation_under = (self._session_id, conversation)
 
     def on_pre_compress(self, messages: list[dict[str, Any]]) -> str:
         """Compression writes nothing, and adds nothing to the summary."""
@@ -933,6 +950,11 @@ class MnemosMemoryProviderCore:
         every turn, so a switch of model mid-conversation signs from then on.
         Older ones don't tell: the agent signs for itself, as it is asked to."""
         model = str(model or "").strip()
+        if model:
+            self._named_model = model
+            self._signs_with(model)
+
+    def _signs_with(self, model: str) -> None:
         if model and model != self._host_model and self._runtime is not None:
             self._host_model = model
             self._runtime.signs_for_host(model)
@@ -1045,7 +1067,10 @@ class MnemosMemoryProviderCore:
         scheduled run taken for a conversation, its automatic writes back on."""
         if self._runtime is not None:
             return
-        self.initialize(self._session_id or "mnemos-hermes", **self._started_with)
+        started = dict(self._started_with)
+        if self._named_model:
+            started["model"] = self._named_model  # the one a turn named since, if one did
+        self.initialize(self._session_id or "mnemos-hermes", **started)
 
     def _mirrored_entry(self, target: str, *, whole: str = "", piece: str = "") -> str | None:
         """The one memory in use here mirrored from this Hermes ``target``
