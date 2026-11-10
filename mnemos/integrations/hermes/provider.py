@@ -929,9 +929,15 @@ class MnemosMemoryProviderCore:
                 "~/.mnemos/hermes.db, or ~/.mnemos/hermes-<profile>.db for another profile.")},
             {"key": "agent_id", "description": (
                 "The agent's name in its memory. Left empty: hermes, or hermes-<profile>.")},
-            {"key": "person_id", "description": "Who the agent is with, as its memory names them. Left empty: user."},
+            {"key": "person_id", "description": (
+                "Who the agent is with, as its memory names them. Left empty: user, or the person "
+                "~/.mnemos/config.json names, written in at the first session. A home that already had a "
+                "memory with this empty goes on as before: the person each chat names, or user.")},
             {"key": "project_scope", "description": (
-                "Which part of its memory this is. Left empty: global, one memory for everything.")},
+                "Which part of its memory this is. Left empty: global, one memory for everything, or the "
+                "project ~/.mnemos/config.json names, written in at the first session. A home that already "
+                "had a memory with this empty goes on as before: the chat's name, or the folder Hermes was "
+                "started in.")},
             {"key": "auto_recall", "default": "true", "choices": on_or_off, "description": (
                 "Bring the few memories that may bear on each message, with the message.")},
             {"key": "deep_maintenance", "default": "false", "choices": on_or_off, "description": (

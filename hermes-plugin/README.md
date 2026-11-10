@@ -99,9 +99,12 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
   that off.
 - `deep_maintenance` (false): let upkeep use a model, below.
 - `agent_id` and `db_path`: which agent this profile is, and where its memory is.
-  `person_id` (user) and `project_scope` (global) name who it's with and which part of its
-  memory this is. The first session writes the ones you left empty and keeps the ones you
-  set; once there's a memory, they're there to read more than to change.
+  `person_id` and `project_scope` name who it's with and which part of its memory this is:
+  user and global, or the person and project `~/.mnemos/config.json` names. The first
+  session writes the ones you left empty and keeps the ones you set; once there's a memory,
+  they're there to read more than to change. A home that already had a memory with them
+  empty goes on as before: the person each chat names, and the chat's name or the folder
+  Hermes was started in.
 
 A conversation reads its settings when it starts. After changing one, restart Hermes (the
 gateway, or the `hermes` you're in).
@@ -143,10 +146,11 @@ gateway, or the `hermes` you're in).
   takes no notice of another agent's marks in the environment (Claude Code's, when Hermes
   was started from there).
 - **Its own files.** It keeps the memory in `~/.mnemos/` and its settings in
-  `$HERMES_HOME/mnemos.json`, and reads `~/.mnemos/config.json` if you have one. It reads
-  Hermes's `config.yaml` for three things: whether it is the memory provider, which model
-  the agent runs (to sign what it writes), and whether Mnemos was connected there before
-  as an MCP server (it then keeps that memory).
+  `$HERMES_HOME/mnemos.json`, and reads `~/.mnemos/config.json` if you have one (a new
+  profile takes its person and project from there). It reads Hermes's `config.yaml` for
+  three things: whether it is the memory provider, which model the agent runs (to sign what
+  it writes), and whether Mnemos was connected there before as an MCP server (it then keeps
+  that memory).
 - **The machine's shared memory.** What the agent marks as shared goes to
   `~/.mnemos/shared-memory.db`, which every Mnemos agent on this machine can read; nothing
   goes there unless the agent marks it so. `mnemos_recall` searches it too, so what another

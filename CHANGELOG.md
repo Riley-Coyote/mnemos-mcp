@@ -138,6 +138,9 @@ release before it, run both ways, found nothing else.
   lets a model work on the memory says what then leaves the machine. The page's tool says how long
   the page stays here, not in an MCP session. And a health card with no local model no longer says
   to `pip install` into an environment Hermes builds.
+- **The dashboard says which person and project are used.** It said "user" and "global" for both
+  left empty; a new home takes them from `~/.mnemos/config.json` when that names them, and a home
+  that already had a memory goes on with each chat's person and name. The words now say so.
 - **A conversation called on after it ended starts again as itself**: the same profile, the same
   conversation, the same kind of run. It started with none of what Hermes had told it. And it
   goes on as itself: the model that signed still signs (started again, what it kept was
