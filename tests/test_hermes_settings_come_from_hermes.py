@@ -55,6 +55,10 @@ class _Watched(collections.abc.MutableMapping):
         frame = sys._getframe(2)
         while frame is not None and frame.f_code.co_filename in (_OS_MODULE, __file__):
             frame = frame.f_back  # os.getenv, and this class's own methods
+        # Before Python 3.12 a list, set or dict comprehension runs in a frame
+        # of its own: the reader is the function it is written in.
+        while frame is not None and frame.f_code.co_name in ("<listcomp>", "<setcomp>", "<dictcomp>"):
+            frame = frame.f_back
         if frame is None or not frame.f_code.co_filename.startswith(_PACKAGE):
             return ""
         return f"{frame.f_code.co_filename[len(_PACKAGE):]}:{frame.f_code.co_name}"
