@@ -187,6 +187,26 @@ gateway, or the `hermes` you're in).
   4,096 if it's lower, since every conversation holds a few files open on the memory. It
   never lowers it.
 
+## Upgrading from 0.6.6
+
+Settings are now read for each profile, through Hermes: from the profile's own `.env`, or
+from its `mnemos.json`. A run of one profile also hears what's set in the shell or service
+that starts Hermes, but a gateway that serves profiles doesn't pass that on to a profile.
+If your memory was named only there (`MNEMOS_DB_PATH`, `MNEMOS_AGENT_ID`,
+`MNEMOS_PERSON_ID`, `MNEMOS_PROJECT_SCOPE`), the profile starts a memory of its own and
+records it in `mnemos.json`, and Hermes's log names the settings it passed over. The earlier
+memory is untouched where it was. To go on with it:
+
+1. Stop Hermes.
+2. Put the same `MNEMOS_` lines in the profile's `.env` (`~/.hermes/.env`, or
+   `~/.hermes/profiles/<name>/.env`).
+3. In the profile's `mnemos.json`, take out `db_path`, `agent_id`, `person_id` and
+   `project_scope`, which the first session filled in. Keep one you had set yourself
+   (`mnemos.json.bak`, when it's there, is the file before its last rewrite).
+4. Start Hermes. It wakes with the memory it had.
+
+What the profile kept in its own memory meanwhile stays in that file.
+
 ## Removing it
 
 ```bash

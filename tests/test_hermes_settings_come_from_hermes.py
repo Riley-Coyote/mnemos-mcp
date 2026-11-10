@@ -174,6 +174,12 @@ def test_no_setting_is_read_from_the_gateways_own_environment(hermes, tmp_path, 
     # The one exception: sharing turned off where the gateway started stays off,
     # since it can only withhold (tests/test_hermes_sharing_turned_off_stays_off.py).
     allowed = {"MNEMOS_SHARED_MEMORY": {"shared_memory.py:_turned_off_where_the_host_started"}}
+    # And the names of a memory are looked at, never used, to say in Hermes's log
+    # that they were passed over (tests/test_hermes_memory_named_where_hermes_starts.py).
+    allowed.update({
+        name: {"integrations/hermes/provider.py:_say_names_passed_over"}
+        for name in ("MNEMOS_DB_PATH", "MNEMOS_AGENT_ID", "MNEMOS_PERSON_ID", "MNEMOS_PROJECT_SCOPE")
+    })
     theirs = sorted(
         f"{name} ({', '.join(sorted(readers - allowed.get(name, set())))})"
         for name, readers in watched.read.items()

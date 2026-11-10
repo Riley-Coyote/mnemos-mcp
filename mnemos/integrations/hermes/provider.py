@@ -316,6 +316,47 @@ def _take_hermes_secrets() -> None:
     llm.take_secrets_from(get_secret)
 
 
+# The settings that name a memory. Until 0.6.7 they were read from the
+# environment Hermes was started in; now Hermes is asked for them, for the
+# profile that is speaking, and a gateway serving profiles answers from the
+# profile's own .env only. Someone who set them where Hermes starts got a new
+# memory for the profile after the upgrade, and nothing said why.
+_NAMES_OF_A_MEMORY = ("MNEMOS_DB_PATH", "MNEMOS_AGENT_ID", "MNEMOS_PERSON_ID", "MNEMOS_PROJECT_SCOPE")
+_told_of_names_passed_over: set[str] = set()  # the homes told so, in this process
+_told_lock = threading.Lock()
+
+
+def _say_names_passed_over(home: Path, db_path: str) -> None:
+    """Say once for each home, in Hermes's log, which of those names the
+    environment Hermes was started in holds that Hermes didn't give this
+    profile: the names only, since a value may be another profile's. Which
+    memory is opened doesn't change: taken from there, one profile's settings
+    would name another's memory."""
+    from ...simple_scope import named_in_the_environment
+
+    if not llm.host_secrets_active():
+        return
+    passed_over = [
+        name for name in _NAMES_OF_A_MEMORY
+        if os.environ.get(name, "").strip() and not named_in_the_environment(name)
+    ]
+    if not passed_over:
+        return
+    key = str(Path(home).expanduser())
+    with _told_lock:
+        if key in _told_of_names_passed_over:
+            return
+        _told_of_names_passed_over.add(key)
+    logger.warning(
+        "Mnemos: %s %s set where Hermes was started, and Hermes doesn't give %s to this profile, so "
+        "Mnemos doesn't use %s. This profile's memory is %s. To go on with the memory %s named, see "
+        "\"Upgrading from 0.6.6\" in the Mnemos plugin's README.",
+        ", ".join(passed_over), "is" if len(passed_over) == 1 else "are",
+        "it" if len(passed_over) == 1 else "them", "it" if len(passed_over) == 1 else "them",
+        str(Path(db_path).expanduser()), "it" if len(passed_over) == 1 else "they",
+    )
+
+
 def _configured_model(hermes_home: Path) -> str:
     """The model Hermes starts a session with, as its config.yaml names it
     (``model.default``, ``model.model``, or ``model`` as a plain name), or ``""``.
@@ -543,6 +584,7 @@ class MnemosMemoryProviderCore:
             runtime_context=kwargs,
         )
         self._config = config
+        _say_names_passed_over(self._scope.hermes_home, self._scope.db_path)
         self._session_id = self._scope.session_id
         self._conversation_follows_session = not str(kwargs.get("gateway_session_key") or "").strip()
         at_session, conversation = self._conversation_under

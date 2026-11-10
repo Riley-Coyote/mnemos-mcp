@@ -38,6 +38,12 @@ release before it, run both ways, found nothing else.
 - **Sharing turned off where Hermes starts stays off.** A profile that says nothing about it, under
   a Hermes started with `MNEMOS_SHARED_MEMORY=off` in its shell or service, shares nothing. It is
   the one setting read from there, since it can only withhold; the profile's own answer wins.
+- **A memory named only where Hermes starts is no longer passed over in silence.** A gateway
+  serving profiles doesn't pass `MNEMOS_DB_PATH`, `MNEMOS_AGENT_ID`, `MNEMOS_PERSON_ID` or
+  `MNEMOS_PROJECT_SCOPE` set in its shell or service to a profile, which then starts a memory of
+  its own. Hermes's log now names the settings passed over (never their values) and this
+  profile's memory, and the plugin's README says, under "Upgrading from 0.6.6", how to go on
+  with the earlier one, which is left untouched.
 - **Inside Hermes, another agent's marks in the environment are not this agent's.** Hermes started
   from a Claude Code session carries that session's marks (`CLAUDECODE`, its session id, its
   model). Mnemos took them for its own: what the Hermes agent kept was signed with Claude Code's
