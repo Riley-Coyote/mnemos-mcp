@@ -160,6 +160,11 @@ release before it, run both ways, found nothing else.
   kept it twice, and a later remove or replace, finding two, retired neither, so the removed line
   kept coming up. Now the line is kept once, and the same words kept twice by an earlier release
   are one entry: the next remove or replace retires both.
+- **A backup names only Mnemos memories.** It named whatever file a profile's `mnemos.json`
+  pointed at, a key in `~/.ssh` or another program's database, and folded that database's log
+  into it and held it open for the copy. Now each file is first opened read-only and named only
+  if it has Mnemos's own tables; anything else is left out and untouched, with a warning in
+  Hermes's log that gives the file and why. The same holds for the profile's own memory.
 
 ### Everywhere
 

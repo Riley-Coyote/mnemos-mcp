@@ -184,7 +184,8 @@ gateway, or the `hermes` you're in).
   `hermes backup`, which takes them along: this profile's and each other profile's, since
   a backup is of every profile. It finds each one as that profile opens it: by its
   `mnemos.json`, or else by `MNEMOS_DB_PATH` in the profile's own `.env`, which Mnemos asks
-  Hermes for, for that profile.
+  Hermes for, for that profile. Only Mnemos memories are named: a file a profile's settings
+  point at that isn't one is left out and untouched, and Hermes's log says which and why.
   Hermes copies a file as it stands, so Mnemos first folds into each what SQLite still
   holds in its log, and keeps it still for the copy. Three things a backup leaves out: the
   machine's shared memory, which isn't any one Hermes's; a memory you keep outside your
