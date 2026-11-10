@@ -171,10 +171,14 @@ def test_no_setting_is_read_from_the_gateways_own_environment(hermes, tmp_path, 
     finally:
         provider.shutdown()
 
+    # The one exception: sharing turned off where the gateway started stays off,
+    # since it can only withhold (tests/test_hermes_sharing_turned_off_stays_off.py).
+    allowed = {"MNEMOS_SHARED_MEMORY": {"shared_memory.py:_turned_off_where_the_host_started"}}
     theirs = sorted(
-        f"{name} ({', '.join(sorted(readers))})" for name, readers in watched.read.items()
-        if name.startswith(("MNEMOS_", "CLAUDE")) or name in ("AI_AGENT", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY")
-        or name.endswith("_API_KEY")
+        f"{name} ({', '.join(sorted(readers - allowed.get(name, set())))})"
+        for name, readers in watched.read.items()
+        if (name.startswith(("MNEMOS_", "CLAUDE")) or name in ("AI_AGENT", "HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY")
+            or name.endswith("_API_KEY")) and readers - allowed.get(name, set())
     )
     assert not theirs, f"read from the gateway's own environment: {theirs}"
     # The one place the whole of it is taken: the upkeep process's plain names.

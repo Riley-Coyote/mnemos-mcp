@@ -283,7 +283,10 @@ def test_a_profile_never_runs_on_the_gateways_choice(monkeypatch):
     _hermes_says(monkeypatch)  # this profile has set nothing
     assert llm.chosen_provider() == "", "the gateway's own choice of provider was this profile's"
     env = simple_runtime._hosted_upkeep_env(True)
-    assert set(_GATEWAY_ENV) & set(env) == _GIVEN_ANYWAY, sorted(env)
+    # Sharing turned off where the gateway started stays off, the one setting
+    # taken from there (tests/test_hermes_sharing_turned_off_stays_off.py).
+    assert set(_GATEWAY_ENV) & set(env) == _GIVEN_ANYWAY | {"MNEMOS_SHARED_MEMORY"}, sorted(env)
+    assert env["MNEMOS_SHARED_MEMORY"] == "off"
 
     # And one that chose its own gets its own.
     _hermes_says(monkeypatch, MNEMOS_LLM_PROVIDER="anthropic", ANTHROPIC_API_KEY="the-profile's-anthropic-key")

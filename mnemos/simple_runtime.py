@@ -552,6 +552,10 @@ def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
         value = _find_env_key(name)[0]
         if value:
             env[name] = value
+    from .shared_memory import _turned_off_where_the_host_started
+
+    if "MNEMOS_SHARED_MEMORY" not in env and _turned_off_where_the_host_started():
+        env["MNEMOS_SHARED_MEMORY"] = "off"  # sharing turned off where Hermes started stays off
     reaches_a_provider = False
     if dedicated_model:
         provider = chosen_provider()

@@ -34,8 +34,25 @@ def _named(name: str) -> str:
     return named_in_the_environment(name)
 
 
+def _off(value: str) -> bool:
+    return value.strip().lower() == "off"
+
+
+def _turned_off_where_the_host_started() -> bool:
+    # The one setting read from the environment a host (Hermes) was started in,
+    # when the host gives none for the profile: it can only withhold. A gateway
+    # answers from the profile's own .env, so sharing someone turned off in the
+    # shell or service that starts Hermes was on again after 0.6.6.
+    from .llm import host_secrets_active
+
+    return host_secrets_active() and _off(os.environ.get("MNEMOS_SHARED_MEMORY", ""))
+
+
 def enabled() -> bool:
-    return _named("MNEMOS_SHARED_MEMORY").strip().lower() != "off"
+    said = _named("MNEMOS_SHARED_MEMORY")
+    if said.strip():
+        return not _off(said)
+    return not _turned_off_where_the_host_started()
 
 
 def path() -> Path:

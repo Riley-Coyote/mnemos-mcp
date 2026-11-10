@@ -153,7 +153,9 @@ gateway, or the `hermes` you're in).
   agent here shared can come into this agent's answer, and a shared memory that is found
   is marked as used. Upkeep tends it (what fades there, what links to what), whoever wrote
   it. `MNEMOS_SHARED_MEMORY=off` in a profile's `.env` turns all of that off for that
-  profile.
+  profile. Set in the shell or service that starts Hermes, it turns it off for every profile
+  that doesn't set it itself: the only setting Mnemos reads from there, since it can only
+  withhold.
 - **A short background process.** When upkeep is due (at the end of a session, every 24
   turns, after the agent saves something) it runs in a Python process of its own,
   Hermes's Python, which ends when it's done. Nothing is scheduled, and it starts no

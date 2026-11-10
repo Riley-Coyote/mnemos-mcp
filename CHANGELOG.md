@@ -35,6 +35,9 @@ release before it, run both ways, found nothing else.
   (`MNEMOS_CONSOLIDATION_DECAY_RATE` and the like), the Gemini model's name, whether upkeep runs
   in the call, and whether the machine's shared memory is on and where it is: a profile that had
   turned sharing off (`MNEMOS_SHARED_MEMORY=off`) went on sharing, on the gateway's word.
+- **Sharing turned off where Hermes starts stays off.** A profile that says nothing about it, under
+  a Hermes started with `MNEMOS_SHARED_MEMORY=off` in its shell or service, shares nothing. It is
+  the one setting read from there, since it can only withhold; the profile's own answer wins.
 - **Inside Hermes, another agent's marks in the environment are not this agent's.** Hermes started
   from a Claude Code session carries that session's marks (`CLAUDECODE`, its session id, its
   model). Mnemos took them for its own: what the Hermes agent kept was signed with Claude Code's
