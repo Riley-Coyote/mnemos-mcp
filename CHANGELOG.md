@@ -87,8 +87,9 @@ release before it, run both ways, found nothing else.
   folder and what the memory provider names outside it. The memories are outside it, in
   `~/.mnemos`, and Mnemos named nothing, so a backup left them behind without a word. Hermes
   archives every profile's folder and asks only the provider of the profile it was run from, so
-  that one names them all: its own memory and each other profile's, as each profile's
-  `mnemos.json` says. Hermes copies a file as it stands, some while after it asks, so each is
+  that one names them all: its own memory and each other profile's, found as that profile opens
+  it: by its `mnemos.json`, or else by `MNEMOS_DB_PATH` in its own `.env`, which Hermes is asked
+  for, for that profile (a backup left out a memory named only there). Hermes copies a file as it stands, some while after it asks, so each is
   first folded together with what SQLite still holds in its log (while a conversation is open
   that can be all of it), then kept as it is until the copy is done, with its log named beside
   it for what is saved meanwhile. The machine's shared memory is left out: it isn't any one

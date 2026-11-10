@@ -14,6 +14,7 @@ which labels those a tool's).
 from __future__ import annotations
 
 import atexit
+import contextvars
 import functools
 import json
 import logging
@@ -52,6 +53,7 @@ from .scope import (
     conversation_id,
     default_hermes_home,
     derive_hermes_scope,
+    memory_file,
     running_for_home,
     save_hermes_mnemos_config,
     settle_config_home,
@@ -277,11 +279,36 @@ def _let_go_of_backups() -> None:
         _let_go_of_backup(key)
 
 
+def _hermes_answers_for(home: Path):
+    """Hermes's answer for another profile than the one speaking, to a name of
+    Mnemos's: Hermes builds that profile's own reader, as it does for a task it
+    runs for the profile, and is asked through it. Hermes reads the profile's
+    ``.env``; the plugin opens none. A Hermes without such a reader answers
+    nothing, and that profile goes by its ``mnemos.json`` alone."""
+    try:
+        from agent.secret_scope import build_profile_secret_scope, get_secret, reset_secret_scope, set_secret_scope
+    except ImportError:
+        return lambda name: ""
+    secrets = build_profile_secret_scope(home)
+
+    def bound(name: str) -> Any:
+        token = set_secret_scope(secrets, profile_home=str(home))
+        try:
+            return get_secret(name)
+        finally:
+            reset_secret_scope(token)
+
+    def ask(name: str) -> str:
+        return str(contextvars.copy_context().run(bound, name) or "").strip()
+
+    return ask
+
+
 def _memories_of_other_profiles(root: Path, here: Path) -> list[Path]:
-    """Where the other profiles of this Hermes keep their memories, going only
-    by what each one's own ``mnemos.json`` names: a profile that has had no
-    session names none, and has no memory yet. Nothing is asked of Hermes for
-    them: it answers for the profile that is speaking."""
+    """Where the other profiles of this Hermes keep their memories: the memory
+    each one's home opens (``memory_file``), with Hermes's answers for that
+    profile. A profile that has had no session names none, and has no memory
+    yet, or one inside Hermes's folder, which is in the backup already."""
     homes = [root]
     try:
         homes.extend(sorted(path for path in (root / "profiles").iterdir() if path.is_dir()))
@@ -292,10 +319,7 @@ def _memories_of_other_profiles(root: Path, here: Path) -> list[Path]:
         try:
             if home.resolve() == here:
                 continue
-            named = HermesMnemosConfig.load(home).db_path
-            if named:
-                named = named.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
-                found.append(Path(named).expanduser())
+            found.append(Path(memory_file(home, HermesMnemosConfig.load(home), _hermes_answers_for(home))).expanduser())
         except Exception:
             logger.debug("Mnemos couldn't read a profile's settings for a backup", exc_info=True)
     return found

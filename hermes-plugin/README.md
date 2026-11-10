@@ -182,7 +182,9 @@ gateway, or the `hermes` you're in).
   opens on the computer Hermes runs on, and not to offer it unless you ask.
 - **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
   `hermes backup`, which takes them along: this profile's and each other profile's, since
-  a backup is of every profile (to find them it reads each profile's `mnemos.json`).
+  a backup is of every profile. It finds each one as that profile opens it: by its
+  `mnemos.json`, or else by `MNEMOS_DB_PATH` in the profile's own `.env`, which Mnemos asks
+  Hermes for, for that profile.
   Hermes copies a file as it stands, so Mnemos first folds into each what SQLite still
   holds in its log, and keeps it still for the copy. Three things a backup leaves out: the
   machine's shared memory, which isn't any one Hermes's; a memory you keep outside your

@@ -6,7 +6,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -264,6 +264,21 @@ class HermesScope:
     conversation: str = ""
 
 
+def memory_file(
+    home: Path,
+    config: HermesMnemosConfig,
+    named: Callable[[str], str] = named_in_the_environment,
+) -> str:
+    """The memory file a Hermes home opens: the one its ``mnemos.json`` names,
+    or else the one ``MNEMOS_DB_PATH`` names as Hermes answers for that home
+    (``named``: for the profile that is speaking, by default), or else one in
+    the home's own folder. The one answer: the provider opens its memory by it,
+    and a backup asks it for every profile (``backup_paths``)."""
+
+    db_path = config.db_path or named("MNEMOS_DB_PATH") or str(home / "mnemos" / "mnemos.db")
+    return db_path.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+
+
 def derive_hermes_scope(
     *,
     session_id: str = "",
@@ -300,9 +315,7 @@ def derive_hermes_scope(
         or _cwd_project_scope()
     )
 
-    explicit_db = cfg.db_path or named_in_the_environment("MNEMOS_DB_PATH")
-    db_path = explicit_db or str(home / "mnemos" / "mnemos.db")
-    db_path = db_path.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+    db_path = memory_file(home, cfg)
     session = str(session_id or context.get("session_id") or "")
 
     return HermesScope(
