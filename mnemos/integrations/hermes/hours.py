@@ -69,8 +69,9 @@ _A_NOTE = (
     "wakes knowing it waits, so you can mention it there."
 )
 _THE_DAY = (
-    " The day's conversations themselves are kept by Hermes: if you have session_search, "
-    "read them with it."
+    " The day's conversations themselves are kept by Hermes: read them with session_search. "
+    "Hermes may keep it behind its tool search rather than in your list of tools, so look for it "
+    "there if you don't see it; if you can't reach it at all, go by what the hour hands you."
 )
 # Where the hand-off's fence ends and the hour's own prompt begins.
 _GAP = "\n\n---\n\n"

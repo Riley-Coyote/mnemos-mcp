@@ -177,6 +177,13 @@ def test_it_hands_the_hour_mnemos_hands_with_what_is_true_in_hermes(tmp_path, ki
     else:
         assert "mnemos_note" in here and "page" in here and "computer Hermes runs on" in here
     assert ("session_search" in here) == (kind == "ours")
+    if kind == "ours":
+        # Going back over the day's conversations is the heart of this hour, and
+        # Hermes keeps session_search behind its tool search by default, in a
+        # scheduled run as in a conversation (W4).
+        said = " ".join(here.split())
+        assert "read them with session_search" in said and "if you have session_search" not in said
+        assert "behind its tool search" in said and "go by what the hour hands you" in said
 
 
 def test_a_note_it_leaves_is_said_where_it_says(tmp_path):

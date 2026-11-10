@@ -94,7 +94,8 @@ them.
 - Mnemos runs nothing in them and calls no model. It prepares the hour from the memory
   without changing it. What waits for the day's work or a dream is handed once; the agent's
   own hour hands an open question again until it's answered. The agent keeps what it keeps
-  with its own tools, and the day's conversations it reads with Hermes's `session_search`.
+  with its own tools, and the day's conversations it reads with Hermes's `session_search`,
+  which Hermes may keep behind its tool search: the hour tells it to look there.
 - Hermes denies dangerous commands in a scheduled run unless you've set it otherwise
   (`approvals.cron_mode`).
 - They need macOS or Linux. On Windows the hour can't be prepared, and the agent doesn't

@@ -96,7 +96,8 @@ release before it, run both ways, found nothing else.
   hour hands an open question again until it's answered. After the hand-off's opening come a
   few sentences true only in Hermes: which of its memory's tools answer the hour, where a note
   waits for the person, and, for the day's work, that the day's conversations are read with
-  `session_search`. The model an hour is prepared for (`MNEMOS_HOUR_MODEL`, if set) is the
+  `session_search`, to be looked for behind Hermes's tool search, where Hermes keeps it by default
+  in a scheduled run as in a conversation. The model an hour is prepared for (`MNEMOS_HOUR_MODEL`, if set) is the
   profile's, asked of Hermes, never the gateway's own environment. It runs nothing and calls no
   model. It is for a quiet-hour job, or for when
   the person asks for it; where the hour can't be prepared (Windows) it says so and changes
