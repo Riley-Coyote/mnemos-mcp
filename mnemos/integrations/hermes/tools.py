@@ -206,7 +206,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [{'name': 'mnemos_handoff',
                  "must hold the query's meaningful words (half of them, and at least\n"
                  'two), or nothing is changed. Set action to forget/archive/remove/delete\n'
                  'to archive it. A correction that names nothing is captured as fresh\n'
-                 'high-confidence continuity.\n'
+                 'high-confidence continuity. A target_id nothing here has changes\n'
+                 'nothing and keeps nothing, and the result says so.\n'
                  '\n'
                  'A shared target_id can only be corrected or archived by its author agent.\n'
                  '\n'

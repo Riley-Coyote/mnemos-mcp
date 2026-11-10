@@ -1192,6 +1192,20 @@ _FORGET_ACTIONS = frozenset({"forget", "archive", "remove", "delete"})
 _MARK_STANDING = "mark_standing"
 _STANDING_ACTIONS = frozenset({_MARK_STANDING, "unmark_standing"})
 
+# What an id an agent gives may come wrapped in: recall shows ``id=engram_...``,
+# and a model passes it on in backticks, quotes or brackets as often as bare.
+# And the words a model fills an optional id with when it has none.
+_ID_WRAPPING = " \t\r\n`'\"[](){}<>,.;"
+_ID_LABEL = re.compile(r"^id\s*[=:]\s*", re.IGNORECASE)
+_NO_ID = frozenset({"none", "null", "nil", "n/a", "na", "undefined", "unknown", "-", "--"})
+
+
+def _id_named(text: str) -> str:
+    """The id an agent gave, bare, and ``""`` for a word that says there is
+    none: that is what leaving the id out is, not an id nothing has."""
+    named = _ID_LABEL.sub("", (text or "").strip(_ID_WRAPPING)).strip(_ID_WRAPPING)
+    return "" if named.lower() in _NO_ID else named
+
 
 def _named_by(query: str, text: str) -> int:
     """How many of a correction query's meaningful words a note or memory holds,
@@ -6747,11 +6761,12 @@ class MnemosRuntime:
         """
 
         from . import shared_memory
-        if target_id.strip().startswith(shared_memory.PREFIX):
+        target_id = _id_named(target_id)
+        if target_id.startswith(shared_memory.PREFIX):
             if self._trace is not None:
                 self._trace["shared"] = True
             return shared_memory.correct(
-                target_id.strip(), correction, action=(action or "update").strip().lower(),
+                target_id, correction, action=(action or "update").strip().lower(),
                 agent_id=self.scope.agent_id, model=shared_memory.author_model(self, signed_as),
             )
 
@@ -6768,7 +6783,7 @@ class MnemosRuntime:
         session = harness_session()
         self._traced_author(corrector)
         signing = {"corrector": corrector, "session": session}
-        target = target_id.strip()
+        target = target_id
         # Code older than the store records the agent's words and applies no
         # rules: a correction still retires what it names and writes its
         # replacement, without links to other memories, lineage, versions or
@@ -6955,7 +6970,9 @@ class MnemosRuntime:
 
         captured = self.capture(
             correction.strip(),
-            context=f"Correction supplied through mnemos_correct. Prior query: {query.strip()}",
+            # Kept with the memory's words, so with no query it names none.
+            context="Correction supplied through mnemos_correct."
+            + (f" Prior query: {query_text}" if query_text else ""),
             importance="high",
             impact=impact,
             signed_as=signed_as,

@@ -564,7 +564,8 @@ def register_simple_tools(server: Server) -> None:
         must hold the query's meaningful words (half of them, and at least
         two), or nothing is changed. Set action to forget/archive/remove/delete
         to archive it. A correction that names nothing is captured as fresh
-        high-confidence continuity.
+        high-confidence continuity. A target_id nothing here has changes
+        nothing and keeps nothing, and the result says so.
 
         A shared target_id can only be corrected or archived by its author agent.
 

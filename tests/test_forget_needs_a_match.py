@@ -157,3 +157,41 @@ def test_an_id_that_names_nothing_here_changes_nothing(tmp_path, action):
     assert out.startswith("Nothing was archived" if action == "forget" else "Nothing was changed"), out
     assert "engram_01ZZZZZZZZZZZZZZZZZZZZZZZZ" in out and "has the id" in out
     assert _notes(rt) == notes and _memories(rt) == memories, "something was written for an id that names nothing"
+
+
+@pytest.mark.parametrize("no_id", ["none", "None", "null", "NULL", "n/a", "N/A", "nil", "undefined", "-", '""', "``"])
+def test_an_id_that_says_there_is_none_is_no_id(tmp_path, no_id):
+    """A model asked for an optional id often fills it with a word for none.
+    Taken for an id nothing has, that word changed nothing and kept nothing:
+    the fact the agent meant to keep was dropped, with a line about an id it
+    never had. It is what leaving the id out is."""
+    rt = _runtime(tmp_path)
+    rt.capture(content=ZEPPELIN)
+
+    out = rt.correct(correction="The bakery on Calle Mayor opens at six.", target_id=no_id)
+
+    assert "Nothing was changed" not in out, out
+    (kept,) = _memories(rt) - {ZEPPELIN}
+    assert kept.startswith("The bakery on Calle Mayor opens at six."), out
+    assert "Prior query" not in kept, "a memory kept with the label of a query nobody gave"
+    assert ZEPPELIN in _memories(rt), "a fact that named nothing replaced one"
+
+    # To forget, a word for none names nothing either: nothing is archived.
+    out = rt.correct(correction="", target_id=no_id, action="forget")
+    assert out.startswith("Nothing was archived"), out
+    assert ZEPPELIN in _memories(rt)
+
+
+@pytest.mark.parametrize("shown", ["`{id}`", '"{id}"', "[{id}]", "id={id}", " id: {id}\n", "<{id}>", "({id})."])
+def test_an_id_is_found_however_it_came_wrapped(tmp_path, shown):
+    """Recall shows a memory's id as ``id=engram_...``, and a model passes it
+    on in backticks, quotes or brackets as often as bare. Each of those named
+    nothing, so the correction changed nothing."""
+    rt = _runtime(tmp_path)
+    rt.capture(content=ZEPPELIN)
+    (memory,) = rt._store.get_active_engrams(agent_id="t", limit=5)
+
+    out = rt.correct(correction="The zeppelin schedule moved to Fridays.", target_id=shown.format(id=memory.id))
+
+    assert "Nothing was changed" not in out, out
+    assert _memories(rt) == {"The zeppelin schedule moved to Fridays."}, out
