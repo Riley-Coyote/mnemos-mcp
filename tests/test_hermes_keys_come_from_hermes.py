@@ -403,3 +403,23 @@ def test_the_person_a_profile_is_with_is_never_the_gateways(keys_all_around, tmp
     woke = provider.system_prompt_block()
     provider.shutdown()
     assert "with Mara" in woke
+
+
+def test_the_upkeep_process_keeps_what_the_machine_needs_to_run_it(monkeypatch):
+    """Where the machine's certificates are, where a local model is cached, and
+    what a local model needs to load, none of it a key: without them upkeep
+    inside Hermes failed where the same upkeep outside it worked (a NixOS
+    machine's certificates, an older name for Hugging Face's cache, the switch
+    macOS needs when two copies of OpenMP load)."""
+    needed = {
+        "NIX_SSL_CERT_FILE": "/etc/ssl/certs/ca-bundle.crt", "REQUESTS_CA_BUNDLE": "/etc/ssl/corp.pem",
+        "HUGGINGFACE_HUB_CACHE": "/cache/hf", "PYTHONUTF8": "1",
+        "OMP_NUM_THREADS": "2", "KMP_DUPLICATE_LIB_OK": "TRUE",
+    }
+    _hermes_says(monkeypatch)
+    for name, value in needed.items():
+        monkeypatch.setenv(name, value)
+
+    env = simple_runtime._hosted_upkeep_env(False)
+
+    assert {name: env.get(name) for name in needed} == needed
