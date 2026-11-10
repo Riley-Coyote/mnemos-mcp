@@ -453,6 +453,16 @@ def _signature(path: Path) -> tuple[int, int] | None:
     return stat.st_size, stat.st_mtime_ns
 
 
+def _served_from_a_host() -> bool:
+    """Whether a host that hands Mnemos its keys (Hermes) serves this page. Its
+    plugin rules keep a plugin to its own data and to the programs it says it
+    starts, so from there the page shows the memory and looks at nothing else
+    on the machine."""
+    from ..llm import host_secrets_active
+
+    return host_secrets_active()
+
+
 def _launch_agents() -> Path:
     return Path.home() / "Library" / "LaunchAgents"
 
@@ -660,6 +670,11 @@ class Exporter:
         decides the switch, and what leaves the machine with each message."""
         from .. import jev
 
+        if _served_from_a_host():
+            # Never Mnemos's to use there (its key is in a file, and a host's
+            # plugin reads no key from one), so the page looks for neither the
+            # switch nor the key file.
+            return {"on": False, "key": False, "env": False}
         try:
             status = jev.status()
         except Exception:
@@ -673,8 +688,15 @@ class Exporter:
         """Whether anything wakes the hours on its own: a LaunchAgent, a
         systemd user timer (what `mnemos daemon install --hours` writes where
         systemd runs) or a crontab line that runs them for this agent. ``when``
-        is the time of day when the schedule names one, else None."""
+        is the time of day when the schedule names one, else None.
+
+        Served from inside a host (Hermes), nothing is looked for: the hours
+        aren't set from there, and the page reads nobody's LaunchAgents, timers
+        or crontab, and starts no program to ask whether one is loaded. Until
+        0.6.7 it did, each time the page was read."""
         found = []
+        if _served_from_a_host():
+            return found
         agents = _launch_agents()
         for plist_path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
             try:

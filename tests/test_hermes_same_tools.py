@@ -349,6 +349,52 @@ def test_anywhere_else_the_page_is_the_persons_over_all_of_it(tmp_path, monkeypa
         page.server_close()
 
 
+def test_a_hermes_agents_page_looks_at_nothing_else_on_the_machine(tmp_path, monkeypatch):
+    """To say whether quiet hours were scheduled, the page read every
+    LaunchAgent, systemd unit and crontab line of the person's, ran
+    ``launchctl``, ``systemctl`` and ``crontab`` to ask, and looked for Jev's
+    key file, each time it was read, while the plugin's README said it started
+    no other program. Inside Hermes the hours and Jev aren't set from the page,
+    and it looks for none of it."""
+    from mnemos import jev, llm
+    from mnemos.companion import export
+
+    looked: list[str] = []
+
+    def seen(what, answer):
+        def look(*args, **kwargs):
+            looked.append(what)
+            return answer
+        return look
+
+    nowhere = tmp_path / "nowhere"
+    monkeypatch.setattr(export, "_launch_agents", seen("LaunchAgents", nowhere))
+    monkeypatch.setattr(export, "_systemd_units", seen("systemd units", nowhere))
+    monkeypatch.setattr(export, "_crontab", seen("crontab", ""))
+    monkeypatch.setattr(export.subprocess, "run", seen("a program", None))
+    monkeypatch.setattr(jev, "status", seen("Jev's key", {
+        "switched_on": False, "key": False, "host": "", "message_chars": 0, "candidates": 0, "line_chars": 0,
+    }))
+
+    provider = _provider(tmp_path)
+    try:
+        _call(provider, "mnemos_capture", content="The kiln at the studio fires on Tuesdays.")
+        llm.take_secrets_from(lambda name, default=None: default)  # inside Hermes
+        _call(provider, "mnemos_page")
+        (page,) = provider_module._pages.values()
+        life = json.loads(page.documents()[0])
+        assert life["schedule"] == [] and life["jev"] == {"on": False, "key": False, "env": False}
+        assert looked == [], f"the page looked at {looked}"
+
+        llm.take_secrets_from(None)  # anywhere else the page says what runs the hours, as before
+        page._home.forget()
+        json.loads(page.documents()[0])
+        assert {"LaunchAgents", "systemd units", "crontab", "Jev's key"} <= set(looked), looked
+    finally:
+        provider.shutdown()
+        _close_pages()
+
+
 def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(tmp_path, monkeypatch):
     """A page an agent opened was served for as long as Hermes ran: on a gateway,
     for days after the conversation that opened it had ended (Nous's review of
