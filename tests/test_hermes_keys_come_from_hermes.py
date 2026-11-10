@@ -380,3 +380,20 @@ def test_a_profiles_memory_is_never_the_one_the_gateway_names(keys_all_around, t
     scope = provider._runtime.scope
     provider.shutdown()
     assert (scope.db_path, scope.agent_id) == (str(tmp_path / "named" / "mine.db"), "named-by-the-profile")
+
+
+def test_the_person_a_profile_is_with_is_never_the_gateways(keys_all_around, tmp_path, monkeypatch):
+    """MNEMOS_PERSON_NAME, the same way: every profile a gateway serves woke
+    "with" the person the gateway was started for."""
+    monkeypatch.setenv("MNEMOS_PERSON_NAME", "Gatewayperson")
+    provider = _start(tmp_path)
+    provider.handle_tool_call("mnemos_handoff", {"text": "Left the ledger at March."})
+    woke = provider.system_prompt_block()
+    provider.shutdown()
+    assert "## waking up" in woke and "Gatewayperson" not in woke
+
+    monkeypatch.setitem(_HERMES_KEYS, "MNEMOS_PERSON_NAME", "Mara")
+    provider = _start(tmp_path)
+    woke = provider.system_prompt_block()
+    provider.shutdown()
+    assert "with Mara" in woke

@@ -53,7 +53,7 @@ from typing import Any
 from urllib.parse import quote
 
 from ..authorship import display_name
-from ..simple_scope import MnemosScope, resolve_scope
+from ..simple_scope import MnemosScope, named_in_the_environment, resolve_scope
 from ..store.sqlite_store import RETIRED_REFLECTION_KINDS
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ ON_CALENDAR = re.compile(r"^OnCalendar=\*-\*-\* (\d{1,2}):(\d{2})(?::\d{2})?\s*$
 def person_name(given: str | None = None) -> str:
     """The person's name: ``given`` (``--person-name``), else MNEMOS_PERSON_NAME,
     in one line; ``""`` when neither says."""
-    name = given if given is not None else os.environ.get("MNEMOS_PERSON_NAME", "")
+    name = given if given is not None else named_in_the_environment("MNEMOS_PERSON_NAME")
     return " ".join((name or "").split())[:80]
 
 

@@ -68,7 +68,7 @@ from .place import place_of
 from .retrieval.reactive import MATCHED_WORDS, ReactiveRetriever, RetrievalResult
 # Re-exported: MnemosScope and resolve_scope moved to simple_scope but
 # remain importable from here for existing consumers.
-from .simple_scope import MnemosScope, resolve_scope  # noqa: F401
+from .simple_scope import MnemosScope, named_in_the_environment, resolve_scope  # noqa: F401
 from .store.embedding_index import WRITE_EMBED_SECONDS, EmbeddingIndex, passages
 from .core.engram import Engram
 from .core.placeholders import TEMPLATED_IMPACTS, is_templated
@@ -4798,7 +4798,7 @@ class MnemosRuntime:
             reader_session=self._note_session(),
             workdir=self._workdir(),
             older_than_store=self._older_than_store() is not None,
-            person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
+            person_name=named_in_the_environment("MNEMOS_PERSON_NAME"),
         )
         return (packet.get("prompt") or "").strip()
 
@@ -4831,7 +4831,7 @@ class MnemosRuntime:
             session_counter=session_counter,
             workdir=self._workdir() if workdir is None else workdir,
             older_than_store=self._older_than_store() is not None,
-            person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
+            person_name=named_in_the_environment("MNEMOS_PERSON_NAME"),
         )
 
     def _query_results(self, query: str, max_results: int, shown: set[str], room: int) -> str:
@@ -8156,7 +8156,7 @@ def _format_memory(result: Any, query: str = "") -> str:
     # a tool's words say so too, as a lesson drawn from them does.
     whose = ""
     if getattr(engram, "author_kind", "") == "person":
-        name = " ".join(os.environ.get("MNEMOS_PERSON_NAME", "").split())
+        name = " ".join(named_in_the_environment("MNEMOS_PERSON_NAME").split())
         whose = f"; in {name}'s words" if name else "; in the person's words"
     elif getattr(engram, "author_kind", "") == "tool":
         whose = "; from a tool, not yours"
