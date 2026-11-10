@@ -3,9 +3,10 @@
 ## Unreleased
 
 Fixes inside Hermes: what Nous's review of the catalog entry asked for
-(NousResearch/hermes-agent#151540), and what three more reads of the plugin found after it. Two
-fixes reach every agent: a correction that names its memory by id, and what the upkeep process
-may run. Nothing else changes outside Hermes.
+(NousResearch/hermes-agent#151540), and what three more reads of the plugin found after it. A
+few fixes reach every agent, listed under "Everywhere": a correction that names its memory by id,
+and the upkeep process. Nothing else changes outside Hermes; a read of every change against the
+release before it, run both ways, found nothing else.
 
 ### Inside Hermes: what leaves, and whose it is
 
@@ -144,8 +145,9 @@ may run. Nothing else changes outside Hermes.
   `target_id` that names nothing here (mistyped, made up, another agent's) captured the correction
   as a new memory and said it had worked. The memory it meant to replace stayed in use beside it,
   saying the old thing. Now nothing is changed or kept, and the answer names the id; the tool's
-  description says so too. A correction by a query that matches nothing is still kept as new
-  continuity, as before.
+  description says so too. The same for a forget: with an id nothing has, it archived whatever
+  memory the correction's words came closest to, and now archives nothing. A correction by a
+  query that matches nothing is still kept as new continuity, as before.
 - **An id is found however it came, and a word for "no id" is no id.** Recall shows a memory's id
   as `id=engram_...`, and a model passes it on in backticks, quotes or brackets as often as bare;
   each of those named nothing. And a model that has no id often fills the field with "none" or
@@ -157,6 +159,12 @@ may run. Nothing else changes outside Hermes.
   imported json: a `json.py` left beside a store (by anything that can write a file there, an
   agent's own file tool included) was run by the next upkeep, outside any approval. That entry
   now goes before anything is imported.
+- **A save never fails because upkeep couldn't start.** Starting the upkeep process could raise
+  past the save that asked for it (anything but the system's own errors did), leaving the scope's
+  claim on its upkeep held until it went stale. Whatever goes wrong there is logged, the claim is
+  given up, and the next save tries again.
+- **An empty `MNEMOS_EMBEDDING_MODEL` is no model named.** Set but empty, it asked Gemini for a
+  model with no name; it is the default now, as when unset.
 
 ## 0.6.6 (2026-11-08)
 
