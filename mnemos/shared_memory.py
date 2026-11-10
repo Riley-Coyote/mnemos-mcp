@@ -25,12 +25,21 @@ PASS_HOURS = 4
 RECALL_WAIT_MS = 1000
 
 
+def _named(name: str) -> str:
+    # Asked of the host inside one (Hermes), which answers for the profile that
+    # is speaking: read from the gateway's own environment, a profile that had
+    # turned sharing off still shared, into the file another profile had named.
+    from .simple_scope import named_in_the_environment
+
+    return named_in_the_environment(name)
+
+
 def enabled() -> bool:
-    return os.environ.get("MNEMOS_SHARED_MEMORY", "").strip().lower() != "off"
+    return _named("MNEMOS_SHARED_MEMORY").strip().lower() != "off"
 
 
 def path() -> Path:
-    target = Path(os.environ.get("MNEMOS_SHARED_MEMORY_DB") or Path.home() / ".mnemos/shared-memory.db").expanduser()
+    target = Path(_named("MNEMOS_SHARED_MEMORY_DB") or Path.home() / ".mnemos/shared-memory.db").expanduser()
     # Even an override must never route this feature into the legacy pool.
     if target.resolve() == (Path.home() / ".mnemos/shared.db").resolve():
         raise ValueError("Shared memory cannot use the legacy shared.db.")

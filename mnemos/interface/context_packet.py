@@ -84,6 +84,7 @@ from ..authorship import (
 from ..dream_journal import DREAM_JOURNAL_TAG
 from ..retrieval.reactive import ReactiveRetriever, RetrievalResult
 from ..place import place_name, place_of, place_words
+from ..simple_scope import named_in_the_environment
 
 if TYPE_CHECKING:
     from ..store.sqlite_store import EngramStore
@@ -312,7 +313,7 @@ def build_context_packet(
     # Said only where someone may be there to hear of them: never in one of my
     # own hours (``MNEMOS_HOUR_ID``), and never to a guest, whose notes they aren't.
     waiting_notes = (
-        [] if wake == "light" or voice not in (SELF, UNKNOWN) or os.environ.get("MNEMOS_HOUR_ID", "").strip()
+        [] if wake == "light" or voice not in (SELF, UNKNOWN) or named_in_the_environment("MNEMOS_HOUR_ID").strip()
         else _waiting_notes(store, scope)
     )
     person_words = [] if wake == "light" else _person_words(store, scope, woke)

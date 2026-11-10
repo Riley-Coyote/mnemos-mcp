@@ -30,6 +30,7 @@ from .authorship import (
     clean_model_id,
     display_name,
     harness_session,
+    in_claude_code,
     line_name,
     model_line,
     note_signature,
@@ -381,7 +382,7 @@ _UPKEEP_CHILDREN: list[subprocess.Popen] = []
 
 def _upkeep_inline() -> bool:
     """Whether automatic maintenance runs in the call that asks for it."""
-    return os.environ.get(_UPKEEP_ENV, "").strip().lower() == "inline"
+    return named_in_the_environment(_UPKEEP_ENV).strip().lower() == "inline"
 
 
 def _claim_holds(value: str | None, now: datetime) -> bool:
@@ -483,9 +484,11 @@ _PLAIN_ENV = frozenset({
     # Windows, where Python doesn't start without the system's own.
     "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE",
     "HOMEPATH", "USERNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
-    # Where the machine's shared memory is, and whether it's on: upkeep tends it.
-    "MNEMOS_SHARED_MEMORY", "MNEMOS_SHARED_MEMORY_DB",
 })
+# Where the machine's shared memory is, and whether it's on: upkeep tends it.
+# Mnemos's own settings, so asked of the host like its numbers, not copied
+# from the host's environment.
+_SHARED_MEMORY_ENV = frozenset({"MNEMOS_SHARED_MEMORY", "MNEMOS_SHARED_MEMORY_DB"})
 # The way out through a proxy, given only to a process that will reach a
 # provider: a proxy's address can hold a password.
 _PROXY_ENV = frozenset({"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"})
@@ -507,10 +510,10 @@ def _tuning_env_names() -> frozenset[str]:
 
 def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
     """The whole environment of the upkeep process when a host (Hermes) hands
-    out the keys: what a process needs to run (``_PLAIN_ENV``) and Mnemos's own
-    numbers (``_tuning_env_names``), each by name, and what the person chose
-    for Mnemos, read here through the host, which answers for the profile that
-    is speaking. The chosen provider's one key goes only if this process would
+    out the keys: what a process needs to run (``_PLAIN_ENV``), by name, and
+    Mnemos's own numbers (``_tuning_env_names``), where its shared memory is
+    and what the person chose for Mnemos, each read here through the host,
+    which answers for the profile that is speaking. The chosen provider's one key goes only if this process would
     use a model (``dedicated_model``), and Gemini's only if meaning search is
     set to it; a proxy's address only with one of those. Nothing else of the
     host's goes, by any name: not another MNEMOS_ name, nor an LC_ one that
@@ -524,10 +527,22 @@ def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
     from .llm import PROVIDER_KEYS, _find_env_key, chosen_provider
     from .store.embedding_index import GEMINI, embedding_choice
 
-    plain = _PLAIN_ENV | _tuning_env_names()
-    # A copy first: another thread may be setting a name while this one reads.
-    held = dict(os.environ)
-    env = {name: value for name, value in held.items() if name.upper() in plain}
+    # The names first (a copy: another thread may be setting one meanwhile),
+    # then the value of each one wanted. No other name's value is read at all.
+    names = list(os.environ)
+
+    def of_the_hosts(wanted: frozenset[str]) -> dict[str, str]:
+        found = ((name, os.environ.get(name)) for name in names if name.upper() in wanted)
+        return {name: value for name, value in found if value is not None}
+
+    env = of_the_hosts(_PLAIN_ENV)
+    # Mnemos's own names are the speaking profile's, so the host is asked for
+    # each. Copied from the host's environment they were the ones of the
+    # profile the gateway was started for, whoever's upkeep this is.
+    for name in sorted(_tuning_env_names() | _SHARED_MEMORY_ENV):
+        value = _find_env_key(name)[0]
+        if value:
+            env[name] = value
     reaches_a_provider = False
     if dedicated_model:
         provider = chosen_provider()
@@ -547,7 +562,7 @@ def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
         env["MNEMOS_EMBEDDING_MODEL"] = meaning["model"]
         reaches_a_provider = True
     if reaches_a_provider:
-        env.update({name: value for name, value in held.items() if name.upper() in _PROXY_ENV})
+        env.update(of_the_hosts(_PROXY_ENV))
     env[_SECRETS_FROM_HOST_ENV] = "1"
     return env
 
@@ -3092,7 +3107,7 @@ class MnemosRuntime:
             harness = None
         if harness is not None and harness.key != "claude-code":
             return self._other_setup_part(harness)
-        if harness is None and not os.environ.get("CLAUDECODE"):
+        if harness is None and not in_claude_code():
             return self._other_setup_part(None)
         return self._claude_code_setup_part()
 
@@ -3232,7 +3247,7 @@ class MnemosRuntime:
         is the client known to mark its servers (``CLAUDECODE``) and give its
         agent a shell. Read from the machine every time, since the agent may
         have just run setup, and never a reason to fail the packet."""
-        if not os.environ.get("CLAUDECODE"):
+        if not in_claude_code():
             return [], None
         try:
             from .setup import scheduler, state
@@ -4674,7 +4689,7 @@ class MnemosRuntime:
             "Your memory is maintained by you — Mnemos never calls another "
             "model to do it.",
         ]
-        env_model = os.environ.get("MNEMOS_AGENT_MODEL", "").strip()
+        env_model = named_in_the_environment("MNEMOS_AGENT_MODEL").strip()
         if env_model:
             lines.append(
                 f"Note: MNEMOS_AGENT_MODEL={env_model} is set in the environment "
@@ -8278,7 +8293,7 @@ def current_hour() -> str:
     the hour it was written in; nothing else is, since only the environment
     can say.
     """
-    return " ".join(os.environ.get("MNEMOS_HOUR_ID", "").split())[:128]
+    return " ".join(named_in_the_environment("MNEMOS_HOUR_ID").split())[:128]
 
 
 def utc_iso(value: Any) -> str | None:

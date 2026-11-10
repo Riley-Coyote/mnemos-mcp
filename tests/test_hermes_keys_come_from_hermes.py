@@ -179,8 +179,10 @@ _GATEWAY_ENV = {
     "LC_ALL": "en_US.UTF-8",
 }
 # What of that the upkeep process is given whatever the profile chose: the
-# locale, whether the shared memory is on, and Mnemos's own numbers.
-_GIVEN_ANYWAY = {"LC_ALL", "MNEMOS_SHARED_MEMORY", "MNEMOS_CONSOLIDATION_DECAY_RATE"}
+# locale. Nothing of Mnemos's own: whether the shared memory is on and its
+# numbers are the speaking profile's too, and asked of Hermes like the rest
+# (tests/test_hermes_settings_come_from_hermes.py).
+_GIVEN_ANYWAY = {"LC_ALL"}
 
 
 def _hermes_says(monkeypatch, **profile):
@@ -196,8 +198,8 @@ def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tm
     """The upkeep a capture starts was handed Hermes's whole environment: every
     provider's key, the bot tokens, all of it, for a process that uses no key at
     all unless a provider was chosen for Mnemos (Nous's review of the catalog
-    entry, 2026-11-09). It gets what a process needs to run and Mnemos's own
-    numbers, each by name."""
+    entry, 2026-11-09). It gets what a process needs to run, by name, and
+    Mnemos's own settings as the profile that is speaking has them."""
     started = []
 
     class Child:
@@ -209,6 +211,9 @@ def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tm
 
     for name, value in _GATEWAY_ENV.items():
         monkeypatch.setenv(name, value)
+    # What this profile set for Mnemos itself, as Hermes hands it out.
+    monkeypatch.setitem(_HERMES_KEYS, "MNEMOS_SHARED_MEMORY", "OFF")
+    monkeypatch.setitem(_HERMES_KEYS, "MNEMOS_CONSOLIDATION_DECAY_RATE", "0.07")
     provider = _start(tmp_path)
     monkeypatch.setattr(simple_runtime.subprocess, "Popen", Child)
     monkeypatch.setattr(simple_runtime, "_upkeep_inline", lambda: False)
@@ -217,15 +222,16 @@ def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tm
 
     assert started, "the capture started no upkeep"
     env = started[-1][1]["env"]
-    held = set(_GATEWAY_ENV.values()) | set(_HERMES_KEYS.values())
-    assert not held & set(env.values()) - {_GATEWAY_ENV[name] for name in _GIVEN_ANYWAY}, sorted(env)
+    held = (set(_GATEWAY_ENV.values()) - {_GATEWAY_ENV[name] for name in _GIVEN_ANYWAY}) | {"key-from-hermes"}
+    assert not held & set(env.values()), sorted(env)
     assert {"PATH", "HOME"} <= set(env) and env["LC_ALL"] == "en_US.UTF-8"
-    assert env["MNEMOS_SHARED_MEMORY"] == "off", "the person's own setting for Mnemos didn't reach its upkeep"
-    assert env["MNEMOS_CONSOLIDATION_DECAY_RATE"] == "0.05", "upkeep ran on other numbers than the call that asked"
+    assert env["MNEMOS_SHARED_MEMORY"] == "OFF", "the profile's own setting for Mnemos didn't reach its upkeep"
+    assert env["MNEMOS_CONSOLIDATION_DECAY_RATE"] == "0.07", "upkeep ran on other numbers than the call that asked"
     assert env[simple_runtime._SECRETS_FROM_HOST_ENV] == "1"
     # And nothing in it that isn't named, one by one: a name added to Hermes's
     # environment tomorrow doesn't go either, whatever it starts with.
-    named = simple_runtime._PLAIN_ENV | simple_runtime._tuning_env_names() | {simple_runtime._SECRETS_FROM_HOST_ENV}
+    named = (simple_runtime._PLAIN_ENV | simple_runtime._tuning_env_names() | simple_runtime._SHARED_MEMORY_ENV
+             | {simple_runtime._SECRETS_FROM_HOST_ENV})
     assert not {name.upper() for name in env} - named, sorted(env)
     assert not any(word in name for name in env for word in ("KEY", "TOKEN", "PASSWORD")), sorted(env)
 

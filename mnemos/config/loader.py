@@ -129,7 +129,7 @@ def _apply_env_overrides(config: dict, prefix: str) -> dict:
     Returns:
         The modified config dict.
     """
-    for key, value in os.environ.items():
+    for key, value in _named_overrides(config, prefix):
         if not key.startswith(prefix):
             continue
         # MNEMOS_STORE_DB_PATH -> ["store", "db_path"]
@@ -144,6 +144,26 @@ def _apply_env_overrides(config: dict, prefix: str) -> dict:
             if isinstance(config[section], dict):
                 config[section][subkey] = _coerce_type(value)
     return config
+
+
+def _named_overrides(config: dict, prefix: str) -> list[tuple[str, str]]:
+    """The names and values that override the file: this process's
+    environment. Inside a host that hands the settings out (Hermes) they are
+    asked of the host instead, which answers for the profile that is speaking:
+    one gateway serves several, and its own environment is the one it was
+    started for, so a number set there was every profile's. A host answers
+    for a name and gives no list, so each name the config has is asked for."""
+    from ..llm import _find_env_key, host_secrets_active
+
+    if not host_secrets_active():
+        return list(os.environ.items())
+    names: list[str] = []
+    for section, value in config.items():
+        if isinstance(value, dict):
+            names.extend(f"{prefix}{section}_{key}".upper() for key in value)
+        elif "_" not in section:
+            names.append(f"{prefix}{section}".upper())
+    return [(name, found) for name in names if (found := _find_env_key(name)[0])]
 
 
 def _coerce_type(value: str) -> Any:

@@ -164,6 +164,53 @@ def clean_session_id(value: object) -> str:
     return session if _SESSION_ID.fullmatch(session) else ""
 
 
+class _AskedOfTheHost(Mapping[str, str]):
+    """What stands in for this process's environment inside a host that hands
+    the settings out (Hermes). Mnemos's own names are asked of the host, which
+    answers for the profile that is speaking. Every other name reads as unset:
+    the marks a harness leaves on its own processes (``CLAUDECODE``,
+    ``CLAUDE_CODE_SESSION_ID``, ``CLAUDE_PID``) are, in a host's process, the
+    marks of whatever it was started from. A Hermes started from a Claude
+    Code terminal signed its agent's memories with that Claude Code session's
+    model, read from its transcript."""
+
+    def __getitem__(self, name: str) -> str:
+        if not name.startswith("MNEMOS_"):
+            raise KeyError(name)
+        from .simple_scope import named_in_the_environment
+
+        value = named_in_the_environment(name)
+        if not value:
+            raise KeyError(name)
+        return value
+
+    def __iter__(self):  # a host answers for a name and gives no list
+        return iter(())
+
+    def __len__(self) -> int:
+        return 0
+
+
+_ASKED_OF_THE_HOST = _AskedOfTheHost()
+
+
+def _environment(environ: Mapping[str, str] | None) -> Mapping[str, str]:
+    """The environment a read is from: the one given, else this process's,
+    else, inside a host, what the host answers (``_AskedOfTheHost``)."""
+    if environ is not None:
+        return environ
+    from .llm import host_secrets_active
+
+    return _ASKED_OF_THE_HOST if host_secrets_active() else os.environ
+
+
+def in_claude_code() -> bool:
+    """Whether this process is one Claude Code started (it marks every server
+    and shell it starts with ``CLAUDECODE``). Never inside a host: there the
+    mark is the terminal's the host was started from."""
+    return bool(_environment(None).get("CLAUDECODE", "").strip())
+
+
 def run_by_agent(signed_as: str = "", environ: Mapping[str, str] | None = None) -> bool:
     """Whether a command that writes into memory from the command line writes
     as the agent rather than the person (``mnemos remember``, ``correct``,
@@ -172,7 +219,7 @@ def run_by_agent(signed_as: str = "", environ: Mapping[str, str] | None = None) 
     agent may set ``AI_AGENT``). Otherwise the person typed it, at their own
     terminal or in their own app, which runs Mnemos with neither set."""
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     return bool(
         (signed_as or "").strip()
         or env.get("CLAUDECODE", "").strip()
@@ -190,7 +237,7 @@ def harness_session(environ: Mapping[str, str] | None = None) -> str:
     compaction. Clients that don't set it get ``""``.
     """
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     return clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
 
 
@@ -205,7 +252,7 @@ def detect_harness_model(environ: Mapping[str, str] | None = None) -> str:
     better than a wrong signature, and a write must never fail over this.
     """
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     session_id = harness_session(env)
     if not session_id:
         return ""
@@ -282,7 +329,7 @@ def launch_model(
     follows switches.
     """
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     pid = (env.get("CLAUDE_PID") or "").strip()
     if not pid.isdigit() or int(pid) <= 1 or os.name == "nt":
         return ""
@@ -319,7 +366,7 @@ def resolve_author_model(
     operator's setting, this session's own introduction (``declared``), then
     the harness. ``""`` when none of them says; never a guess."""
 
-    env = os.environ if environ is None else environ
+    env = _environment(environ)
     return (
         clean_model_id(signed_as)
         or clean_model_id(env.get("MNEMOS_AGENT_MODEL", ""))

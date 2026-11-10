@@ -115,7 +115,16 @@ def has_key(environ: Mapping[str, str] | None = None) -> bool:
 
 def switched_on(environ: Mapping[str, str] | None = None, *, config_path: str | Path | None = None) -> bool:
     """Whether the switch names Jev: ``MNEMOS_CUE_JUDGE`` when set, else
-    ``cue_judge`` in the config file. Off whenever the setting can't be read."""
+    ``cue_judge`` in the config file. Off whenever the setting can't be read.
+
+    Never on inside a host that hands the settings out (Hermes): the cue Jev
+    judges is the prompt hook's, not what a provider brings, and what it is
+    sent would leave the machine by a road nobody chose there."""
+    if environ is None:
+        from .llm import host_secrets_active
+
+        if host_secrets_active():
+            return False
     env = os.environ if environ is None else environ
     said = (env.get(SWITCH_ENV) or "").strip()
     if not said:
