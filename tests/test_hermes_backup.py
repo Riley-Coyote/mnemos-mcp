@@ -28,6 +28,7 @@ import hashlib
 import json
 import shutil
 import sqlite3
+import threading
 import time
 from pathlib import Path
 
@@ -167,6 +168,36 @@ def test_a_backup_holds_one_read_for_a_memory_and_lets_it_go(tmp_path, monkeypat
     _keep(talking, "The bell is rung at noon.")
     talking.shutdown()
     assert any("rung at noon" in words for words in _memories(config.db_path))
+
+
+def _waits() -> list[threading.Thread]:
+    return [thread for thread in threading.enumerate() if thread.name == "mnemos-backup-hold"]
+
+
+def test_asked_again_a_backup_leaves_no_wait_behind(tmp_path, monkeypatch):
+    """Each read is let go by a wait of its own, an hour long. Asked for again
+    (a backup every night from a process that stays up), the read was replaced
+    and its wait stayed: a thread for each time, for the hour."""
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    config = _config()
+    talking = _talking(tmp_path, config)
+    _keep(talking, "The spare key is under the blue pot.")
+
+    for _ in range(4):
+        MnemosMemoryProviderCore(config).backup_paths()
+    for _ in range(100):
+        if len(_waits()) <= 1:
+            break
+        time.sleep(0.02)
+    assert len(_waits()) == 1 and len(provider_module._backup_holds) == 1
+
+    provider_module._let_go_of_backups()
+    for _ in range(100):
+        if not _waits():
+            break
+        time.sleep(0.02)
+    assert not _waits()
+    talking.shutdown()
 
 
 def test_a_memory_that_isnt_in_write_ahead_mode_is_named_and_not_held(tmp_path, monkeypatch):

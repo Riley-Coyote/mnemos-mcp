@@ -192,7 +192,7 @@ def _watch_page(key: tuple[Any, ...], page: Any) -> None:
 # and for how long in a process that lives on (Hermes's dashboard). ``hermes
 # backup`` ends long before, and takes the read with it.
 _BACKUP_HOLD_SECONDS = 3600.0
-_backup_holds: dict[str, sqlite3.Connection] = {}
+_backup_holds: dict[str, tuple[sqlite3.Connection, threading.Timer]] = {}
 _backup_holds_lock = threading.Lock()
 _backup_exit_seen = False
 
@@ -228,25 +228,28 @@ def _hold_still_for_a_backup(store: Path) -> None:
     except sqlite3.Error:
         conn.close()
         raise
-    with _backup_holds_lock:
-        _backup_holds[key] = conn
-        if not _backup_exit_seen:
-            _backup_exit_seen = True
-            atexit.register(_let_go_of_backups)
     timer = threading.Timer(_BACKUP_HOLD_SECONDS, _let_go_of_backup, args=(key, conn))
     timer.name = "mnemos-backup-hold"
     timer.daemon = True
+    with _backup_holds_lock:
+        _backup_holds[key] = (conn, timer)
+        if not _backup_exit_seen:
+            _backup_exit_seen = True
+            atexit.register(_let_go_of_backups)
     timer.start()
 
 
 def _let_go_of_backup(key: str, held: sqlite3.Connection | None = None) -> None:
     """Close the read a backup left open on a memory (``held``: only if it is
-    still that one). SQLite then folds the log in as it always does."""
+    still that one), and end the wait that would have closed it. SQLite then
+    folds the log in as it always does."""
     with _backup_holds_lock:
-        conn = _backup_holds.get(key)
-        if conn is None or (held is not None and conn is not held):
+        hold = _backup_holds.get(key)
+        if hold is None or (held is not None and hold[0] is not held):
             return
         del _backup_holds[key]
+    conn, timer = hold
+    timer.cancel()  # asked again, each hold would otherwise leave its wait behind for the hour
     try:
         conn.close()
     except sqlite3.Error:
