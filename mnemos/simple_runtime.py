@@ -590,8 +590,12 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
     db_path = Path(scope.db_path).expanduser()
     # Everything this process can import from. Inside Hermes this is Hermes'
     # Python, with Mnemos and what it needs only on a path the plugin added. An
-    # empty entry is the folder this process runs in, which the child doesn't.
-    paths = [*(entry or os.getcwd() for entry in sys.path), str(Path(__file__).resolve().parent.parent)]
+    # empty or relative entry is of the folder this process runs in, not the
+    # store's folder, where the child runs: each goes as a full path.
+    paths = [
+        *(os.path.abspath(entry or os.curdir) for entry in sys.path),
+        str(Path(__file__).resolve().parent.parent),
+    ]
     command = [
         sys.executable, "-c", _UPKEEP_CHILD, json.dumps(paths),
         str(db_path), scope.agent_id, scope.person_id, scope.project_scope, token,
@@ -617,8 +621,14 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
         # Inside the try: the caller holds this scope's claim, and gives it up
         # only when told the process didn't start. A host's reader that raised
         # here left the claim held, and no upkeep ran until it went stale.
+        # Never PYTHONPATH: the child is given its whole path above, and an
+        # empty or relative part of it, read before the child's first line,
+        # would be the store's folder.
         if host_secrets_active():
             options["env"] = _hosted_upkeep_env(dedicated_model)
+        else:
+            options["env"] = dict(os.environ)
+        options["env"].pop("PYTHONPATH", None)
         child = subprocess.Popen(command, **options)
     except Exception as exc:
         logging.getLogger(__name__).warning(

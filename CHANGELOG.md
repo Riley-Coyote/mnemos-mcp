@@ -178,7 +178,11 @@ release before it, run both ways, found nothing else.
   started in the store's own folder, which Python puts first on its path, and its first line
   imported json: a `json.py` left beside a store (by anything that can write a file there, an
   agent's own file tool included) was run by the next upkeep, outside any approval. That entry
-  now goes before anything is imported.
+  now goes before anything is imported. Two more ways in are closed: an empty or relative part of
+  `PYTHONPATH` (as `export PYTHONPATH=$PYTHONPATH:/x` leaves when it was unset) was read before that
+  line ran, and a relative entry on the path of the process that asked was handed on and found in
+  the store's folder. The upkeep is now started without `PYTHONPATH`, and every place it imports
+  from is a full path: exactly where the process that asked imports from.
 - **A save never fails because upkeep couldn't start.** Starting the upkeep process could raise
   past the save that asked for it (anything but the system's own errors did), leaving the scope's
   claim on its upkeep held until it went stale. Whatever goes wrong there is logged, the claim is
