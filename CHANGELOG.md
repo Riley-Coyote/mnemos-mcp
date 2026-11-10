@@ -100,7 +100,8 @@ release before it, run both ways, found nothing else.
   asks the person once, in that first session only (a no is kept nowhere), what they are, what they cost and where what it reads goes, and with a yes
   makes three Hermes scheduled jobs with Hermes's own `cronjob_manage` (or gives the person the
   three `hermes cron create` lines in the README). They run at the usual hours, only while Hermes's
-  gateway runs, and each is saved and sent to nobody. Mnemos makes no job itself.
+  gateway runs, and each is saved and sent to nobody. Mnemos makes no job itself. They need macOS
+  or Linux: on Windows the first session says they aren't offered.
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
   `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
   of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass

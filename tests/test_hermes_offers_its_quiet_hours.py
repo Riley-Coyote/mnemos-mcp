@@ -15,10 +15,12 @@ Temporary homes only.
 from __future__ import annotations
 
 from pathlib import Path
+import sys
 import types
 
 import pytest
 
+import mnemos
 from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore
 from mnemos.setup import connect
 from mnemos.setup import harnesses as hs
@@ -161,3 +163,21 @@ def test_it_is_asked_in_the_fresh_first_session_and_never_after(tmp_path, done):
         second.shutdown()
     assert "ONBOARDING - almost done" in again, again
     assert "mnemos-hour-mine" not in again and "cronjob_manage" not in again and "Quiet hours" not in again
+
+
+def test_where_the_hour_cant_be_prepared_it_isnt_offered(tmp_path, monkeypatch):
+    """Without fcntl (Windows) mnemos_hour hands nothing, so jobs that call it
+    would wake the agent for nothing (round seven, p04)."""
+    monkeypatch.setitem(sys.modules, "mnemos.life", None)
+    monkeypatch.delattr(mnemos, "life", raising=False)
+    settle, lines = _setup_part(tmp_path, monkeypatch)
+    said = "\n".join(settle + [lines or ""])
+    assert "Quiet hours aren't offered" in said and "macOS or Linux" in said and "Don't offer them" in said
+    assert "cronjob_manage" not in said and "mnemos-hour-mine" not in said
+    (tmp_path / "first").mkdir()
+    first = _provider(tmp_path / "first")
+    try:
+        wake = first.system_prompt_block()
+    finally:
+        first.shutdown()
+    assert "Quiet hours aren't offered" in wake and "mnemos-hour-mine" not in wake

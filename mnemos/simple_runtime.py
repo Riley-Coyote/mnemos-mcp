@@ -3243,6 +3243,13 @@ class MnemosRuntime:
             # mnemos_hour: nothing runs from the folder Hermes rebuilds. A no is
             # kept nowhere, so it is asked in the fresh first session only; after
             # that the plugin's README says how they're set up.
+            try:
+                from . import life  # noqa: F401  (it locks with fcntl, which Windows lacks)
+            except ImportError:
+                return "", (
+                    f"- Quiet hours aren't offered when {harness.label} installed Mnemos from its "
+                    "plugin catalog on this system: they need macOS or Linux. Don't offer them."
+                )
             if not fresh:
                 return "", ""
             from .integrations.hermes.hours import offer

@@ -96,6 +96,8 @@ them.
   with its own tools, and the day's conversations it reads with Hermes's `session_search`.
 - Hermes denies dangerous commands in a scheduled run unless you've set it otherwise
   (`approvals.cron_mode`).
+- They need macOS or Linux. On Windows the hour can't be prepared, and the agent doesn't
+  offer them.
 - You can also ask the agent to take its hour now.
 
 ## Each profile is its own agent
