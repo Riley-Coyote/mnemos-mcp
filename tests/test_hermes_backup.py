@@ -32,6 +32,8 @@ import threading
 import time
 from pathlib import Path
 
+import pytest
+
 from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore
 from mnemos.integrations.hermes import provider as provider_module
 
@@ -126,14 +128,14 @@ def test_a_backup_carries_the_memorys_own_log_when_nothing_is_open(tmp_path, mon
     _copied(named, backup)
 
     # Where it is restored, another memory's conversation ended badly: its
-    # file is there, with a log that was never folded in.
+    # file is there, with a log that was never folded in and the log's index.
     other = _config("other")
     ended_badly = _talking(tmp_path, other)
     _keep(ended_badly, "A memory of somewhere else entirely.")
     target = tmp_path / "target"
     target.mkdir()
-    shutil.copy(other.db_path, target / "kept.db")
-    shutil.copy(other.db_path + "-wal", target / "kept.db-wal")
+    for left_behind in ("", "-wal", "-shm"):
+        shutil.copy(other.db_path + left_behind, target / f"kept.db{left_behind}")
     assert Path(other.db_path + "-wal").stat().st_size > 0
     ended_badly.shutdown()
 
@@ -168,6 +170,68 @@ def test_a_backup_holds_one_read_for_a_memory_and_lets_it_go(tmp_path, monkeypat
     _keep(talking, "The bell is rung at noon.")
     talking.shutdown()
     assert any("rung at noon" in words for words in _memories(config.db_path))
+
+
+def _a_profile(home: Path, words: str) -> None:
+    """A profile that has had a conversation: its settings in its own folder,
+    its memory in ~/.mnemos, as the first session leaves them."""
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text("memory:\n  provider: mnemos\n")
+    provider = MnemosMemoryProviderCore()
+    provider.initialize("session-1", hermes_home=str(home), platform="cli")
+    _keep(provider, words)
+    provider.shutdown()
+
+
+@pytest.mark.parametrize("asked_from", ["the root", "a profile"])
+def test_a_backup_takes_every_profiles_memory(monkeypatch, asked_from):
+    """``hermes backup`` archives the whole of Hermes's folder, every profile's
+    part of it, and asks one provider what else to take: the one of the profile
+    it was run from. Mnemos named that profile's memory. The other profiles'
+    settings were in the backup, and their memories weren't."""
+    root = Path.home() / ".hermes"
+    _a_profile(root, "The default profile keeps the harbour log.")
+    _a_profile(root / "profiles" / "work", "The work profile keeps the survey dates.")
+    _a_profile(root / "profiles" / "twin", "The twin profile keeps the tide tables.")
+    (root / "profiles" / "bare").mkdir()  # a profile Mnemos was never set up in
+
+    here = root if asked_from == "the root" else root / "profiles" / "work"
+    monkeypatch.setenv("HERMES_HOME", str(here))
+    named = MnemosMemoryProviderCore().backup_paths()
+
+    mine = "hermes.db" if asked_from == "the root" else "hermes-work.db"
+    assert Path(named[0]).name == mine, "the profile the backup was run from comes first"
+    assert sorted(Path(path).name for path in named) == [
+        "hermes-twin.db", "hermes-twin.db-wal", "hermes-work.db", "hermes-work.db-wal", "hermes.db", "hermes.db-wal",
+    ]
+    assert len(provider_module._backup_holds) == 3
+    kept = {Path(path).name: _memories(path) for path in named if path.endswith(".db")}
+    assert any("survey dates" in words for words in kept["hermes-work.db"])
+    assert any("tide tables" in words for words in kept["hermes-twin.db"])
+    assert any("harbour log" in words for words in kept["hermes.db"])
+
+
+def test_a_backup_names_no_memory_twice_and_none_inside_hermess_folder(monkeypatch):
+    """Two profiles pointed at one memory name it once. A memory kept inside
+    Hermes's folder, as it was before it moved to ~/.mnemos, is in the backup
+    already, whichever profile's folder it is in."""
+    root = Path.home() / ".hermes"
+    _a_profile(root, "The default profile keeps the harbour log.")
+    shared_with = root / "profiles" / "echo"
+    shared_with.mkdir(parents=True)
+    (shared_with / "mnemos.json").write_text(json.dumps({
+        "db_path": str(Path.home() / ".mnemos" / "hermes.db"), "agent_id": "hermes", "hermes_home": str(shared_with),
+    }))
+    inside = root / "profiles" / "old"
+    (inside / "mnemos").mkdir(parents=True)
+    shutil.copy(Path.home() / ".mnemos" / "hermes.db", inside / "mnemos" / "mnemos.db")
+    (inside / "mnemos.json").write_text(json.dumps({
+        "db_path": "$HERMES_HOME/mnemos/mnemos.db", "agent_id": "hermes-old", "hermes_home": str(inside),
+    }))
+
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    named = MnemosMemoryProviderCore().backup_paths()
+    assert [Path(path).name for path in named] == ["hermes.db", "hermes.db-wal"]
 
 
 def _waits() -> list[threading.Thread]:

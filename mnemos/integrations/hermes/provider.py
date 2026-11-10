@@ -261,6 +261,30 @@ def _let_go_of_backups() -> None:
         _let_go_of_backup(key)
 
 
+def _memories_of_other_profiles(root: Path, here: Path) -> list[Path]:
+    """Where the other profiles of this Hermes keep their memories, going only
+    by what each one's own ``mnemos.json`` names: a profile that has had no
+    session names none, and has no memory yet. Nothing is asked of Hermes for
+    them: it answers for the profile that is speaking."""
+    homes = [root]
+    try:
+        homes.extend(sorted(path for path in (root / "profiles").iterdir() if path.is_dir()))
+    except OSError:
+        pass
+    found: list[Path] = []
+    for home in homes:
+        try:
+            if home.resolve() == here:
+                continue
+            named = HermesMnemosConfig.load(home).db_path
+            if named:
+                named = named.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+                found.append(Path(named).expanduser())
+        except Exception:
+            logger.debug("Mnemos couldn't read a profile's settings for a backup", exc_info=True)
+    return found
+
+
 def _make_room_for_files() -> None:
     """Ask once per process for room to hold the files many conversations open.
     Never lowers the limit, and never fails a start."""
@@ -805,38 +829,57 @@ class MnemosMemoryProviderCore:
         ]
 
     def backup_paths(self) -> list[str]:
-        """This agent's memory, for ``hermes backup``. It is kept outside
+        """The memories Mnemos keeps for this Hermes, for ``hermes backup``:
+        this profile's, and each other profile's. They are kept outside
         Hermes's own folder (``~/.mnemos``), and a backup takes only that folder
         unless the provider names more. Until 0.6.7 Mnemos named nothing: a
         backup of Hermes left the agent's memory behind, without a word.
 
+        Every profile's, because the backup is of every profile: Hermes
+        archives its whole folder, each profile's settings with it, and asks
+        the provider of the one profile it was run from what else to take.
+
         Hermes copies the files as they stand, some while after it asks, and
-        puts them back the same way. So what SQLite still holds in its
+        puts them back the same way. So what SQLite still holds in a memory's
         write-ahead log is folded into the file first, and the file is then kept
         as it is until the backup is done (``_hold_still_for_a_backup``). The
         log is named too, always: it holds what a conversation saved since, and
         where the backup is restored it replaces whatever log is lying there,
         which the restored file would otherwise be read through. Works on a
-        provider that was never started, and writes nothing in the memory. A
-        memory kept inside Hermes's folder is in the backup already."""
+        provider that was never started, and writes nothing in any memory. A
+        memory kept inside Hermes's folder is in the backup already. The
+        machine's shared memory is not named: it is every Mnemos agent's, and a
+        restore would put it back over what the others have shared since."""
         try:
             _take_hermes_secrets()
             scope = self._scope
             if scope is None:
                 home = default_hermes_home()
                 scope = derive_hermes_scope(hermes_home=home, config=self._config or HermesMnemosConfig.load(home))
-            store = Path(scope.db_path).expanduser().resolve()
-            if not store.is_file() or store.is_relative_to(Path(scope.hermes_home).expanduser().resolve()):
-                return []
-            try:
-                _hold_still_for_a_backup(store)
-            except sqlite3.Error:
-                logger.debug("Mnemos couldn't hold its memory still for a backup", exc_info=True)
-            log = store.with_name(store.name + "-wal")
-            return [str(store), *([str(log)] if log.is_file() else [])]
+            here = Path(scope.hermes_home).expanduser().resolve()
+            root = here.parent.parent if here.parent.name == "profiles" else here
+            stores = [Path(scope.db_path).expanduser()]
+            stores.extend(_memories_of_other_profiles(root, here))
         except Exception:
             logger.debug("Mnemos couldn't name its memory for a backup", exc_info=True)
             return []
+        named: list[str] = []
+        seen: set[Path] = set()
+        for store in stores:
+            try:
+                store = store.resolve()
+                if store in seen or not store.is_file() or store.is_relative_to(root):
+                    continue
+                seen.add(store)
+                try:
+                    _hold_still_for_a_backup(store)
+                except sqlite3.Error:
+                    logger.debug("Mnemos couldn't hold a memory still for a backup", exc_info=True)
+                log = store.with_name(store.name + "-wal")
+                named.extend([str(store), *([str(log)] if log.is_file() else [])])
+            except Exception:
+                logger.debug("Mnemos couldn't name a memory for a backup", exc_info=True)
+        return named
 
     def post_setup(self, hermes_home: str, config: dict[str, Any]) -> None:
         """``hermes memory setup`` with Mnemos chosen: the memory ``mnemos connect
