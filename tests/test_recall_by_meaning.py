@@ -835,6 +835,18 @@ def test_the_local_model_runs_on_the_cpu_with_two_threads(monkeypatch):
     assert [call.get("device") for call in calls] == ["cpu"], calls
     assert threads["now"] == 2, "the model may use every core in each of many processes"
 
+    # Inside a host (Hermes) the process is the host's, and so is how many
+    # threads torch takes in it: whatever else runs there has its own use for them.
+    from mnemos import llm
+
+    threads["now"] = 10
+    llm.take_secrets_from(lambda name, default=None: default)
+    try:
+        ei._load_local_model("all-MiniLM-L6-v2")
+    finally:
+        llm.take_secrets_from(None)
+    assert threads["now"] == 10, "torch was capped for everything in the host's process"
+
 
 # ── The passage index ──
 

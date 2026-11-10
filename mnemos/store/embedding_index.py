@@ -840,7 +840,13 @@ def _load_local_model(model_name: str) -> Any:
 
 def _limit_threads() -> None:
     """At most ``LOCAL_THREADS`` threads for the model's work in this process.
-    Only a process that loads the model imports torch."""
+    Only a process that loads the model imports torch. Not inside a host
+    (Hermes): that process is the host's, and whatever else runs in it has
+    its own use for torch's threads."""
+    from ..llm import host_secrets_active
+
+    if host_secrets_active():
+        return
     try:
         import torch
     except ImportError:  # no torch, no model: the load reports why
