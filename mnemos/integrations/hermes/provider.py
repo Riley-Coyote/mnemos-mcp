@@ -13,6 +13,7 @@ which labels those a tool's).
 
 from __future__ import annotations
 
+import atexit
 import functools
 import json
 import logging
@@ -185,6 +186,76 @@ def _watch_page(key: tuple[Any, ...], page: Any) -> None:
             return
 
     threading.Thread(target=watch, name="mnemos-page-close", daemon=True).start()
+
+
+# The read a backup keeps open on each memory it named, by the memory's path,
+# and for how long in a process that lives on (Hermes's dashboard). ``hermes
+# backup`` ends long before, and takes the read with it.
+_BACKUP_HOLD_SECONDS = 3600.0
+_backup_holds: dict[str, sqlite3.Connection] = {}
+_backup_holds_lock = threading.Lock()
+_backup_exit_seen = False
+
+
+def _hold_still_for_a_backup(store: Path) -> None:
+    """Fold a memory's log into its file, and keep the file as it then is while
+    a backup copies it.
+
+    Hermes asks what to take, archives its own folder, and copies a provider's
+    files last, as they stand: in a big home, minutes after it asked. A read
+    left open keeps the memory still for it. In SQLite's write-ahead mode
+    nothing is written back into the file under an open read; what a
+    conversation saves meanwhile waits in the log, and nobody waits on the
+    read. So the file Hermes copies is whole whenever it gets to it, and the
+    log beside it, with what was saved since, is still there to copy. Without
+    the read, the file changed under the copy whenever SQLite folded its log
+    back, and a conversation that ended first took the log, already named,
+    with it, which Hermes reports as an incomplete backup.
+
+    A memory that isn't in write-ahead mode is left alone: there a read left
+    open would keep every save waiting."""
+    global _backup_exit_seen
+    key = str(store)
+    _let_go_of_backup(key)  # one read for a memory: the last backup's is done with
+    conn = sqlite3.connect(key, timeout=2.0, isolation_level=None, check_same_thread=False)
+    try:
+        if str(conn.execute("PRAGMA journal_mode").fetchone()[0]).lower() != "wal":
+            conn.close()
+            return
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+        conn.execute("BEGIN")
+        conn.execute("SELECT count(*) FROM sqlite_master").fetchone()
+    except sqlite3.Error:
+        conn.close()
+        raise
+    with _backup_holds_lock:
+        _backup_holds[key] = conn
+        if not _backup_exit_seen:
+            _backup_exit_seen = True
+            atexit.register(_let_go_of_backups)
+    timer = threading.Timer(_BACKUP_HOLD_SECONDS, _let_go_of_backup, args=(key, conn))
+    timer.name = "mnemos-backup-hold"
+    timer.daemon = True
+    timer.start()
+
+
+def _let_go_of_backup(key: str, held: sqlite3.Connection | None = None) -> None:
+    """Close the read a backup left open on a memory (``held``: only if it is
+    still that one). SQLite then folds the log in as it always does."""
+    with _backup_holds_lock:
+        conn = _backup_holds.get(key)
+        if conn is None or (held is not None and conn is not held):
+            return
+        del _backup_holds[key]
+    try:
+        conn.close()
+    except sqlite3.Error:
+        logger.debug("Mnemos couldn't close the read a backup left open", exc_info=True)
+
+
+def _let_go_of_backups() -> None:
+    for key in list(_backup_holds):
+        _let_go_of_backup(key)
 
 
 def _make_room_for_files() -> None:
@@ -724,11 +795,15 @@ class MnemosMemoryProviderCore:
         unless the provider names more. Until 0.6.7 Mnemos named nothing: a
         backup of Hermes left the agent's memory behind, without a word.
 
-        Hermes copies the file as it stands, so what SQLite still holds in its
-        write-ahead log is folded into the file first; the log goes along too
-        while it exists, so a copy taken mid-write is still whole. Works on a
-        provider that was never started, and touches nothing but that file.
-        A memory kept inside Hermes's folder is in the backup already."""
+        Hermes copies the files as they stand, some while after it asks, and
+        puts them back the same way. So what SQLite still holds in its
+        write-ahead log is folded into the file first, and the file is then kept
+        as it is until the backup is done (``_hold_still_for_a_backup``). The
+        log is named too, always: it holds what a conversation saved since, and
+        where the backup is restored it replaces whatever log is lying there,
+        which the restored file would otherwise be read through. Works on a
+        provider that was never started, and writes nothing in the memory. A
+        memory kept inside Hermes's folder is in the backup already."""
         try:
             _take_hermes_secrets()
             scope = self._scope
@@ -739,13 +814,9 @@ class MnemosMemoryProviderCore:
             if not store.is_file() or store.is_relative_to(Path(scope.hermes_home).expanduser().resolve()):
                 return []
             try:
-                conn = sqlite3.connect(str(store), timeout=2.0)
-                try:
-                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
-                finally:
-                    conn.close()
+                _hold_still_for_a_backup(store)
             except sqlite3.Error:
-                logger.debug("Mnemos couldn't fold its log into the memory before a backup", exc_info=True)
+                logger.debug("Mnemos couldn't hold its memory still for a backup", exc_info=True)
             log = store.with_name(store.name + "-wal")
             return [str(store), *([str(log)] if log.is_file() else [])]
         except Exception:

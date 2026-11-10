@@ -298,3 +298,16 @@ def retriever(store):
     """Create a ReactiveRetriever."""
     from mnemos.retrieval.reactive import ReactiveRetriever
     return ReactiveRetriever(store)
+
+
+@pytest.fixture(autouse=True)
+def _no_backup_keeps_a_memory_held():
+    """A backup of Hermes leaves a read open on the memory it names until its
+    process ends (``_hold_still_for_a_backup``). A test's process goes on to
+    the next test, so the read is let go here."""
+    yield
+    import sys
+
+    hermes = sys.modules.get("mnemos.integrations.hermes.provider")
+    if hermes is not None:
+        hermes._let_go_of_backups()
