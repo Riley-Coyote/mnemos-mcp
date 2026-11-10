@@ -81,8 +81,7 @@ def test_settings_that_cant_be_read_stop_the_plugin_and_are_kept(damage, what):
     # Every later call is stopped the same way, and nothing is written anywhere.
     reply = json.loads(provider.handle_tool_call("mnemos_capture", {"content": "A line for nowhere."}))
     assert not reply["ok"] and str(settings) in reply["error"]
-    with pytest.raises(SettingsUnreadable):
-        provider.system_prompt_block()
+    assert provider.system_prompt_block() == ""
     assert settings.read_text() == damage, "the settings were written over"
     assert sorted(os.listdir(Path.home() / ".mnemos")) == memories_before, "a new memory was started"
 
@@ -244,3 +243,42 @@ def test_connect_hermes_says_the_same_and_writes_nothing(monkeypatch):
 
     assert not ok and str(home / "mnemos.json") in said
     assert sorted(path.name for path in home.rglob("*")) == ["mnemos.json"]
+
+
+def test_the_reason_is_said_once_as_a_warning(caplog):
+    """Hermes logs each call a provider raises from, some as warnings: the reason
+    was logged seven times in one session of three turns."""
+    hermes = logging.getLogger("agent.memory_manager")
+    home = Path.home() / ".hermes"
+    home.mkdir()
+    settings = home / "mnemos.json"
+    settings.write_text('{"agent_id": "hermes"\n "db_path": "~/.mnemos/hermes.db"}')
+
+    def as_hermes_calls(label, level, call):  # agent/memory_manager.py, _each_provider
+        try:
+            return call()
+        except Exception as exc:
+            hermes.log(level, "Memory provider 'mnemos' %s: %s", label, exc)
+
+    answers = []
+    with caplog.at_level(logging.DEBUG):
+        for session in ("s-1", "s-2"):  # two sessions in one gateway process
+            provider = MnemosMemoryProviderCore()
+            as_hermes_calls("initialize failed", logging.WARNING,
+                            lambda: provider.initialize(session, hermes_home=str(home), platform="telegram"))
+            as_hermes_calls("system_prompt_block() failed", logging.WARNING, provider.system_prompt_block)
+            for turn in range(3):
+                as_hermes_calls("prefetch failed (non-fatal)", logging.DEBUG,
+                                lambda: provider.prefetch(f"turn {turn}", session_id=session))
+                as_hermes_calls("sync_turn failed", logging.WARNING,
+                                lambda: provider.sync_turn("hello", "hi", session_id=session))
+            answers.append(json.loads(provider.handle_tool_call("mnemos_capture", {"content": "Pears ripen in August."})))
+            as_hermes_calls("on_memory_write failed", logging.DEBUG,
+                            lambda: provider.on_memory_write("add", "user", "Ann likes pears"))
+            as_hermes_calls("on_session_end failed", logging.WARNING, lambda: provider.on_session_end([]))
+            provider.shutdown()
+
+    warned = [r for r in caplog.records if r.levelno >= logging.WARNING and str(settings) in r.getMessage()]
+    assert len(warned) == 1, [r.getMessage()[:80] for r in warned]
+    assert all(not answer["ok"] and str(settings) in answer["error"] for answer in answers)
+    assert settings.read_text() == '{"agent_id": "hermes"\n "db_path": "~/.mnemos/hermes.db"}'

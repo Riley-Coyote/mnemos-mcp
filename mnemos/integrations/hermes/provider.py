@@ -428,6 +428,10 @@ def _take_hermes_secrets() -> None:
 # memory for the profile after the upgrade, and nothing said why.
 _NAMES_OF_A_MEMORY = ("MNEMOS_DB_PATH", "MNEMOS_AGENT_ID", "MNEMOS_PERSON_ID", "MNEMOS_PROJECT_SCOPE")
 _told_of_names_passed_over: set[str] = set()  # the homes told so, in this process
+# The homes whose settings can't be read that Hermes has been told of once, in
+# this process: from then on nothing is raised to it where it would say so again
+# as a warning (a start, the system prompt, the end of a session).
+_told_settings_unreadable: set[str] = set()
 _told_lock = threading.Lock()
 
 
@@ -657,6 +661,7 @@ class MnemosMemoryProviderCore:
         self._named_model = ""  # the one Hermes itself last named, at a start or a turn
         self._page_key: tuple[Any, ...] | None = None  # the page this conversation holds open
         self._lock = threading.RLock()
+        self._stopped: SettingsUnreadable | None = None  # why this home doesn't start, if it doesn't
 
     @property
     def name(self) -> str:
@@ -689,7 +694,21 @@ class MnemosMemoryProviderCore:
         if self._config is None:
             # Settings the person edited and that can't be read stop it here,
             # before anything is settled or written: never a new memory.
-            read_settings(hermes_home or default_hermes_home())
+            told = str(Path(hermes_home or default_hermes_home()).expanduser().resolve())
+            try:
+                read_settings(hermes_home or default_hermes_home())
+            except SettingsUnreadable as exc:
+                self._stopped = exc
+                with _told_lock:
+                    first = told not in _told_settings_unreadable
+                    _told_settings_unreadable.add(told)
+                if first:
+                    raise  # Hermes says it, once, as a warning
+                logger.debug("Mnemos isn't starting in %s: its settings can't be read (said at the first start).", told)
+                return
+            self._stopped = None
+            with _told_lock:
+                _told_settings_unreadable.discard(told)  # mended: if it breaks again, it is said again
             settle_config_home(hermes_home)
             from .installer import settle_one_memory
 
@@ -743,7 +762,11 @@ class MnemosMemoryProviderCore:
 
     @_one_at_a_time
     def system_prompt_block(self) -> str:
-        self._ensure_runtime()
+        try:
+            self._ensure_runtime()
+        except SettingsUnreadable:
+            logger.debug("No Mnemos in this system prompt: its settings can't be read.")
+            return ""
         assert self._runtime is not None
         assert self._config is not None
         if self._writes_enabled:
@@ -956,7 +979,11 @@ class MnemosMemoryProviderCore:
         """The memory's upkeep, and nothing written from the session."""
         if not self._writes_enabled:
             return
-        self._ensure_runtime()
+        try:
+            self._ensure_runtime()
+        except SettingsUnreadable:
+            logger.debug("No upkeep at the end of this session: its settings can't be read.")
+            return
         assert self._runtime is not None
         self._runtime.maintain(auto=True)
         self._prefetch_cache.clear()  # upkeep can archive what was recalled
@@ -1342,6 +1369,8 @@ class MnemosMemoryProviderCore:
         if self._named_model:
             started["model"] = self._named_model  # the one a turn named since, if one did
         self.initialize(self._session_id or "mnemos-hermes", **started)
+        if self._runtime is None and self._stopped is not None:
+            raise SettingsUnreadable(str(self._stopped))
 
     def _mirrored_entries(self, target: str, *, whole: str = "", piece: str = "", exact: bool = False) -> list[str]:
         """The memories in use here mirrored from this Hermes ``target``

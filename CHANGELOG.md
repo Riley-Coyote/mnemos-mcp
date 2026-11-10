@@ -195,8 +195,9 @@ release before it, run both ways, found nothing else.
 - **Settings that can't be read stop Mnemos; they don't start a new memory.** A `mnemos.json`
   cut short, missing a comma, not readable, or holding something other than an object of
   settings counted as no settings: the next session chose a new, empty memory and wrote it over
-  the file, the person's edit with it. Now Mnemos doesn't start for that home, says once which
-  file and what's wrong, and leaves the file as it is; `hermes memory setup` says the same, and
+  the file, the person's edit with it. Now Mnemos doesn't start for that home, Hermes's log says
+  once, as a warning, which file and what's wrong (once for each home while Hermes runs), and
+  the file is left as it is; the agent's tools answer with the same words; `hermes memory setup` says the same, and
   so do `mnemos hermes install`, `mnemos hermes quickstart` and `mnemos connect hermes`, which
   write nothing and end with an error, not a traceback. A
   blank file is still no settings. A backup leaves out only the memory of a profile whose
