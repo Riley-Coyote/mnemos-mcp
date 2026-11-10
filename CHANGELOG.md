@@ -165,6 +165,10 @@ release before it, run both ways, found nothing else.
   into it and held it open for the copy. Now each file is first opened read-only and named only
   if it has Mnemos's own tables; anything else is left out and untouched, with a warning in
   Hermes's log that gives the file and why. The same holds for the profile's own memory.
+- **A backup of many profiles doesn't run out of open files.** `hermes backup` runs with the
+  shell's limit, 256 files on a Mac, and each memory held still for the copy takes three. With
+  a hundred profiles the last memories were left out and Hermes couldn't open the files to
+  archive them. A backup now asks for more room first, as a conversation's start does.
 
 ### Everywhere
 

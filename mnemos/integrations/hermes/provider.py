@@ -1046,6 +1046,9 @@ class MnemosMemoryProviderCore:
         memory kept inside Hermes's folder is in the backup already. The
         machine's shared memory is not named: it is every Mnemos agent's, and a
         restore would put it back over what the others have shared since."""
+        # A read is held on every profile's memory, each three files, in a
+        # process (`hermes backup`) with the shell's limit: 256 on a Mac.
+        _make_room_for_files()
         try:
             _take_hermes_secrets()
             scope = self._scope
