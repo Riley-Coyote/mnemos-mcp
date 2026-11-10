@@ -6819,6 +6819,16 @@ class MnemosRuntime:
                 if followed:
                     lines.insert(1, followed)
                 return "\n".join(lines + result["lines"])
+            if not query.strip():
+                # An id that names nothing here changes nothing, and nothing is
+                # kept in its place. It used to fall through to what a call with
+                # no id does: the correction was captured as a new memory, with
+                # no word that the id was unknown, so the one it meant to
+                # replace stayed in use beside it, saying the old thing.
+                return (
+                    f"Nothing was {'archived' if forget else 'changed'}: no memory or note here "
+                    f"has the id {target}. Recall shows each one's id; or give a query that names it."
+                )
 
         search_text = query.strip() or correction.strip()
         query_text = query.strip()

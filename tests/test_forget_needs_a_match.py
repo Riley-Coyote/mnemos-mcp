@@ -136,3 +136,24 @@ def test_recall_shows_the_notes_the_question_is_about(tmp_path, words_only):
     shown = {line.split("] ", 1)[1] for line in out.splitlines() if line.startswith("- [")}
 
     assert shown == set(about_the_reading), shown
+
+
+@pytest.mark.parametrize("action", ["update", "forget"])
+def test_an_id_that_names_nothing_here_changes_nothing(tmp_path, action):
+    """The same for an id. One that names nothing here (mistyped, made up, or
+    another agent's) fell through to what a call with no id does. A correction
+    was captured as a new memory with no word that the id was unknown, so the
+    memory it meant to replace stayed in use beside it, saying the old thing;
+    and a forget answered "give the ID as target_id", to a call that had."""
+    rt = _runtime(tmp_path)
+    rt.capture(content=ZEPPELIN)
+    notes, memories = _notes(rt), _memories(rt)
+
+    out = rt.correct(
+        correction="" if action == "forget" else "The zeppelin schedule moved to Fridays.",
+        target_id="engram_01ZZZZZZZZZZZZZZZZZZZZZZZZ", action=action,
+    )
+
+    assert out.startswith("Nothing was archived" if action == "forget" else "Nothing was changed"), out
+    assert "engram_01ZZZZZZZZZZZZZZZZZZZZZZZZ" in out and "has the id" in out
+    assert _notes(rt) == notes and _memories(rt) == memories, "something was written for an id that names nothing"
