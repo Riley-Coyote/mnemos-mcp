@@ -406,8 +406,11 @@ def embedding_choice(
         )
     key_in = "code" if gemini_api_key else _find_env_key("GEMINI_API_KEY")[1]
     if chosen == GEMINI and key_in:
-        # Read as the choice is: inside a host, from the host, for the profile speaking.
-        used, model = GEMINI, _find_env_key("MNEMOS_EMBEDDING_MODEL")[0] or GEMINI_MODEL
+        # Inside a host, from the host, for the profile speaking. Outside one,
+        # from the environment and no file, as it always was.
+        from ..simple_scope import named_in_the_environment
+
+        used, model = GEMINI, named_in_the_environment("MNEMOS_EMBEDDING_MODEL") or GEMINI_MODEL
     else:
         used, model = LOCAL, LOCAL_MODEL
     return {

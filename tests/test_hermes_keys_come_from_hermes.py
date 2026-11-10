@@ -423,3 +423,26 @@ def test_the_upkeep_process_keeps_what_the_machine_needs_to_run_it(monkeypatch):
     env = simple_runtime._hosted_upkeep_env(False)
 
     assert {name: env.get(name) for name in needed} == needed
+
+
+def test_outside_hermes_the_embedding_model_is_the_environments_as_ever(tmp_path, monkeypatch):
+    """Outside Hermes nothing changed: the Gemini model's name is read from the
+    environment and from no file. Read as the provider's choice is (0.6.7,
+    for a profile inside Hermes), a name in a .env began to count on machines
+    where it never had, for an index built with another model."""
+    from mnemos.store.embedding_index import GEMINI_MODEL, embedding_choice
+
+    (Path.home() / ".mnemos").mkdir(exist_ok=True)
+    (Path.home() / ".mnemos" / ".env").write_text(
+        "MNEMOS_EMBEDDING_PROVIDER=gemini\nGEMINI_API_KEY=a-key-in-a-file\nMNEMOS_EMBEDDING_MODEL=a-model-in-a-file\n"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("MNEMOS_DISABLE_DOTENV", raising=False)  # files are read, as on a real machine
+    monkeypatch.delenv("MNEMOS_EMBEDDING_MODEL", raising=False)
+    llm.take_secrets_from(None)
+
+    assert embedding_choice()["provider"] == "gemini", "the fixture is real: the file's choice and key are read"
+    assert embedding_choice()["model"] == GEMINI_MODEL
+
+    monkeypatch.setenv("MNEMOS_EMBEDDING_MODEL", "a-model-in-the-environment")
+    assert embedding_choice()["model"] == "a-model-in-the-environment"
