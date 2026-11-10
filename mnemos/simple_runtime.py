@@ -468,33 +468,53 @@ def _maintenance_stopped(failure: str) -> str:
 # too, it reads them from the environment it was given and from no file.
 _SECRETS_FROM_HOST_ENV = "MNEMOS_SECRETS_FROM_HOST"
 
-# What that process is given of the host's environment (``_hosted_upkeep_env``).
-# What any process needs to run, and where the caches of a local embedding
-# model are, none of it a key:
+# What that process is given of the host's environment (``_hosted_upkeep_env``),
+# name by name. What any process needs to run, where the same Python finds its
+# own libraries, and where the caches of a local embedding model are, none of
+# it a key. The locale's settings are the standard ones by name: a made-up LC_
+# name is a way people carry other things through ssh.
 _PLAIN_ENV = frozenset({
     "PATH", "HOME", "USER", "LOGNAME", "LANG", "LANGUAGE", "TZ", "TMPDIR", "TEMP", "TMP",
+    "LC_ALL", "LC_COLLATE", "LC_CTYPE", "LC_MESSAGES", "LC_MONETARY", "LC_NUMERIC", "LC_TIME",
+    "LC_ADDRESS", "LC_IDENTIFICATION", "LC_MEASUREMENT", "LC_NAME", "LC_PAPER", "LC_TELEPHONE",
     "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FALLBACK_LIBRARY_PATH", "PYTHONHOME",
     "HF_HOME", "HF_HUB_CACHE", "SENTENCE_TRANSFORMERS_HOME", "TRANSFORMERS_CACHE", "XDG_CACHE_HOME",
     # Windows, where Python doesn't start without the system's own.
     "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "USERPROFILE", "HOMEDRIVE",
     "HOMEPATH", "USERNAME", "APPDATA", "LOCALAPPDATA", "PROGRAMDATA",
+    # Where the machine's shared memory is, and whether it's on: upkeep tends it.
+    "MNEMOS_SHARED_MEMORY", "MNEMOS_SHARED_MEMORY_DB",
 })
 # The way out through a proxy, given only to a process that will reach a
 # provider: a proxy's address can hold a password.
 _PROXY_ENV = frozenset({"HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "NO_PROXY"})
-# Mnemos's own settings go too (MNEMOS_*), but never one named like a secret,
-# and never the three the host answers for each profile, which are read from it.
-_SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
-_CHOSEN_THROUGH_HOST = frozenset({"MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "MNEMOS_EMBEDDING_PROVIDER"})
+
+
+def _tuning_env_names() -> frozenset[str]:
+    """The names Mnemos's own numbers go by in the environment
+    (MNEMOS_CONSOLIDATION_DECAY_RATE and the like), each by name: the two
+    sections of its config upkeep runs on, which the process that asked for
+    the upkeep read the same way (``config.loader.load_config``)."""
+    from .config.loader import DEFAULT_CONFIG
+
+    return frozenset(
+        f"MNEMOS_{section}_{key}".upper()
+        for section in ("consolidation", "encoding")
+        for key in (DEFAULT_CONFIG.get(section) or {})
+    )
 
 
 def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
     """The whole environment of the upkeep process when a host (Hermes) hands
-    out the keys: what a process needs to run, Mnemos's own plain settings, and
-    what the person chose for Mnemos, read here through the host, which answers
-    for the profile that is speaking. The chosen provider's one key goes only
-    if this process would use a model (``dedicated_model``), and Gemini's only
-    if meaning search is set to it; a proxy's address only with one of those.
+    out the keys: what a process needs to run (``_PLAIN_ENV``) and Mnemos's own
+    numbers (``_tuning_env_names``), each by name, and what the person chose
+    for Mnemos, read here through the host, which answers for the profile that
+    is speaking. The chosen provider's one key goes only if this process would
+    use a model (``dedicated_model``), and Gemini's only if meaning search is
+    set to it; a proxy's address only with one of those. Nothing else of the
+    host's goes, by any name: not another MNEMOS_ name, nor an LC_ one that
+    isn't the locale's.
 
     Until 0.6.7 the process was given the host's whole environment and read its
     settings there. Hermes keeps every provider's key in it, so all of them went
@@ -504,14 +524,10 @@ def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
     from .llm import PROVIDER_KEYS, _find_env_key, chosen_provider
     from .store.embedding_index import GEMINI, embedding_choice
 
-    env = {
-        name: value for name, value in os.environ.items()
-        if name.upper() in _PLAIN_ENV or name.upper().startswith("LC_")
-        or (
-            name.startswith("MNEMOS_") and name not in _CHOSEN_THROUGH_HOST
-            and not any(word in name for word in _SECRET_WORDS)
-        )
-    }
+    plain = _PLAIN_ENV | _tuning_env_names()
+    # A copy first: another thread may be setting a name while this one reads.
+    held = dict(os.environ)
+    env = {name: value for name, value in held.items() if name.upper() in plain}
     reaches_a_provider = False
     if dedicated_model:
         provider = chosen_provider()
@@ -528,9 +544,10 @@ def _hosted_upkeep_env(dedicated_model: bool) -> dict[str, str]:
         env["MNEMOS_EMBEDDING_PROVIDER"] = meaning["chosen"]
     if meaning["provider"] == GEMINI:
         env["GEMINI_API_KEY"] = _find_env_key("GEMINI_API_KEY")[0]
+        env["MNEMOS_EMBEDDING_MODEL"] = meaning["model"]
         reaches_a_provider = True
     if reaches_a_provider:
-        env.update({name: value for name, value in os.environ.items() if name.upper() in _PROXY_ENV})
+        env.update({name: value for name, value in held.items() if name.upper() in _PROXY_ENV})
     env[_SECRETS_FROM_HOST_ENV] = "1"
     return env
 
@@ -559,10 +576,6 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
         "close_fds": True,
         "cwd": str(db_path.parent),
     }
-    from .llm import host_secrets_active
-
-    if host_secrets_active():
-        options["env"] = _hosted_upkeep_env(dedicated_model)
     if os.name == "nt":
         options["creationflags"] = (
             getattr(subprocess, "DETACHED_PROCESS", 0)
@@ -570,9 +583,16 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
         )
     else:
         options["start_new_session"] = True
+    from .llm import host_secrets_active
+
     try:
+        # Inside the try: the caller holds this scope's claim, and gives it up
+        # only when told the process didn't start. A host's reader that raised
+        # here left the claim held, and no upkeep ran until it went stale.
+        if host_secrets_active():
+            options["env"] = _hosted_upkeep_env(dedicated_model)
         child = subprocess.Popen(command, **options)
-    except (OSError, ValueError) as exc:
+    except Exception as exc:
         logging.getLogger(__name__).warning(
             "Maintenance could not start in the background: %s: %s",
             type(exc).__name__, exc,

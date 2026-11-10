@@ -170,9 +170,17 @@ _GATEWAY_ENV = {
     "MNEMOS_EMBEDDING_PROVIDER": "gemini",
     "MNEMOS_JEV_KEY_FILE": "/somewhere/a-key",
     "MNEMOS_SHARED_MEMORY": "off",
+    "MNEMOS_CONSOLIDATION_DECAY_RATE": "0.05",
+    # Under Mnemos's name, or the locale's, and neither: nothing Mnemos reads.
+    "MNEMOS_PAT": "a-secret-under-mnemos-name",
+    "MNEMOS_AGENT_ID": "the-gateway's-agent",
+    "LC_GITHUB_PAT": "a-secret-carried-through-ssh",
     "HTTPS_PROXY": "http://someone:a-password@proxy.example:3128",
     "LC_ALL": "en_US.UTF-8",
 }
+# What of that the upkeep process is given whatever the profile chose: the
+# locale, whether the shared memory is on, and Mnemos's own numbers.
+_GIVEN_ANYWAY = {"LC_ALL", "MNEMOS_SHARED_MEMORY", "MNEMOS_CONSOLIDATION_DECAY_RATE"}
 
 
 def _hermes_says(monkeypatch, **profile):
@@ -189,7 +197,7 @@ def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tm
     provider's key, the bot tokens, all of it, for a process that uses no key at
     all unless a provider was chosen for Mnemos (Nous's review of the catalog
     entry, 2026-11-09). It gets what a process needs to run and Mnemos's own
-    plain settings."""
+    numbers, each by name."""
     started = []
 
     class Child:
@@ -210,14 +218,15 @@ def test_the_upkeep_process_is_given_none_of_hermes_own_keys(keys_all_around, tm
     assert started, "the capture started no upkeep"
     env = started[-1][1]["env"]
     held = set(_GATEWAY_ENV.values()) | set(_HERMES_KEYS.values())
-    assert not held & set(env.values()) - {"off", "en_US.UTF-8"}, sorted(env)
+    assert not held & set(env.values()) - {_GATEWAY_ENV[name] for name in _GIVEN_ANYWAY}, sorted(env)
     assert {"PATH", "HOME"} <= set(env) and env["LC_ALL"] == "en_US.UTF-8"
     assert env["MNEMOS_SHARED_MEMORY"] == "off", "the person's own setting for Mnemos didn't reach its upkeep"
+    assert env["MNEMOS_CONSOLIDATION_DECAY_RATE"] == "0.05", "upkeep ran on other numbers than the call that asked"
     assert env[simple_runtime._SECRETS_FROM_HOST_ENV] == "1"
-    # And nothing in it that isn't one of those: a name added to Hermes's
-    # environment tomorrow doesn't go either.
-    for name in env:
-        assert name.upper() in simple_runtime._PLAIN_ENV or name.startswith(("LC_", "MNEMOS_")), name
+    # And nothing in it that isn't named, one by one: a name added to Hermes's
+    # environment tomorrow doesn't go either, whatever it starts with.
+    named = simple_runtime._PLAIN_ENV | simple_runtime._tuning_env_names() | {simple_runtime._SECRETS_FROM_HOST_ENV}
+    assert not {name.upper() for name in env} - named, sorted(env)
     assert not any(word in name for name in env for word in ("KEY", "TOKEN", "PASSWORD")), sorted(env)
 
 
@@ -268,7 +277,7 @@ def test_a_profile_never_runs_on_the_gateways_choice(monkeypatch):
     _hermes_says(monkeypatch)  # this profile has set nothing
     assert llm.chosen_provider() == "", "the gateway's own choice of provider was this profile's"
     env = simple_runtime._hosted_upkeep_env(True)
-    assert not set(_GATEWAY_ENV) & set(env) - {"MNEMOS_SHARED_MEMORY", "LC_ALL"}, sorted(env)
+    assert set(_GATEWAY_ENV) & set(env) == _GIVEN_ANYWAY, sorted(env)
 
     # And one that chose its own gets its own.
     _hermes_says(monkeypatch, MNEMOS_LLM_PROVIDER="anthropic", ANTHROPIC_API_KEY="the-profile's-anthropic-key")
@@ -308,6 +317,35 @@ def test_a_profile_never_searches_by_meaning_on_the_gateways_choice(monkeypatch)
     _hermes_says(monkeypatch, MNEMOS_EMBEDDING_PROVIDER="gemini", GEMINI_API_KEY="the-profile's-gemini-key",
                  MNEMOS_EMBEDDING_MODEL="the-profile's-embedding-model")
     assert embedding_choice()["model"] == "the-profile's-embedding-model"
+    env = simple_runtime._hosted_upkeep_env(False)
+    assert env["MNEMOS_EMBEDDING_MODEL"] == "the-profile's-embedding-model"
+    llm.take_secrets_from(env.get)  # the process itself, reading what it was given
+    assert embedding_choice()["model"] == "the-profile's-embedding-model"
     _hermes_says(monkeypatch, MNEMOS_EMBEDDING_PROVIDER="gemini", GEMINI_API_KEY="the-profile's-gemini-key")
     assert embedding_choice()["model"] != "the-gateway's-embedding-model"
+
+
+def test_upkeep_that_cant_be_handed_its_settings_runs_here_instead(tmp_path, monkeypatch):
+    """What the process is handed is read through Hermes, and Hermes can refuse
+    (a read outside any profile, on a gateway serving several). The refusal
+    came up through the capture with this memory's claim still held, so nothing
+    tended it until the claim went stale. It is a process that didn't start:
+    the claim is given up, and the upkeep runs in the call that asked."""
+    started = []
+    provider = _start(tmp_path)
+    monkeypatch.setattr(simple_runtime.subprocess, "Popen", lambda *a, **k: started.append(a))
+    monkeypatch.setattr(simple_runtime, "_upkeep_inline", lambda: False)
+
+    def refuses(dedicated_model):
+        raise RuntimeError("no profile is speaking")
+
+    monkeypatch.setattr(simple_runtime, "_hosted_upkeep_env", refuses)
+    scope = provider._runtime.scope
+    assert simple_runtime._spawn_upkeep(scope, "a-token") is False and not started
+
+    said = json.loads(provider.handle_tool_call("mnemos_capture", {"content": "The well rope was replaced in May."}))
+    assert said["ok"] is True
+    runtime = provider._runtime
+    assert not runtime._store.get_meta(runtime._meta_key(simple_runtime._UPKEEP_CLAIM)), "the claim was left held"
+    provider.shutdown()
 
