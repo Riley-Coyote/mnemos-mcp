@@ -116,18 +116,44 @@ def test_other_paths_are_opened_exactly_as_written(tmp_path, monkeypatch):
     (tmp_path / "elsewhere").mkdir()
     (tmp_path / "elsewhere" / "b.db").write_bytes(b"")
     hermes = home_folder / ".hermes"
+    beside = home_folder.parent / "gone-user"  # another home folder beside this one
     for given in (
-        str(tmp_path / "gone" / ".mnemos" / "g.db"),   # gone; this user's ~/.mnemos (a link) holds a g.db
+        str(beside / ".mnemos" / "g.db"),              # gone; this user's ~/.mnemos (a link) holds a g.db
         f"{home_folder}/.mnemos/../g.db",               # its folder isn't called .mnemos: as written
         str(tmp_path / "elsewhere" / "b.db"),           # there: opened
-        str(tmp_path / "someone" / ".mnemos" / "c.db"),  # nothing of that name here
+        str(beside / ".mnemos" / "c.db"),               # nothing of that name here
     ):
         named = HermesMnemosConfig(db_path=given)
         opened = memory_file(hermes, named)
-        if given.startswith(str(tmp_path / "gone")):
+        if given == str(beside / ".mnemos" / "g.db"):
             assert opened == str(home_folder / ".mnemos" / "g.db")
         else:
             assert opened == given
+
+
+def test_only_a_home_folder_beside_this_one_falls_back(tmp_path, monkeypatch):
+    """A drive that isn't plugged in, or a memory kept anywhere else, is not a
+    home restored from another Mac: its memory is made where it is named, as
+    before, even with a file of that name in this user's ~/.mnemos."""
+    (Path.home() / ".mnemos").mkdir()
+    (Path.home() / ".mnemos" / "hermes.db").write_bytes(b"")
+    hermes = Path.home() / ".hermes"
+    for given in (
+        tmp_path / "Volumes" / "X" / ".mnemos" / "hermes.db",          # an unplugged drive
+        tmp_path / "Volumes" / "X" / "Users" / "old" / ".mnemos" / "hermes.db",  # a home on another tree
+        Path.home() / "work" / ".mnemos" / "hermes.db",                # inside this home
+    ):
+        assert memory_file(hermes, HermesMnemosConfig(db_path=str(given))) == str(given)
+
+    unplugged = tmp_path / "Volumes" / "X" / ".mnemos" / "hermes.db"
+    hermes.mkdir()
+    (hermes / "mnemos.json").write_text(json.dumps({"db_path": str(unplugged), "agent_id": "hermes"}))
+    provider = _start(hermes)
+    try:
+        assert provider.scope.db_path == str(unplugged)
+    finally:
+        provider.shutdown()
+    assert unplugged.exists(), "its memory is made where it is named"
 
 
 def test_a_path_written_with_a_tilde_is_still_read_with_it_expanded():

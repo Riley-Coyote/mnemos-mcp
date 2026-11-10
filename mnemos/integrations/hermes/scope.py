@@ -336,16 +336,21 @@ _told_lock = threading.Lock()
 
 def _here_if_restored(home: Path, db_path: str) -> str:
     """The memory a home names, or, when that file isn't there, the folder it
-    names is called ``.mnemos`` and this user's own ``~/.mnemos/`` holds a file
-    of the same name, that one: a backup restored under another home folder (a
-    new Mac, another username) puts the memory there, and the settings it
-    restores name it under the old one. The settings are left as they are; the
-    log says so once. Anything else is the path as named."""
+    names is a ``.mnemos`` in another home folder beside this user's own
+    (``/Users/old/.mnemos/x.db`` seen from ``/Users/new``), and this user's
+    ``~/.mnemos/`` holds a file of the same name, that one: a backup restored
+    under another home folder (a new Mac, another username) puts the memory
+    there, and the settings it restores name it under the old one. The settings
+    are left as they are; the log says so once. Anything else, a drive that
+    isn't plugged in among them, is the path as named."""
 
     named = Path(db_path)
     if not named.is_absolute() or named.parent.name != ".mnemos" or named.exists():
         return db_path
-    here = Path.home() / ".mnemos" / named.name
+    old_home, own_home = named.parent.parent, Path.home()
+    if old_home.parent != own_home.parent or old_home == own_home:
+        return db_path
+    here = own_home / ".mnemos" / named.name
     if not here.is_file():
         return db_path
     told = (str(home), db_path)
