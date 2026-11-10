@@ -196,7 +196,9 @@ release before it, run both ways, found nothing else.
   cut short, missing a comma, not readable, or holding something other than an object of
   settings counted as no settings: the next session chose a new, empty memory and wrote it over
   the file, the person's edit with it. Now Mnemos doesn't start for that home, says once which
-  file and what's wrong, and leaves the file as it is; `hermes memory setup` says the same. A
+  file and what's wrong, and leaves the file as it is; `hermes memory setup` says the same, and
+  so do `mnemos hermes install`, `mnemos hermes quickstart` and `mnemos connect hermes`, which
+  write nothing and end with an error, not a traceback. A
   blank file is still no settings. A backup leaves out only the memory of a profile whose
   settings can't be read, with a warning, and still takes every other profile's. The file is still written beside itself and
   then put in place, so no write leaves half of it.

@@ -202,3 +202,45 @@ def test_a_backup_from_a_profile_whose_settings_cant_be_read_still_takes_the_oth
     assert [Path(path).name for path in named] == ["work.db", "work.db-wal"]
     said = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert sum(str(root / "mnemos.json") in line for line in said) == 1
+
+
+@pytest.mark.parametrize("command", [
+    ["hermes", "install", "--db-path", "{home}/.mnemos/other.db"],
+    ["hermes", "quickstart", "--provider"],
+])
+def test_mnemos_commands_say_the_same_and_write_nothing(capsys, command):
+    """`mnemos hermes install --db-path` wrote the plugin's files and then ended
+    in a traceback, the file of settings still unreadable."""
+    from mnemos import cli
+
+    home = Path.home() / ".hermes"
+    home.mkdir()
+    settings = home / "mnemos.json"
+    settings.write_text('{"agent_id": "sage",')
+    words = [word.replace("{home}", str(Path.home())) for word in command]
+
+    code = cli.main([*words, "--hermes-home", str(home)])
+
+    said = capsys.readouterr()
+    assert code != 0
+    assert str(settings) in said.err and "isn't valid JSON" in said.err
+    assert "Traceback" not in said.err + said.out
+    assert sorted(path.name for path in home.rglob("*")) == ["mnemos.json"], "something was written"
+    assert settings.read_text() == '{"agent_id": "sage",'
+
+
+def test_connect_hermes_says_the_same_and_writes_nothing(monkeypatch):
+    from mnemos import connect_cmd
+
+    home = Path.home() / ".hermes"
+    home.mkdir()
+    (home / "mnemos.json").write_text('{"agent_id": "sage",')
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    scope = types.SimpleNamespace(agent_id="hermes", person_id="user", project_scope="global",
+                                  db_path="~/.mnemos/hermes.db")
+    status = types.SimpleNamespace(provider="")
+
+    ok, said = connect_cmd._hermes(scope, status, types.SimpleNamespace(agent_safe=False))
+
+    assert not ok and str(home / "mnemos.json") in said
+    assert sorted(path.name for path in home.rglob("*")) == ["mnemos.json"]

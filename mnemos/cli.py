@@ -4453,7 +4453,7 @@ def _cmd_hermes(args: argparse.Namespace) -> int:
         quickstart_hermes,
         render_plugin_shim,
     )
-    from .integrations.hermes.scope import profile_home
+    from .integrations.hermes.scope import SettingsUnreadable, profile_home
 
     if getattr(args, "profile", None):
         try:
@@ -4462,6 +4462,16 @@ def _cmd_hermes(args: argparse.Namespace) -> int:
             print(exc, file=sys.stderr)
             return 1
 
+    try:
+        return _cmd_hermes_in(args, install_hermes_plugin, quickstart_hermes, build_diagnostics,
+                              format_diagnostics, render_plugin_shim)
+    except SettingsUnreadable as exc:
+        print(exc, file=sys.stderr)  # nothing written, and no traceback for a file a person can mend
+        return 1
+
+
+def _cmd_hermes_in(args, install_hermes_plugin, quickstart_hermes, build_diagnostics,
+                   format_diagnostics, render_plugin_shim) -> int:
     if args.hermes_command == "install":
         result = install_hermes_plugin(
             hermes_home=args.hermes_home,

@@ -603,14 +603,19 @@ def _hermes(scope, st: cn.Status, args) -> tuple[bool, str]:
         install_hermes_plugin,
     )
 
+    from .integrations.hermes.scope import SettingsUnreadable
+
     held_elsewhere = bool(st.provider and st.provider != "mnemos")
     sidecar = held_elsewhere or bool(getattr(args, "agent_safe", False))
-    result = install_hermes_plugin(
-        db_path=_db(scope), agent_id=scope.agent_id, person_id=scope.person_id,
-        project_scope=scope.project_scope,
-        mode=SIDECAR_MODE if sidecar else PROVIDER_MODE,
-        configure_mcp=sidecar, activate=not sidecar, agent_safe=sidecar,
-    )
+    try:
+        result = install_hermes_plugin(
+            db_path=_db(scope), agent_id=scope.agent_id, person_id=scope.person_id,
+            project_scope=scope.project_scope,
+            mode=SIDECAR_MODE if sidecar else PROVIDER_MODE,
+            configure_mcp=sidecar, activate=not sidecar, agent_safe=sidecar,
+        )
+    except SettingsUnreadable as exc:
+        return False, str(exc)  # nothing written
     return not result.warnings, result.summary() + "\nRestart Hermes to load it."
 
 

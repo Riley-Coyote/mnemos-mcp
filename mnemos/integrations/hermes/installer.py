@@ -22,6 +22,7 @@ from .scope import (
     default_hermes_home,
     profile_agent_id,
     profile_store,
+    read_settings,
     save_hermes_mnemos_config,
     slugify,
 )
@@ -397,6 +398,9 @@ def install_hermes_plugin(
         raise ValueError(f"Unsupported Hermes Mnemos mode: {mode}")
 
     home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
+    # Settings that can't be read stop it before anything is written
+    # (SettingsUnreadable): they are never written over.
+    read_settings(home)
     plugin_dirs = provider_plugin_dirs(home)
     plugin_dir = plugin_dirs[0]
     mcp_name = slugify(mcp_server_name, DEFAULT_MCP_SERVER_NAME)
@@ -705,6 +709,7 @@ def quickstart_hermes(
     """Install Mnemos for Hermes with safe defaults and an immediate doctor pass."""
 
     home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
+    read_settings(home)  # as install does, before anything is looked at or written
     before = build_diagnostics(home)
     preserved_provider = str(before.get("active_memory_provider") or "")
     wants_provider = bool(provider or activate_provider)
