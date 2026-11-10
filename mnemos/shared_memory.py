@@ -15,6 +15,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .attribution import origin_suffix
 from .core.engram import Engram
 from .cue import local_day
 from .store.sqlite_store import EngramStore, OPENING_PATIENCE_SECONDS, SCHEMA_VERSION
@@ -186,7 +187,10 @@ def _recall_locked(store, index, query, agent_id, session):
         memory = result.engram
         author = "the person" if memory.author_kind == "person" else memory.owner_agent_id
         signature = author + (f" | {memory.author_model}" if memory.author_model else "")
-        rows.append(f"- [shared] {memory.id} | {signature} | {local_day(memory.created_at)}\n{memory.content}")
+        rows.append(
+            f"- [shared] {memory.id} | {signature} | {local_day(memory.created_at)}"
+            f"{origin_suffix({'origin': memory.origin})}\n{memory.content}"
+        )
     return "\n".join(rows)
 
 

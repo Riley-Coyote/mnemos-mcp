@@ -175,11 +175,15 @@ def test_shared_writes_keep_hook_registered_source_labels(tmp_path, monkeypatch,
                 assert written.state == "active"
                 assert written.lineage.supersedes == [original_id]
         recalled = subprocess.check_output(
-            [sys.executable, "-c", "import sys; from mnemos.shared_memory import recall; "
-             "print(recall(sys.argv[1], agent_id='another-agent'))", memory_id],
+            [sys.executable, "-c", "import json, sys; from mnemos.shared_memory import recall; "
+             "print(json.dumps([recall(query, agent_id='another-agent') "
+             "for query in (sys.argv[1], 'copper lantern')]))", memory_id],
             text=True,
         )
-        assert written.content in recalled
+        for result in json.loads(recalled):
+            assert written.content in result
+            assert result.count(f"project={expected['project_name']} ({expected['project_id']})") == 1
+            assert result.count(f"task={expected['thread_title']} ({FIRST})") == 1
     finally:
         runtime.close()
 
