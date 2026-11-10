@@ -105,7 +105,9 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
   session writes the ones you left empty and keeps the ones you set; once there's a memory,
   they're there to read more than to change. A home that already had a memory with them
   empty goes on as before: the person each chat names, and the chat's name or the folder
-  Hermes was started in.
+  Hermes was started in. Give `db_path` as a full path (starting with `/`, `~/` or
+  `$HERMES_HOME/`): one that isn't is taken from the folder Hermes was started in, so it
+  changes with that folder.
 
 A conversation reads its settings when it starts. After changing one, restart Hermes (the
 gateway, or the `hermes` you're in). If the file can't be read (cut short, or a comma
