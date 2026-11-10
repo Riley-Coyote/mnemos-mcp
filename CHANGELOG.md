@@ -2,37 +2,92 @@
 
 ## Unreleased
 
-Five fixes inside Hermes, from Nous's review of the catalog entry
-(NousResearch/hermes-agent#151540). Nothing changes anywhere else.
+Fixes inside Hermes: what Nous's review of the catalog entry asked for
+(NousResearch/hermes-agent#151540), and what a second read of the plugin found after it. One fix
+reaches every agent, a correction by an id that names nothing. Nothing else changes outside Hermes.
 
-### Inside Hermes
+### Inside Hermes: what leaves, and whose it is
 
 - **The upkeep process is no longer handed Hermes's environment.** The upkeep a capture or the end
   of a session starts runs in a process of its own, and it was given everything Hermes's process
   holds: every provider's key, the bot tokens, all of it, for a process that uses one key at most.
-  Now it gets what a process needs to run (the path, the home folder, the language), Mnemos's own
-  plain settings, and what was chosen for Mnemos, read through Hermes for the profile that is
-  speaking: the chosen provider's one key, only when upkeep may use a model (`deep_maintenance`),
-  and Gemini's only when meaning search is set to it. On a gateway serving several profiles, a
-  profile's upkeep ran on the keys of the profile the gateway was started for; now it runs on its
-  own.
-- **A profile never takes the gateway's choice of provider.** `MNEMOS_LLM_PROVIDER` in Hermes's own
-  environment also read as `llm.provider` in Mnemos's config, so on such a gateway a profile that
-  had chosen nothing took the choice of the one it was started for. Inside Hermes the choice now
-  comes from Hermes, for the profile speaking, or from the config file.
+  Now it gets, each by name, what a process needs to run (the path, the home folder, the language),
+  Mnemos's own tuning numbers, and what was chosen for Mnemos, read through Hermes for the profile
+  that is speaking: the chosen provider's one key, only when Mnemos may use a model
+  (`deep_maintenance`), and Gemini's only when meaning search is set to it. No name goes because of
+  what it looks like: not another `MNEMOS_` one, nor an `LC_` one that isn't the locale's. If its
+  settings can't be read, the upkeep runs in the call that asked instead of not at all.
+- **A profile never takes what the gateway's environment says.** One gateway can serve several
+  profiles, and its environment is the one it was started for. Read straight from it, that
+  profile's choices were every profile's: its model provider (`MNEMOS_LLM_PROVIDER` also read as
+  `llm.provider` in Mnemos's config), its provider for meaning search (`MNEMOS_EMBEDDINGS_PROVIDER`,
+  the same way: a profile that chose nothing, holding a Gemini key for something else, had its
+  memory's words sent to Google), its memory (`MNEMOS_DB_PATH`, `MNEMOS_AGENT_ID` and the like: every
+  profile that named none opened that one file, as that one agent) and its person's name. Inside
+  Hermes all of these are now asked of Hermes, which answers for the profile that is speaking, or
+  come from the config file.
+- **A Hermes agent's page writes only in that agent's memory, and looks at nothing else.** The page
+  shows the other agents whose memory is kept beside this one's, and the plugin's README said it
+  only read them. It wrote in them too (a note, a correction, a memory let go), and in the
+  machine's shared memory, other agents' entries included. To show the quiet hours it also read
+  every LaunchAgent (or systemd unit, or the crontab) on the machine and ran `launchctl`,
+  `systemctl` or `crontab`, though the README said Mnemos starts no other program; and its own
+  threads, which serve whoever asks, could read keys outside any profile. Inside Hermes it now
+  writes in its own memory, reads the others, runs nothing and reads no key. Anywhere else the
+  page is yours over all of them, as before.
+- **A scheduled run writes nothing by itself.** Hermes gives its cron jobs the memory too, and its
+  provider guide asks that automatic writes be skipped there. Mnemos skipped its upkeep and the
+  copy of MEMORY.md, and the rest ran as in a conversation: the job was woken (a session counted,
+  and what shows once, a question or your note, spent on a run nobody reads), what came with its
+  prompt was strengthened by coming, and the rules told it to leave a handoff, which the next new
+  chat woke to. Now a job gets a short read of the memory that records nothing, what comes with
+  its prompt leaves no trace, it is told what kind of run this is, and it isn't offered the page.
+  The agent's own tools work there as before: a job can be its quiet hour. What it keeps there is
+  kept, and the upkeep a save is followed by in a conversation waits for one: a job that kept one
+  thing used to start a cycle over the whole memory.
+
+### Inside Hermes: the rest
+
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
   `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
   of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass
   now, about a millisecond.
 - **The page closes when it's done with.** A page an agent opened with `mnemos_page` was served
   for as long as Hermes ran, which for a gateway is days. It stays while a conversation that
-  opened it goes on and while someone has it open, and closes ten minutes after both have ended.
-  Asked for again, it opens anew.
-- **A Hermes agent's page writes in no other agent's memory.** The page shows the other agents
-  whose memory is kept beside this one's, and the plugin's README said it only read them. It wrote
-  in them too: a note, a correction, a memory let go, in the memory of an agent Hermes doesn't run.
-  Inside Hermes it now reads them and writes only in its own. Anywhere else the page is yours over
-  all of them, as before.
+  opened it goes on and while someone is using it, and closes about ten minutes after both end,
+  watched from the moment it opens, so one whose conversation Hermes dropped closes too. Asked for
+  again, it opens anew.
+- **A backup of Hermes takes the agent's memory with it.** `hermes backup` takes Hermes's own
+  folder and what the memory provider names outside it. The memory is outside it, in `~/.mnemos`,
+  and Mnemos named nothing, so a backup left it behind without a word. It names the file now, and
+  first folds into it what SQLite still holds in its log: while a conversation is open that can be
+  all of it.
+- **You're told when memory came with your message.** Hermes shows a line when it did ("Mnemos —
+  recalled 3 memories"), from what the provider says its last recall brought. Mnemos said nothing,
+  so nothing showed.
+- **Each message is recalled for once.** After every turn Mnemos recalled the turn's text again, to
+  warm a next recall that is always for other words. It warmed nothing, held the conversation's
+  lock while the next turn waited, and with Gemini chosen sent the turn's words there twice.
+- **A tool answers in the words that were kept.** Everything outside ASCII came back as an escape:
+  a memory in Chinese or Japanese was five times its size in the answer, past the limit its text
+  had been cut to. And half a character pair in what the model sent came back as a codec error in
+  place of the memory being kept.
+- **What Hermes shows about Mnemos is true of it there.** The settings in Hermes's dashboard gave,
+  as the default place for the memory, where it was kept before it moved to `~/.mnemos`, and the
+  dashboard saves a default it shows; each now says in plain words what it is, and the one that
+  lets a model work on the memory says what then leaves the machine. The page's tool says how long
+  the page stays here, not in an MCP session. And a health card with no local model no longer says
+  to `pip install` into an environment Hermes builds.
+- **A conversation called on after it ended starts again as itself**: the same profile, the same
+  conversation, the same kind of run. It started with none of what Hermes had told it.
+
+### Everywhere
+
+- **A correction by an id that names nothing changes nothing, and says so.** `mnemos_correct` with a
+  `target_id` that names nothing here (mistyped, made up, another agent's) captured the correction
+  as a new memory and said it had worked. The memory it meant to replace stayed in use beside it,
+  saying the old thing. Now nothing is changed or kept, and the answer names the id. A correction
+  by a query that matches nothing is still kept as new continuity, as before.
 
 ## 0.6.6 (2026-11-08)
 
