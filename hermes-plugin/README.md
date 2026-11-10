@@ -84,7 +84,8 @@ that want a profile each.
 
 - The memory: `~/.mnemos/hermes.db` for the default profile, and
   `~/.mnemos/hermes-<profile>.db` for each other one, unless you name another file
-  (`db_path`, below) before the first session.
+  (`db_path`, below) before the first session. A home that already had a memory in
+  `$HERMES_HOME/mnemos/mnemos.db` keeps it there, as the agent named after the profile.
 - Its settings: `$HERMES_HOME/mnemos.json`, with `mnemos.json.bak` beside it once they've
   been rewritten: the copy from before.
 

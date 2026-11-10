@@ -12,6 +12,12 @@ home on a machine without Mnemos's own config. Two homes used something else:
 
 The behaviour is what it was; the words now say it. A home with a memory going
 on as it did is also pinned in ``tests/test_hermes_half_named_memory.py``.
+
+The same held for where the memory is and which agent it is: "Left empty:
+~/.mnemos/hermes.db" and "Left empty: hermes". A home that already had a
+memory with these empty goes on with it where it is, in
+``$HERMES_HOME/mnemos/mnemos.db``, as the agent Hermes names for the profile
+(``default`` for the default one), or ``hermes`` where Hermes names none.
 """
 
 from __future__ import annotations
@@ -76,6 +82,34 @@ def test_the_help_says_each_of_them():
     assert "the chat's name" in project and "the folder Hermes was started in" in project
 
 
+@pytest.mark.parametrize(("profile", "named_by_hermes", "agent"), [
+    ("", "default", "default"),
+    ("work", "work", "work"),
+    ("work", None, "hermes"),
+])
+def test_a_home_with_a_memory_goes_on_where_and_as_the_help_says(profile, named_by_hermes, agent):
+    home = Path.home() / ".hermes" / ("profiles/" + profile if profile else "")
+    (home / "mnemos").mkdir(parents=True)
+    (home / "mnemos" / "mnemos.db").write_bytes(b"")  # the memory it kept before its settings were filled in
+    provider = MnemosMemoryProviderCore()
+    identity = {"agent_identity": named_by_hermes} if named_by_hermes else {}
+    try:
+        provider.initialize("s1", hermes_home=str(home), platform="cli", **identity)
+        assert Path(provider.scope.db_path) == home / "mnemos" / "mnemos.db"
+        assert provider.scope.agent_id == agent
+    finally:
+        provider.shutdown()
+
+
+def test_the_help_says_where_and_which_agent():
+    shown = _help()
+    where, who = shown["db_path"], shown["agent_id"]
+    for said in (where, who):
+        assert "already had a memory" in said, said
+    assert "$HERMES_HOME/mnemos/mnemos.db" in where and "~/.mnemos/hermes.db" in where
+    assert "the profile's name as Hermes gives it" in who and "default" in who and "hermes" in who
+
+
 def test_the_readme_says_the_same():
     readme = (Path(__file__).resolve().parents[1] / "hermes-plugin" / "README.md").read_text()
     settings = readme.split("## Settings", 1)[1].split("\n## ", 1)[0]
@@ -83,3 +117,5 @@ def test_the_readme_says_the_same():
     assert "~/.mnemos/config.json" in settings and "already had a memory" in settings
     files = readme.split("**Its own files.**", 1)[1].split("\n- **", 1)[0]
     assert "`~/.mnemos/config.json`" in files and "person and project" in files
+    kept = readme.split("## Where it's kept", 1)[1].split("\n## ", 1)[0]
+    assert "`$HERMES_HOME/mnemos/mnemos.db`" in kept
