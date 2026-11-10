@@ -337,7 +337,15 @@ def _hermes_answers_for(home: Path):
         from agent.secret_scope import build_profile_secret_scope, get_secret, reset_secret_scope, set_secret_scope
     except ImportError:
         return lambda name: ""
-    secrets = build_profile_secret_scope(home)
+    try:
+        secrets = build_profile_secret_scope(home)
+    except Exception:
+        # Hermes couldn't build it (a file of an administrator's it can't
+        # read, a secret source that failed): the profile goes by its
+        # mnemos.json alone, and isn't left out of the backup.
+        logger.warning("Hermes couldn't answer for the profile in %s; Mnemos goes by its mnemos.json.", home,
+                       exc_info=True)
+        return lambda name: ""
 
     def bound(name: str) -> Any:
         token = set_secret_scope(secrets, profile_home=str(home))
@@ -347,7 +355,12 @@ def _hermes_answers_for(home: Path):
             reset_secret_scope(token)
 
     def ask(name: str) -> str:
-        return str(contextvars.copy_context().run(bound, name) or "").strip()
+        try:
+            return str(contextvars.copy_context().run(bound, name) or "").strip()
+        except Exception:
+            logger.warning("Hermes couldn't answer for the profile in %s; Mnemos goes by its mnemos.json.", home,
+                           exc_info=True)
+            return ""
 
     return ask
 

@@ -141,3 +141,23 @@ def test_a_profile_named_in_its_mnemos_json_is_still_found_so(hermes, monkeypatc
     named = MnemosMemoryProviderCore().backup_paths()
 
     assert sorted(Path(path).name for path in named) == ["hermes-twin.db", "hermes-twin.db-wal"]
+
+
+def test_a_profile_hermes_cant_answer_for_goes_by_its_mnemos_json(hermes, monkeypatch):
+    """Hermes raising for one profile (an administrator's file it can't read, a
+    secret source that failed) left that profile out of the backup."""
+    root = Path.home() / ".hermes"
+    root.mkdir(parents=True)
+    twin = root / "profiles" / "twin"
+    twin.mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(twin))
+    _a_memory(Path.home() / ".mnemos" / "hermes-twin.db", twin, "The twin profile keeps the tide tables.")
+
+    def refuses(*args, **kwargs):
+        raise RuntimeError("Hermes could not read this profile's secrets")
+
+    monkeypatch.setattr(sys.modules["agent.secret_scope"], "build_profile_secret_scope", refuses)
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    named = MnemosMemoryProviderCore().backup_paths()
+
+    assert sorted(Path(path).name for path in named) == ["hermes-twin.db", "hermes-twin.db-wal"]
