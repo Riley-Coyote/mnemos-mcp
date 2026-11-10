@@ -225,7 +225,6 @@ def _close_pages() -> None:
         page.server_close()
     provider_module._pages.clear()
     provider_module._page_holders.clear()
-    provider_module._pages_closing.clear()
 
 
 def test_the_page_opens_once_for_a_memory(tmp_path):
@@ -469,7 +468,7 @@ def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(
 
         time.sleep(3.0)  # nobody: the wait, the watch's next look, and the server's own stop
         assert not _answers(url), "the page was still served after everyone had left it"
-        assert not provider_module._pages and not provider_module._pages_closing
+        assert not provider_module._pages
 
         # Asked for again, it opens anew.
         third = _provider(tmp_path)
@@ -495,6 +494,28 @@ def test_a_conversation_that_asks_again_keeps_the_page(tmp_path, monkeypatch):
         assert _answers(url), "the page closed under the conversation that took it back"
     finally:
         later.shutdown()
+        _close_pages()
+
+
+def test_a_page_closes_though_its_conversation_never_said_it_had_ended(tmp_path, monkeypatch):
+    """The page was watched only from the last conversation's goodbye. One
+    Hermes dropped without ending it said none, and its page was served for as
+    long as Hermes ran. It is watched from the moment it opens."""
+    import gc
+    import time
+
+    monkeypatch.setattr(provider_module, "_PAGE_LEFT_ALONE_SECONDS", 1.0)
+    dropped = _provider(tmp_path)
+    runtime = dropped._runtime
+    try:
+        url = _page_address(_call(dropped, "mnemos_page"))
+        del dropped  # no shutdown
+        gc.collect()
+        time.sleep(3.0)
+        assert not _answers(url), "the page was still served, with no conversation left to end it"
+        assert not provider_module._pages
+    finally:
+        runtime.close()
         _close_pages()
 
 

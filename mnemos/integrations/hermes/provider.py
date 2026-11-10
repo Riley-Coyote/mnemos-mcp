@@ -141,41 +141,37 @@ _open_files_seen = False
 _PAGE_LEFT_ALONE_SECONDS = 600.0
 _pages: dict[tuple[Any, ...], Any] = {}
 _page_holders: dict[tuple[Any, ...], weakref.WeakSet[Any]] = {}
-_pages_closing: set[tuple[Any, ...]] = set()
 _pages_lock = threading.Lock()
 
 
-def _close_page_when_left_alone(key: tuple[Any, ...], page: Any) -> None:
-    """Watch a page no conversation holds any more, in a thread of its own, and
-    close it once it has gone unasked for ``_PAGE_LEFT_ALONE_SECONDS``. A
-    conversation that asks for the page again takes it back, and the watch ends."""
+def _watch_page(key: tuple[Any, ...], page: Any) -> None:
+    """Watch a page from the moment it opens, in a thread of its own, and close
+    it once no conversation holds it and it has gone unasked for
+    ``_PAGE_LEFT_ALONE_SECONDS``.
+
+    From the moment it opens, not from the last conversation's goodbye. A
+    conversation Hermes dropped without ending it says no goodbye, and its page
+    would be served for as long as Hermes ran."""
 
     def watch() -> None:
         while True:
             time.sleep(min(15.0, max(0.05, _PAGE_LEFT_ALONE_SECONDS / 4)))
             with _pages_lock:
-                held = bool(_page_holders.get(key))
-                gone = _pages.get(key) is not page
-                left_alone = time.monotonic() - page.last_asked >= _PAGE_LEFT_ALONE_SECONDS
-                if held or gone or left_alone:
-                    _pages_closing.discard(key)
-                if held or gone:
+                if _pages.get(key) is not page:
                     return
-                if left_alone:
-                    del _pages[key]
-                    _page_holders.pop(key, None)
-            if left_alone:
-                try:
-                    page.shutdown()
-                    page.server_close()
-                except Exception:
-                    logger.debug("Mnemos couldn't close its page", exc_info=True)
-                return
-
-    with _pages_lock:
-        if key in _pages_closing:
+                if _page_holders.get(key):
+                    continue
+                if time.monotonic() - page.last_asked < _PAGE_LEFT_ALONE_SECONDS:
+                    continue
+                del _pages[key]
+                _page_holders.pop(key, None)
+            try:
+                page.shutdown()
+                page.server_close()
+            except Exception:
+                logger.debug("Mnemos couldn't close its page", exc_info=True)
             return
-        _pages_closing.add(key)
+
     threading.Thread(target=watch, name="mnemos-page-close", daemon=True).start()
 
 
@@ -753,7 +749,7 @@ class MnemosMemoryProviderCore:
 
     def _let_go_of_page(self) -> None:
         """This conversation has ended: it no longer holds the page it opened.
-        The last one to let go leaves the page to close when it's left alone."""
+        Once none does, the page's watch closes it when it's left alone."""
         key, self._page_key = self._page_key, None
         if key is None:
             return
@@ -761,10 +757,6 @@ class MnemosMemoryProviderCore:
             holders = _page_holders.get(key)
             if holders is not None:
                 holders.discard(self)
-            page = _pages.get(key)
-            if page is None or holders:
-                return
-        _close_page_when_left_alone(key, page)
 
     def _hear_model(self, model: Any) -> None:
         """The model Hermes says it is running signs this conversation's writes,
@@ -867,11 +859,14 @@ class MnemosMemoryProviderCore:
         }
         key = tuple(kwargs.values())
         with _pages_lock:
-            said, page = open_page(kwargs, _pages.get(key))
+            open_already = _pages.get(key)
+            said, page = open_page(kwargs, open_already)
             if page is not None:
                 _pages[key] = page
                 _page_holders.setdefault(key, weakref.WeakSet()).add(self)
                 self._page_key = key
+        if page is not None and page is not open_already:
+            _watch_page(key, page)
         return said
 
     def _ensure_runtime(self) -> None:
