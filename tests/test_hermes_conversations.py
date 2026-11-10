@@ -486,9 +486,10 @@ class TestANewStoreOpenedTogether:
 
 
 class TestOneTopicsOwnThreads:
-    """Hermes runs a turn's queued prefetch on one thread and the next message
-    on another, both on one topic's provider and one SQLite connection. Two at
-    once could stop the whole process: every topic, silent, no error."""
+    """Hermes calls one topic's provider from several threads (a message's
+    prefetch on one, a tool call or the turn's end on another), all on one
+    SQLite connection. Two at once could stop the whole process: every topic,
+    silent, no error."""
 
     def test_two_threads_on_one_topic_cant_freeze_the_gateway(self, tmp_path):
         code = (
@@ -513,7 +514,7 @@ class TestOneTopicsOwnThreads:
             "        except Exception as exc:\n"
             "            errors.append(repr(exc))\n"
             "work = [\n"
-            "    lambda n: p.queue_prefetch(f'knee question {n}', session_id='s1'),\n"
+            "    lambda n: p.prefetch(f'knee question {n}', session_id='s1'),\n"
             "    lambda n: p.prefetch(f'surgery detail {n}', session_id='s1'),\n"
             "    lambda n: p.handle_tool_call('mnemos_capture', {'content': f'More fact {n} on the deck.'}),\n"
             "]\n"

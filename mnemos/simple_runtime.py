@@ -1319,6 +1319,9 @@ class MnemosRuntime:
         # Whether this runtime's tool calls are the agent living, and count its
         # day (see consolidation/lived.py). A person at the command line isn't.
         self._marks_lived = marks_lived
+        # How many rows the last recall showed (``_recall_own``), for a host
+        # that tells the person what came up (Hermes's recall line).
+        self.last_recall_rows = 0
         self._store: EngramStore | None = None
         self._encoder: Encoder | None = None
         self._retriever: ReactiveRetriever | None = None
@@ -5760,6 +5763,7 @@ class MnemosRuntime:
         run nobody is in). The agent's own recall is a use, and reinforces.
         """
 
+        self.last_recall_rows = 0
         if standing:
             self._ensure_init()
             return self._recall_standing(query)
@@ -5775,6 +5779,7 @@ class MnemosRuntime:
         whole = self._recall_by_id(query.strip()) if reinforce else ""
         if whole:
             self._traced_read(query.strip())
+            self.last_recall_rows = 1
             return whole
 
         found = self._recall_rows(query, max_results)
@@ -5854,6 +5859,7 @@ class MnemosRuntime:
         # beside it while it is among those.
         if reinforce:
             self._reinforce_returned(query, returned)
+        self.last_recall_rows = len(found) + len(faded)
         return "\n".join(lines)
 
     def _recall_rows(self, query: str, max_results: int) -> list[RetrievalResult]:

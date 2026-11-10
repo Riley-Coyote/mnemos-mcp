@@ -713,3 +713,59 @@ def test_what_comes_with_a_message_says_it_isnt_a_search(tmp_path):
     assert "to look for something, use mnemos_recall" in wake
     # And it comes off a message the way the rest of what the provider adds does.
     assert provider_module._clean_text(f"my own words\n\n{block}") == "my own words"
+
+
+def test_the_person_is_told_how_much_came_up(tmp_path, monkeypatch):
+    """Hermes shows the person a line when memory came with their message
+    ("🧠 Mnemos — recalled 2 memories"), from what the provider says its last
+    prefetch brought (``recall_status``). Mnemos said nothing, so nothing
+    showed: memory came with a message and the person couldn't see that it had."""
+    import dataclasses
+    import sys
+    import types
+
+    @dataclasses.dataclass(frozen=True)
+    class RecallStatus:
+        provider_label: str
+        count: int
+        glyph: str = "🧠"
+
+    provider = _provider(tmp_path)
+    _call(provider, "mnemos_capture", content="The kiln is fired on Tuesdays.")
+    _call(provider, "mnemos_capture", content="The kiln's glaze is mixed the night before.")
+    assert provider.prefetch("when is the kiln fired", session_id="session-1")
+    assert provider.recall_status() is None, "a Hermes with no such line was handed one"
+
+    agent = types.ModuleType("agent")
+    agent.memory_provider = types.ModuleType("agent.memory_provider")
+    agent.memory_provider.RecallStatus = RecallStatus
+    monkeypatch.setitem(sys.modules, "agent", agent)
+    monkeypatch.setitem(sys.modules, "agent.memory_provider", agent.memory_provider)
+
+    assert provider.recall_status() == RecallStatus("Mnemos", 2)
+    # The same message again is answered from what was kept: the same count.
+    assert provider.prefetch("when is the kiln fired", session_id="session-1")
+    assert provider.recall_status() == RecallStatus("Mnemos", 2)
+    # A message nothing comes up for says nothing, never the last one's count.
+    assert provider.prefetch("zzyzx qwxv", session_id="session-1") == ""
+    assert provider.recall_status() is None
+    provider.shutdown()
+
+
+def test_a_finished_turn_is_not_recalled_again(tmp_path, monkeypatch):
+    """After each turn Hermes offers the turn's text to warm the next recall.
+    Mnemos recalled it, though the next message is another query: nothing was
+    warmed, and the next turn's start waited behind it for this conversation's
+    lock. Each message gets its own recall when it arrives."""
+    provider = _provider(tmp_path)
+    _call(provider, "mnemos_capture", content="The kiln is fired on Tuesdays.")
+    asked = []
+    monkeypatch.setattr(
+        provider._runtime, "_recall_own",
+        lambda *args, **kwargs: asked.append(args) or "No relevant continuity found.",
+    )
+    provider.queue_prefetch("when is the kiln fired", session_id="session-1")
+    assert asked == []
+    provider.prefetch("when is the kiln fired", session_id="session-1")
+    assert len(asked) == 1
+    provider.shutdown()

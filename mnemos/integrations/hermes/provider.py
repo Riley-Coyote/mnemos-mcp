@@ -298,7 +298,7 @@ _MIRROR_MARK = "Mirrored from Hermes built-in"
 
 def _one_at_a_time(method):
     """One provider, one SQLite connection, and Hermes calls from several threads:
-    a turn's queued prefetch on one, the next message on another. On one
+    a message's prefetch on one, a tool call or the turn's end on another. On one
     connection two at once can stop the whole process, every topic with it, with
     no error: one waits for SQLite holding Python's lock, the other inside SQLite
     for Python's lock, to run the connection's trace callback."""
@@ -325,9 +325,11 @@ class MnemosMemoryProviderCore:
         self._session_id = ""
         self._conversation_follows_session = True
         # What prefetch last recalled for each session: the query, the store's
-        # revision then (_store_revision), and the context. Any write, here
-        # or by another process, changes the revision.
-        self._prefetch_cache: dict[str, tuple[str, tuple[int, int] | None, str]] = {}
+        # revision then (_store_revision), the context, and how many rows it
+        # holds. Any write, here or by another process, changes the revision.
+        self._prefetch_cache: dict[str, tuple[str, tuple[int, int] | None, str, int]] = {}
+        # How many rows the last prefetch brought (recall_status); 0 for none.
+        self._last_recalled = 0
         self._writes_enabled = True
         self._turn_count = 0
         self._host_model = ""
@@ -410,8 +412,14 @@ class MnemosMemoryProviderCore:
         wake_limit = self._config.max_wake_chars
         return _truncate(body, wake_limit) if wake_limit else body
 
-    @_one_at_a_time
     def prefetch(self, query: str, *, session_id: str = "") -> str:
+        # Before the lock: while this waits its turn, the last message's count
+        # is no longer the last prefetch's.
+        self._last_recalled = 0
+        return self._prefetch(query, session_id=session_id)
+
+    @_one_at_a_time
+    def _prefetch(self, query: str, *, session_id: str = "") -> str:
         self._ensure_runtime()
         assert self._runtime is not None
         assert self._config is not None
@@ -424,6 +432,7 @@ class MnemosMemoryProviderCore:
         cached = self._prefetch_cache.get(cache_key)
         revision = self._store_revision()
         if cached and cached[0] == clean and revision is not None and cached[1] == revision:
+            self._last_recalled = cached[3]
             return cached[2]
         # What comes up by itself is a use of it, in a conversation. In a run
         # nobody is in it is only read: nothing strengthened, linked or woken.
@@ -434,6 +443,7 @@ class MnemosMemoryProviderCore:
             return ""
         rows = recalled.split("\n", 1)[1].lstrip("\n") if recalled.startswith("Mnemos recall for:") else recalled
         context = _truncate(f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{rows}", self._config.max_context_chars)
+        brought = self._last_recalled = max(1, self._runtime.last_recall_rows)
         after = self._store_revision()
         # Cached only when no other connection committed during the recall:
         # what it read may be older than that commit (a forget, a correction),
@@ -441,14 +451,34 @@ class MnemosMemoryProviderCore:
         # own writes, the recall's bookkeeping, are read after it, so they
         # count as no change.
         if revision is not None and after is not None and after[0] == revision[0]:
-            self._prefetch_cache[cache_key] = (clean, after, context)
+            self._prefetch_cache[cache_key] = (clean, after, context, brought)
         else:
             self._prefetch_cache.pop(cache_key, None)
         return context
 
-    @_one_at_a_time
+    def recall_status(self) -> Any:
+        """What the last prefetch brought, for the line Hermes shows the person
+        when memory came with their message ("🧠 Mnemos — recalled 3
+        memories"). None when it brought nothing, and on a Hermes from before
+        it had the line."""
+        brought = self._last_recalled
+        if brought <= 0:
+            return None
+        try:
+            from agent.memory_provider import RecallStatus
+        except ImportError:
+            return None
+        return RecallStatus(provider_label="Mnemos", count=brought)
+
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
-        self.prefetch(query, session_id=session_id)
+        """Nothing to warm. Recall here is on this machine and quick, so each
+        message gets its own when it arrives (``prefetch``).
+
+        Until 0.6.7 this recalled the finished turn's text again. The next
+        message is another query, so it warmed nothing, and it held this
+        conversation's lock while it ran: the next turn's start waited behind
+        it, and with Gemini chosen for meaning search the turn's words went
+        there a second time."""
 
     def _store_revision(self) -> tuple[int, int] | None:
         """The store's revision as this provider's connection sees it: SQLite's
