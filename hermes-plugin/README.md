@@ -92,7 +92,8 @@ them.
   conversation costs, and what the agent reads of its memory in it goes to that model, as
   in any conversation. Its answer is saved on this machine and sent to nobody.
 - Mnemos runs nothing in them and calls no model. It prepares the hour from the memory
-  without changing it, and hands each hour's material once; the agent keeps what it keeps
+  without changing it. What waits for the day's work or a dream is handed once; the agent's
+  own hour hands an open question again until it's answered. The agent keeps what it keeps
   with its own tools, and the day's conversations it reads with Hermes's `session_search`.
 - Hermes denies dangerous commands in a scheduled run unless you've set it otherwise
   (`approvals.cron_mode`).

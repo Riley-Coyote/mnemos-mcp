@@ -3,8 +3,9 @@ agent asks for its hour with ``mnemos_hour``.
 
 The hour is the one ``mnemos life --hour <kind> --handoff`` hands over
 (``_hand_off`` in mnemos/life.py), from the same code: the same words, the same
-material read from this profile's memory without changing it, recorded so the
-same material isn't handed twice. After its fence come a few sentences true
+material read from this profile's memory without changing it, recorded so what
+waits for the day's work or a dream isn't handed twice (an open question comes
+to the agent's own hour again until it is answered). After its fence come a few sentences true
 only here: which of the memory's tools answer it, where a note waits, and where
 the day's conversations are. Nothing here runs a program or calls a model, and
 nothing of Hermes's is imported: the agent schedules the jobs with Hermes's own
@@ -40,8 +41,9 @@ HOUR_TOOL: dict[str, Any] = {
         "the middle of a task.\n"
         "\n"
         "It runs nothing and calls no model, and nothing is written into your memory for\n"
-        "you: what you keep, you keep with your memory's own tools. Each hour's material is\n"
-        "handed once. When nothing waits for it, it says the hour would skip.\n"
+        "you: what you keep, you keep with your memory's own tools. What waits for the day's\n"
+        "work or a dream is handed once; your own hour hands an open question again, each\n"
+        "time, until you answer it. When nothing waits for it, it says the hour would skip.\n"
         "\n"
         "Args:\n"
         "    kind: mine (your own hour), ours (the day's work) or dream (a short time to\n"

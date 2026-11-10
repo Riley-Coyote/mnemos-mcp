@@ -91,7 +91,8 @@ release before it, run both ways, found nothing else.
 - **The agent has its quiet hours again, inside Hermes.** A twelfth tool, `mnemos_hour`, hands it
   the hour `mnemos life --hour <kind> --handoff` hands any agent (its own, the day's work, or a
   dream), from the same code: the same words and material, read from the profile's own memory
-  without changing it, and each hour's material handed once. After the hand-off's opening come a
+  without changing it. What waits for the day's work or a dream is handed once; the agent's own
+  hour hands an open question again until it's answered. After the hand-off's opening come a
   few sentences true only in Hermes: which of its memory's tools answer the hour, where a note
   waits for the person, and, for the day's work, that the day's conversations are read with
   `session_search`. The model an hour is prepared for (`MNEMOS_HOUR_MODEL`, if set) is the

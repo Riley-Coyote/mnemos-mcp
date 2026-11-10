@@ -309,3 +309,21 @@ def test_without_fcntl_the_plugin_still_loads_and_answers(tmp_path):
     assert offered == "True"
     reply = json.loads(reply)
     assert reply["ok"] and "macOS and Linux" in reply["result"], reply
+
+
+def test_what_is_said_about_handing_once_is_true(tmp_path):
+    """The words said each hour's material is handed once; your own hour hands
+    an open question again until it's answered (round seven, p09)."""
+    provider = _provider(tmp_path)
+    try:
+        _work(provider)
+        first = _call(provider, "mnemos_hour", kind="mine")
+        again = _call(provider, "mnemos_hour", kind="mine")
+        (tool,) = [t for t in provider.get_tool_schemas() if t["name"] == "mnemos_hour"]
+    finally:
+        provider.shutdown()
+    assert "What did this teach you?" in first and "What did this teach you?" in again
+    said = " ".join(tool["description"].split())
+    assert "Each hour's material is handed once" not in said
+    assert ("What waits for the day's work or a dream is handed once; your own hour hands an open "
+            "question again, each time, until you answer it.") in said
