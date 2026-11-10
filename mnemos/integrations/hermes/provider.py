@@ -341,8 +341,8 @@ def _words(args: dict[str, Any], name: str) -> str:
 
 
 def _cleaned(args: dict[str, Any], name: str) -> str:
-    """An argument without any of the memory context Hermes wraps around a message."""
-    return _clean_text(args.get(name))
+    """An argument the agent wrote, without any span Hermes fenced into it."""
+    return _own_words(args.get(name))
 
 
 def _without_fenced_context(value: str) -> str:
@@ -369,10 +369,22 @@ def _without_fenced_context(value: str) -> str:
     return "".join(kept)
 
 
+def _own_words(text: Any) -> str:
+    """What the agent wrote, whole, but for any span Hermes fenced into it.
+
+    The provider's headings stay: a note about its own memory can be headed
+    the way recall once was. Until 0.6.7 they came off here as they come off a
+    message (``_clean_text``), with all that followed: a capture, a correction
+    or a line of MEMORY.md was kept up to the heading and no further, and the
+    save said ok."""
+    return _without_fenced_context(_whole(str(text or ""))).strip()
+
+
 def _clean_text(text: Any) -> str:
-    value = _without_fenced_context(_whole(str(text or "")))
-    value = _MNEMOS_CONTEXT_RE.sub("", value)
-    return value.strip()
+    """A message Hermes hands over, without what was added to it: any fenced
+    span, and from one of the provider's own headings to the end. Only what is
+    searched for is shorter for it; nothing is kept from here."""
+    return _MNEMOS_CONTEXT_RE.sub("", _own_words(text)).strip()
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -732,7 +744,7 @@ class MnemosMemoryProviderCore:
         if not self._writes_enabled or not self._config.mirror_builtin_memory:
             return
         action = (action or "").lower()
-        clean = _clean_text(content)
+        clean = _own_words(content)
         meta = metadata or {}
         context = (
             f"{_MIRROR_MARK} {target} memory. "
@@ -745,8 +757,8 @@ class MnemosMemoryProviderCore:
             # no content at all, only these.
             predecessor = self._mirrored_entry(
                 target,
-                whole=_clean_text(meta.get("previous_content")),
-                piece=_clean_text(meta.get("old_text")) or (clean if action != "replace" else ""),
+                whole=_own_words(meta.get("previous_content")),
+                piece=_own_words(meta.get("old_text")) or (clean if action != "replace" else ""),
             )
             if action != "replace":
                 # Forgotten only when exactly one mirrored entry is it;

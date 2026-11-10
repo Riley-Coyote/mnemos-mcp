@@ -696,6 +696,50 @@ def test_what_hermes_fenced_into_a_message_comes_off(message, left):
     assert provider_module._clean_text(message) == left
 
 
+_UNDER_A_HEADING = (
+    "How my memory finds things.\n\n# Mnemos Recall\nBy meaning and by the words themselves, four at a time."
+)
+
+
+def test_what_the_agent_writes_under_one_of_these_headings_is_kept_whole(tmp_path):
+    """The provider's headings come off a message Hermes hands it, with all
+    that follows them. Until 0.6.7 they came off what the agent wrote too: a
+    note about its own memory, headed the way recall once was, was kept up to
+    the heading and no further, and the save said ok."""
+    provider = _provider(tmp_path)
+    try:
+        _call(provider, "mnemos_capture", content=_UNDER_A_HEADING)
+        kept = _row(tmp_path, _UNDER_A_HEADING)
+        assert kept is not None, "a capture was cut off at a heading of the agent's own"
+
+        found = _call(provider, "mnemos_recall", query="# Mnemos Recall\nfour at a time")
+        assert "four at a time" in found
+
+        corrected = _UNDER_A_HEADING.replace("four", "five")
+        _call(provider, "mnemos_correct", target_id=kept["id"], correction=corrected)
+        assert _row(tmp_path, corrected) is not None, "a correction was cut off at the heading"
+
+        provider.on_memory_write("add", "memory", "House rules.\n# Mnemos Identity Continuity\nShoes off at the door.")
+        mirrored = sqlite3.connect(tmp_path / "a.db")
+        try:
+            rows = [r[0] for r in mirrored.execute("SELECT content FROM engrams WHERE content LIKE 'House rules.%'")]
+        finally:
+            mirrored.close()
+        assert len(rows) == 1 and "Shoes off at the door." in rows[0]
+    finally:
+        provider.shutdown()
+
+
+def test_what_hermes_fenced_still_comes_off_what_the_agent_writes(tmp_path):
+    # A span Hermes fenced is never the agent's own words, in a message or in a save.
+    provider = _provider(tmp_path)
+    try:
+        _call(provider, "mnemos_capture", content=f"The gate code is 4417.\n\n{_FENCED}")
+        assert _row(tmp_path, "The gate code is 4417.") is not None
+    finally:
+        provider.shutdown()
+
+
 @pytest.mark.parametrize("pasted", [
     "<" * 51_000,
     "< " * 25_500,
