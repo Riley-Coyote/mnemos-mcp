@@ -168,6 +168,8 @@ def test_no_setting_is_read_from_the_gateways_own_environment(hermes, tmp_path, 
         _call(provider, "mnemos_health")
         _call(provider, "mnemos_maintain")
         _call(provider, "mnemos_page")
+        for kind in ("mine", "ours", "dream"):  # the quiet hour, as a scheduled job asks for it
+            _call(provider, "mnemos_hour", kind=kind)
         provider.on_memory_write("add", "memory", "The east pier is closed on Mondays.")
         provider.on_session_end([])
         provider.backup_paths()
@@ -195,7 +197,7 @@ def test_no_setting_is_read_from_the_gateways_own_environment(hermes, tmp_path, 
     assert watched.whole <= {"simple_runtime.py:_hosted_upkeep_env"}, watched.whole
     # And the wide test saw what it was for: these are asked of Hermes.
     assert {"MNEMOS_SHARED_MEMORY", "MNEMOS_AGENT_MODEL", "MNEMOS_MAINTENANCE",
-            "MNEMOS_CONSOLIDATION_DECAY_RATE", "MNEMOS_DB_PATH"} <= hermes.asked
+            "MNEMOS_CONSOLIDATION_DECAY_RATE", "MNEMOS_DB_PATH", "MNEMOS_HOUR_MODEL"} <= hermes.asked
 
 
 def test_a_profile_that_turned_sharing_off_shares_nothing(hermes, tmp_path, monkeypatch):

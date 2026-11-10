@@ -44,7 +44,7 @@ import threading
 from .core.engram import _gen_ulid
 from .cue import local_day
 from .setup.state import hours_dir
-from .simple_scope import resolve_scope
+from .simple_scope import named_in_the_environment, resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
 HOUR_KINDS = ("mine", "ours", "dream")
@@ -167,8 +167,10 @@ def hand_off_model(path, scope) -> str:
     """The model whose memory this is, for a hand-off: the person's own choice
     (MNEMOS_HOUR_MODEL), else the memory's resident, else ``""``. Unlike
     ``hour_model`` it never refuses: any model can take an hour handed to it.
-    The questions an hour gives are the ones asked of that model line."""
-    chosen = os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
+    The questions an hour gives are the ones asked of that model line. Inside
+    Hermes the choice is the speaking profile's, asked of Hermes, never the
+    gateway's own environment (``named_in_the_environment``)."""
+    chosen = named_in_the_environment("MNEMOS_HOUR_MODEL").strip()
     if chosen:
         return chosen
     from .interface.context_packet import resident_model
