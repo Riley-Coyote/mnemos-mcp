@@ -3086,7 +3086,7 @@ class MnemosRuntime:
 
         introduced = bool(status["introduced"])
         captured = bool(status["captured"])
-        settle, already = self._setup_part()
+        settle, already = self._setup_part(fresh=not introduced and not captured)
         if not introduced and not captured:
             if not settle and not already:
                 return _ONBOARDING_RITUAL
@@ -3130,12 +3130,13 @@ class MnemosRuntime:
         )
         return "\n".join(lines)
 
-    def _setup_part(self) -> tuple[list[str], str | None]:
+    def _setup_part(self, *, fresh: bool = True) -> tuple[list[str], str | None]:
         """What the first session must settle so this memory carries, and
         what is already set, for the onboarding ritual. Which agent is reading
         decides what that is: Claude Code (``_claude_code_setup_part``, as it
         always was), another agent Mnemos knows (``_other_setup_part``), or one
-        it cannot tell."""
+        it cannot tell. ``fresh``: the first session, before any of the ritual
+        is done (``_onboarding_block``)."""
         try:
             from .setup import harnesses
 
@@ -3143,12 +3144,12 @@ class MnemosRuntime:
         except Exception:
             harness = None
         if harness is not None and harness.key != "claude-code":
-            return self._other_setup_part(harness)
+            return self._other_setup_part(harness, fresh=fresh)
         if harness is None and not in_claude_code():
-            return self._other_setup_part(None)
+            return self._other_setup_part(None, fresh=fresh)
         return self._claude_code_setup_part()
 
-    def _other_setup_part(self, harness) -> tuple[list[str], str | None]:
+    def _other_setup_part(self, harness, *, fresh: bool = True) -> tuple[list[str], str | None]:
         """The setup part for an agent that is not Claude Code: what its
         setup has and has not given this memory, read from the machine, with
         the one command that finishes it. An agent Mnemos cannot identify is
@@ -3216,7 +3217,7 @@ class MnemosRuntime:
                     "- After your context is compacted nothing wakes you again here: call "
                     "mnemos_context yourself."
                 )
-            hours_ask, hours_line = self._other_hours_part(harness)
+            hours_ask, hours_line = self._other_hours_part(harness, fresh=fresh)
             if hours_ask:
                 settle.append(hours_ask)
             if hours_line:
@@ -3225,7 +3226,7 @@ class MnemosRuntime:
         except Exception:
             return [], None
 
-    def _other_hours_part(self, harness) -> tuple[str, str]:
+    def _other_hours_part(self, harness, *, fresh: bool = True) -> tuple[str, str]:
         """The quiet hours for an agent that is not Claude Code, in words true
         for it: what an hour costs and who sees what is thought over in it
         (``harnesses.Hours``). Off unless the person says yes, so the first
@@ -3239,7 +3240,11 @@ class MnemosRuntime:
         agent_id, db_path = self.scope.agent_id, self.db_path
         if self.host_manages_install:
             # Hermes's own scheduler wakes the agent, and it takes its hour with
-            # mnemos_hour: nothing runs from the folder Hermes rebuilds.
+            # mnemos_hour: nothing runs from the folder Hermes rebuilds. A no is
+            # kept nowhere, so it is asked in the fresh first session only; after
+            # that the plugin's README says how they're set up.
+            if not fresh:
+                return "", ""
             from .integrations.hermes.hours import offer
 
             return offer(), ""

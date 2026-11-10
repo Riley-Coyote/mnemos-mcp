@@ -17,6 +17,8 @@ from __future__ import annotations
 from pathlib import Path
 import types
 
+import pytest
+
 from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore
 from mnemos.setup import connect
 from mnemos.setup import harnesses as hs
@@ -136,3 +138,26 @@ def test_the_readme_gives_the_same_three_lines():
     readme = (Path(__file__).resolve().parent.parent / "hermes-plugin" / "README.md").read_text(encoding="utf-8")
     for job in jobs():
         assert f"\n{cron_create_line(job)}\n" in readme, job["name"]
+
+
+@pytest.mark.parametrize("done", ["mnemos_introduce", "mnemos_capture"])
+def test_it_is_asked_in_the_fresh_first_session_and_never_after(tmp_path, done):
+    """A no isn't kept anywhere, so the offer is made in the first session
+    only: in the "almost done" stage a later session reaches when the first
+    did half of its setup, it isn't made again (round seven, p05)."""
+    first = _provider(tmp_path)
+    try:
+        assert "mnemos-hour-mine" in first.system_prompt_block()
+        if done == "mnemos_introduce":
+            first.handle_tool_call(done, {"agent_model": OPUS})
+        else:
+            first.handle_tool_call(done, {"content": "Leo keeps the ferry timetable.", "signed_as": OPUS})
+    finally:
+        first.shutdown()
+    second = _provider(tmp_path)
+    try:
+        again = second.system_prompt_block()
+    finally:
+        second.shutdown()
+    assert "ONBOARDING - almost done" in again, again
+    assert "mnemos-hour-mine" not in again and "cronjob_manage" not in again and "Quiet hours" not in again

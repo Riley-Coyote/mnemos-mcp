@@ -74,7 +74,8 @@ memory, each night at 3:30, when something waits for it.
 They're off until you say yes. The agent asks you once, in its first session, and with your
 yes it makes three of Hermes's scheduled jobs with Hermes's own scheduling tool. Each job
 wakes the agent and asks it to call `mnemos_hour`, which hands it the hour. Nothing is
-scheduled outside Hermes, and no job names a path. To make them yourself:
+scheduled outside Hermes, and no job names a path. It asks in that first session only,
+and keeps no answer: later, these lines are how they're made. To make them yourself:
 
 ```bash
 hermes cron create --name mnemos-hour-mine --deliver local '0 8 * * *' 'This is your quiet hour. Call mnemos_hour with kind mine and take the hour it hands you as your own. End with one line that says what you did, or answer only [SILENT] if the hour skipped.'
