@@ -108,7 +108,9 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
   Hermes was started in.
 
 A conversation reads its settings when it starts. After changing one, restart Hermes (the
-gateway, or the `hermes` you're in).
+gateway, or the `hermes` you're in). If the file can't be read (cut short, or a comma
+missing), Mnemos doesn't start for that home, and Hermes's log names the file and what's
+wrong with it. It never writes over it, and starts no other memory meanwhile.
 
 ## What it does on your machine
 

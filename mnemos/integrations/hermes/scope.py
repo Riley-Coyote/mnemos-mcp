@@ -156,8 +156,50 @@ def _as_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
         return default
 
 
+class SettingsUnreadable(ValueError):
+    """A home's ``mnemos.json`` that is there, isn't blank, and doesn't read as
+    an object of settings."""
+
+
 def _config_path(hermes_home: Path) -> Path:
     return hermes_home / "mnemos.json"
+
+
+def read_settings(hermes_home: str | Path) -> dict[str, Any]:
+    """A home's own ``mnemos.json``, as an object of settings: {} when there is
+    none or it is blank. One that is there and can't be read, or doesn't read
+    as an object, raises ``SettingsUnreadable``, naming the file and what is
+    wrong: the plugin doesn't start for that home and the file isn't written
+    over. Until 0.6.7 it counted as no settings, and the next session settled a
+    new, empty memory and wrote it over the person's edit."""
+
+    path = _config_path(Path(hermes_home).expanduser())
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeError) as exc:
+        reason = getattr(exc, "strerror", None) or str(exc)
+        raise SettingsUnreadable(_unreadable(path, f"it can't be read ({reason})")) from exc
+    if not text.strip():
+        return {}
+    try:
+        raw = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SettingsUnreadable(_unreadable(
+            path, f"it isn't valid JSON ({exc.msg}, line {exc.lineno}, column {exc.colno})",
+        )) from exc
+    if not isinstance(raw, dict):
+        kind = {list: "a list", str: "a string", type(None): "null"}.get(type(raw), "a number")
+        raise SettingsUnreadable(_unreadable(path, f"it holds {kind}, not settings between {{ and }}"))
+    return raw
+
+
+def _unreadable(path: Path, what: str) -> str:
+    return (
+        f"Mnemos isn't starting for this Hermes home: its settings in {path} can't be used, as {what}. "
+        "Mend the file and start Hermes again. Mnemos hasn't changed it, or started another memory."
+    )
 
 
 def _load_json_config(hermes_home: Path) -> dict[str, Any]:
@@ -343,7 +385,7 @@ def save_hermes_mnemos_config(
     home = Path(hermes_home).expanduser()
     home.mkdir(parents=True, exist_ok=True)
     path = _config_path(home)
-    existing = _load_json_config(home)
+    existing = read_settings(home)  # one that can't be read is never written over
     merged = {**existing, **{k: v for k, v in updates.items() if v not in (None, "")}}
     if merged == existing and path.exists():
         return path

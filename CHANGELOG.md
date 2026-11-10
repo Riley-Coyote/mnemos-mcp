@@ -177,6 +177,14 @@ release before it, run both ways, found nothing else.
   shell's limit, 256 files on a Mac, and each memory held still for the copy takes three. With
   a hundred profiles the last memories were left out and Hermes couldn't open the files to
   archive them. A backup now asks for more room first, as a conversation's start does.
+- **Settings that can't be read stop Mnemos; they don't start a new memory.** A `mnemos.json`
+  cut short, missing a comma, not readable, or holding something other than an object of
+  settings counted as no settings: the next session chose a new, empty memory and wrote it over
+  the file, the person's edit with it. Now Mnemos doesn't start for that home, says once which
+  file and what's wrong, and leaves the file as it is; `hermes memory setup` says the same. A
+  blank file is still no settings. A backup taken from another profile leaves out a profile
+  whose settings can't be read, with a warning. The file is still written beside itself and
+  then put in place, so no write leaves half of it.
 
 ### Everywhere
 

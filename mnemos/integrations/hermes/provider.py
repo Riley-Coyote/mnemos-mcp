@@ -49,11 +49,13 @@ from ...simple_tools import (
 from .scope import (
     HermesMnemosConfig,
     HermesScope,
+    SettingsUnreadable,
     _as_bool,
     conversation_id,
     default_hermes_home,
     derive_hermes_scope,
     memory_file,
+    read_settings,
     running_for_home,
     save_hermes_mnemos_config,
     settle_config_home,
@@ -348,7 +350,10 @@ def _memories_of_other_profiles(root: Path, here: Path) -> list[Path]:
         try:
             if home.resolve() == here:
                 continue
+            read_settings(home)
             found.append(Path(memory_file(home, HermesMnemosConfig.load(home), _hermes_answers_for(home))).expanduser())
+        except SettingsUnreadable as exc:
+            logger.warning("Mnemos left a profile out of the backup. %s", exc)
         except Exception:
             logger.debug("Mnemos couldn't read a profile's settings for a backup", exc_info=True)
     return found
@@ -677,6 +682,9 @@ class MnemosMemoryProviderCore:
             self._runtime = None
         hermes_home = kwargs.get("hermes_home")
         if self._config is None:
+            # Settings the person edited and that can't be read stop it here,
+            # before anything is settled or written: never a new memory.
+            read_settings(hermes_home or default_hermes_home())
             settle_config_home(hermes_home)
             from .installer import settle_one_memory
 
@@ -1097,11 +1105,16 @@ class MnemosMemoryProviderCore:
             scope = self._scope
             if scope is None:
                 home = default_hermes_home()
+                if self._config is None:
+                    read_settings(home)
                 scope = derive_hermes_scope(hermes_home=home, config=self._config or HermesMnemosConfig.load(home))
             here = Path(scope.hermes_home).expanduser().resolve()
             root = here.parent.parent if here.parent.name == "profiles" else here
             stores = [Path(scope.db_path).expanduser()]
             stores.extend(_memories_of_other_profiles(root, here))
+        except SettingsUnreadable as exc:
+            logger.warning("Mnemos named nothing for the backup. %s", exc)
+            return []
         except Exception:
             logger.debug("Mnemos couldn't name its memory for a backup", exc_info=True)
             return []
@@ -1137,6 +1150,11 @@ class MnemosMemoryProviderCore:
 
         from .installer import settle_one_memory
 
+        try:
+            read_settings(hermes_home)
+        except SettingsUnreadable as exc:
+            print(f"\n  {exc}\n")
+            return
         settle_one_memory(hermes_home)
         memory = config.get("memory")
         if not isinstance(memory, dict):
