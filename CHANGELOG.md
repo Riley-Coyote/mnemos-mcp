@@ -107,7 +107,8 @@ release before it, run both ways, found nothing else.
   words about Hermes, made it cut out every memory between them, and leave one memory's words
   under another's id. Every such tag is now taken out of every memory that comes with a message,
   the tag and never the words around it, before the memories go to Hermes; a tag is whatever
-  Hermes reads as one, however it is spaced or cased.
+  Hermes reads as one, however it is spaced or cased, and they are taken out until none is left
+  (a tag hidden in another's letters, `<memory-<memory-context>context>`, is one too).
 - **A long message is looked up by its start and its end.** Hermes hands over the whole message,
   however much was pasted into it, and every word of it was searched before the turn began: on
   1,500 memories, 18 ms for a question, 1.3 seconds with 50,000 characters pasted in, 2.4 with

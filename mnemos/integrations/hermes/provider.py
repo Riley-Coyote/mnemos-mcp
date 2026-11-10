@@ -552,8 +552,13 @@ def _no_fence_tags(rows: str) -> str:
     closing one before it fences the recall, so a tag left in one memory could
     pair with one in another and cut out every memory between them. A tag is
     whatever Hermes's own patterns take for one (``</?\\s*memory-context\\s*>``,
-    agent/memory_context.py), and a space before the slash too."""
-    return _CONTEXT_TAG_RE.sub("", rows)
+    agent/memory_context.py), and a space before the slash too. Taken out until
+    none is left: once, ``<memory-<memory-context>context>`` was a whole tag again."""
+    while True:
+        rest = _CONTEXT_TAG_RE.sub("", rows)
+        if rest == rows:
+            return rows
+        rows = rest
 
 
 def _own_words(text: Any) -> str:
