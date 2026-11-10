@@ -86,8 +86,9 @@ that want a profile each.
   `~/.mnemos/hermes-<profile>.db` for each other one, unless you name another file
   (`db_path`, below) before the first session. A home that already had a memory in
   `$HERMES_HOME/mnemos/mnemos.db` keeps it there, as the agent named after the profile.
-  The settings name a memory in `~/.mnemos/` as `~/.mnemos/<file>`, never with your home
-  folder spelled out, so a backup restored under another home folder finds it.
+  After a backup is restored under another home folder, the settings still name the old
+  one; when that file isn't there, the file of the same name in your own `~/.mnemos/` is
+  opened, the log says so once, and the settings are left as they are.
 - Its settings: `$HERMES_HOME/mnemos.json`, with `mnemos.json.bak` beside it once they've
   been rewritten: the copy from before.
 

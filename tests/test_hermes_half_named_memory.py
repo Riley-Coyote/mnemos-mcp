@@ -63,15 +63,13 @@ def test_what_is_left_empty_is_its_default_and_what_is_set_stays(tmp_path, named
     scope, kept = _first_start(home, named)
 
     wanted = {
-        "db_path": "~/.mnemos/hermes.db", "agent_id": "hermes", "person_id": "user",
+        "db_path": str(Path.home() / ".mnemos" / "hermes.db"), "agent_id": "hermes", "person_id": "user",
         "project_scope": "global", **{key: value for key, value in named.items() if value},
     }
     assert (scope.agent_id, scope.person_id, scope.project_scope) == (
         wanted["agent_id"], wanted["person_id"], wanted["project_scope"],
     ), "named after the chat and whoever wrote in it"
-    assert scope.db_path == str(Path(wanted["db_path"].replace("$HERMES_HOME", str(home))).expanduser()), (
-        "kept somewhere else"
-    )
+    assert scope.db_path == wanted["db_path"].replace("$HERMES_HOME", str(home)), "kept somewhere else"
     assert {key: kept[key] for key in wanted} == wanted, "a setting the person chose was replaced"
 
 

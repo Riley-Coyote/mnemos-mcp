@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
+import threading
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -15,6 +17,8 @@ from typing import Any
 
 from ...file_security import atomic_write_text
 from ...simple_scope import named_in_the_environment
+
+logger = logging.getLogger(__name__)
 
 
 def conversation_id(*, gateway_session_key: str = "", session_id: str = "") -> str:
@@ -319,7 +323,42 @@ def memory_file(
 
     db_path = config.db_path or named("MNEMOS_DB_PATH") or str(home / "mnemos" / "mnemos.db")
     db_path = db_path.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
-    return str(Path(db_path).expanduser()) if db_path.startswith("~") else db_path
+    if db_path.startswith("~"):
+        db_path = str(Path(db_path).expanduser())
+    return _here_if_restored(home, db_path)
+
+
+# The homes told that their memory was found in this user's own ~/.mnemos, in
+# this process: (home, the path named).
+_told_of_a_memory_found_here: set[tuple[str, str]] = set()
+_told_lock = threading.Lock()
+
+
+def _here_if_restored(home: Path, db_path: str) -> str:
+    """The memory a home names, or, when that file isn't there, the folder it
+    names is called ``.mnemos`` and this user's own ``~/.mnemos/`` holds a file
+    of the same name, that one: a backup restored under another home folder (a
+    new Mac, another username) puts the memory there, and the settings it
+    restores name it under the old one. The settings are left as they are; the
+    log says so once. Anything else is the path as named."""
+
+    named = Path(db_path)
+    if not named.is_absolute() or named.parent.name != ".mnemos" or named.exists():
+        return db_path
+    here = Path.home() / ".mnemos" / named.name
+    if not here.is_file():
+        return db_path
+    told = (str(home), db_path)
+    with _told_lock:
+        first = told not in _told_of_a_memory_found_here
+        _told_of_a_memory_found_here.add(told)
+    if first:
+        logger.warning(
+            "Mnemos's settings in %s name %s, which isn't there; the memory of the same name in this "
+            "user's ~/.mnemos is opened instead: %s. The settings are left as they are.",
+            _config_path(home), db_path, here,
+        )
+    return str(here)
 
 
 def derive_hermes_scope(
@@ -377,43 +416,6 @@ def derive_hermes_scope(
     )
 
 
-def in_own_mnemos(db_path: Any) -> str | None:
-    """``~/.mnemos/<file>`` for a full path that is in this user's own
-    ``~/.mnemos/``, or None: any other path is left as it is. Written with the
-    home folder spelled out, a memory restored under another home (a new Mac,
-    another username) was looked for under the old one."""
-
-    if not isinstance(db_path, str) or not db_path.strip():
-        return None
-    given = Path(db_path.strip())
-    if not given.is_absolute():
-        return None
-    base = Path.home() / ".mnemos"
-    for path, under in ((given, base), (given.resolve(strict=False), base.resolve(strict=False))):
-        try:
-            inside = path.relative_to(under)
-        except ValueError:
-            continue
-        if inside.parts:
-            return "~/.mnemos/" + inside.as_posix()
-    return None
-
-
-def settle_spelled_out_home(hermes_home: str | Path) -> None:
-    """Give a home settled with its memory's path spelled out under this
-    user's ``~/.mnemos/`` the ``~`` form of the same path, and change nothing
-    else in its settings."""
-
-    home = Path(hermes_home).expanduser()
-    short = in_own_mnemos(read_settings(home).get("db_path"))
-    if short is None:
-        return
-    try:
-        save_hermes_mnemos_config(home, {"db_path": short})
-    except OSError:
-        pass  # A home it can't write to: it goes on as it was.
-
-
 def save_hermes_mnemos_config(
     hermes_home: str | Path,
     updates: dict[str, Any],
@@ -424,10 +426,6 @@ def save_hermes_mnemos_config(
     home.mkdir(parents=True, exist_ok=True)
     path = _config_path(home)
     existing = read_settings(home)  # one that can't be read is never written over
-    updates = dict(updates)
-    short = in_own_mnemos(updates.get("db_path"))
-    if short is not None:
-        updates["db_path"] = short  # never the home folder spelled out
     merged = {**existing, **{k: v for k, v in updates.items() if v not in (None, "")}}
     if merged == existing and path.exists():
         return path

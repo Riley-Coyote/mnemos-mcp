@@ -178,9 +178,11 @@ release before it, run both ways, found nothing else.
 - **A memory restored under another home folder is still the memory.** The first session wrote
   `db_path` with the home folder spelled out (`/Users/ann/.mnemos/hermes.db`), so a backup
   restored on a new Mac or under another username opened a new, empty memory, or couldn't start.
-  A memory in `~/.mnemos/` is now written as `~/.mnemos/<file>`, and a home settled the old way
-  is given that form the next time Mnemos starts there; nothing else in its settings changes,
-  and any other path a person set stays as it is.
+  The path is still written spelled out, and never rewritten. When the file it names isn't
+  there, the folder it names is called `.mnemos`, and your own `~/.mnemos/` holds a file of the
+  same name, that file is opened, and the log says so once, with both paths; `mnemos.json` is
+  left as it is. A home used by two processes with different `HOME` opens the one memory it
+  names, and any other path a person set is opened, or made, exactly where it is named.
 - **A backup names only Mnemos memories.** It named whatever file a profile's `mnemos.json`
   pointed at, a key in `~/.ssh` or another program's database, and folded that database's log
   into it and held it open for the copy. Now each file is first opened read-only and named only
