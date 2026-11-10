@@ -73,6 +73,26 @@ def test_upkeep_imports_from_where_its_parent_does(tmp_path):
     assert done.stdout.strip() == "the checkout"
 
 
+def test_upkeep_runs_nothing_from_the_folder_it_runs_in(tmp_path):
+    # It runs in the store's own folder, which `python -c` puts first on the
+    # path: a json.py left there (by anything that can write a file, an agent's
+    # own file tool included) was run by the next upkeep, outside any approval.
+    _fake_mnemos(tmp_path / "checkout", "the checkout")
+    store = tmp_path / "store"
+    store.mkdir()
+    for module in ("json", "os"):
+        (store / f"{module}.py").write_text(
+            f"open({str(store / 'ran')!r}, 'a').write({module!r})\nraise SystemExit(3)\n"
+        )
+    done = subprocess.run(
+        [sys.executable, "-c", simple_runtime._UPKEEP_CHILD, json.dumps([str(tmp_path / "checkout"), *sys.path])],
+        cwd=store, capture_output=True, text=True, timeout=60,
+    )
+    assert not (store / "ran").exists(), f"ran {(store / 'ran').read_text()}.py from the store's folder"
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == "the checkout"
+
+
 def test_upkeep_is_told_the_folder_its_parent_runs_in(tmp_path, monkeypatch):
     # The child runs somewhere else, so an empty entry would mean somewhere else.
     started = []

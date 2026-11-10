@@ -366,8 +366,13 @@ _UPKEEP_FAILED = "upkeep_failed"
 # The background process, at a low priority: the same code as the process that
 # started it, so it imports from exactly where that process imports from, in the
 # same order (a checkout run from its own directory beside an older install, say).
+# And from nowhere else: `python -c` puts the folder it runs in first on its
+# path, here the store's own, so that entry goes before anything is imported
+# but sys, which is built in. A json.py left beside a store is never run.
 _UPKEEP_CHILD = (
-    "import json, os, sys\n"
+    "import sys\n"
+    "sys.path[:] = [entry for entry in sys.path if entry]\n"
+    "import json, os\n"
     "if hasattr(os, 'nice'):\n"
     "    try:\n"
     "        os.nice(10)\n"
