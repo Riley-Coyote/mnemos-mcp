@@ -153,6 +153,41 @@ def _as_bool(value: Any, default: bool) -> bool:
     return default
 
 
+# The words page_shows_other_agents is read in. Unlike the other settings it fails
+# closed: what isn't one of these is off, since on it shows the person other agents.
+_PAGE_ON = {"true", "yes", "on"}
+_PAGE_OFF = {"false", "no", "off"}
+_told_page_setting: set[str] = set()
+
+
+def _page_shows_other_agents(raw: dict[str, Any], home: Path) -> bool:
+    """``page_shows_other_agents`` as ``mnemos.json`` has it: on only when the
+    key is absent or says yes (true, 1, or the word true, yes or on). Anything
+    else is off; a value that is neither a yes nor a no is said in Hermes's log,
+    once per home, without the value."""
+    if "page_shows_other_agents" not in raw:
+        return True
+    value = raw["page_shows_other_agents"]
+    if isinstance(value, bool):
+        return value
+    if type(value) is int and value in (0, 1):
+        return value == 1
+    if isinstance(value, str):
+        word = value.strip().lower()
+        if word in _PAGE_ON | _PAGE_OFF:
+            return word in _PAGE_ON
+    told = str(home.expanduser().resolve())
+    with _told_lock:
+        first = told not in _told_page_setting
+        _told_page_setting.add(told)
+    if first:
+        logger.warning(
+            "Mnemos's page_shows_other_agents in %s isn't a yes or a no, so the page shows only "
+            "this agent meanwhile.", _config_path(home),
+        )
+    return False
+
+
 def _as_int(value: Any, default: int, *, minimum: int, maximum: int) -> int:
     try:
         return max(minimum, min(maximum, int(value)))
@@ -284,7 +319,7 @@ class HermesMnemosConfig:
             max_context_chars=_as_int(raw.get("max_context_chars"), 2200, minimum=800, maximum=12000),
             max_wake_chars=_as_int(raw.get("max_wake_chars"), 0, minimum=0, maximum=100000),
             maintenance_interval=_as_int(raw.get("maintenance_interval"), 24, minimum=0, maximum=500),
-            page_shows_other_agents=_as_bool(raw.get("page_shows_other_agents"), True),
+            page_shows_other_agents=_page_shows_other_agents(raw, home),
         )
 
     def to_json_dict(self) -> dict[str, Any]:

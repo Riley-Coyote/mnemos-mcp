@@ -74,7 +74,8 @@ release before it, run both ways, found nothing else.
   alone. Hermes gives a third-party integration started with `hermes chat --source tool` the
   classic terminal's platform too, so `page_shows_other_agents` in `mnemos.json` (on by default)
   turns this off: the page is then this agent's alone everywhere, and the agent isn't told
-  otherwise. Outside Hermes nothing changes.
+  otherwise. Any value but true, 1, or the word true, yes or on turns it off, and one that isn't
+  a yes or a no is named in Hermes's log, once. Outside Hermes nothing changes.
 - **A scheduled run writes nothing by itself.** Hermes gives its cron jobs the memory too, and its
   provider guide asks that automatic writes be skipped there. Mnemos skipped its upkeep and the
   copy of MEMORY.md, and the rest ran as in a conversation: the job was woken (a session counted,

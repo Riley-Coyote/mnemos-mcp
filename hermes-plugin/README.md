@@ -150,7 +150,9 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
   the other agents Mnemos keeps a memory for on this machine (below). Turn it off when other
   people reach this profile through the terminal's own entry, as a third-party integration
   started with `hermes chat --source tool` does: Hermes gives that the terminal's platform
-  too, and doesn't tell Mnemos. Off, the page is this agent's alone everywhere.
+  too, and doesn't tell Mnemos. Off, the page is this agent's alone everywhere. It stays on
+  only for true, 1, or the word true, yes or on; any other value turns it off, and one that
+  isn't a yes or a no is named in Hermes's log.
 - `agent_id` and `db_path`: which agent this profile is, and where its memory is.
   `person_id` and `project_scope` name who it's with and which part of its memory this is:
   user and global, or the person and project `~/.mnemos/config.json` names. The first

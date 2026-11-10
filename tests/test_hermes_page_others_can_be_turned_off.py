@@ -17,6 +17,7 @@ computer on the network (hermes_cli/web_server_chat.py, main_dashboard.py).
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.error
 import urllib.request
@@ -120,3 +121,67 @@ def test_the_tui_is_not_taken_for_the_classic_terminal(tmp_path):
     finally:
         mine.shutdown()
     assert TOLD_OF_OTHERS not in " ".join(tool.split()) and FIRST_SESSION not in woke
+
+
+# ── It fails closed ──
+
+ABSENT = object()
+
+
+def _load(tmp_path, value):
+    from mnemos.integrations.hermes import scope
+
+    home = tmp_path / "hermes"
+    home.mkdir(exist_ok=True)
+    (home / "mnemos.json").write_text(json.dumps({} if value is ABSENT else {"page_shows_other_agents": value}))
+    with scope._told_lock:  # each test starts with nothing said yet
+        getattr(scope, "_told_page_setting", set()).clear()
+    return HermesMnemosConfig.load(home)
+
+
+@pytest.mark.parametrize("value", [ABSENT, True, 1, "true", " Yes ", "ON", "on"])
+def test_it_is_on_only_when_it_says_so(tmp_path, value, caplog):
+    with caplog.at_level(logging.WARNING):
+        assert _load(tmp_path, value).page_shows_other_agents is True
+    assert "page_shows_other_agents" not in caplog.text
+
+
+@pytest.mark.parametrize("value", [False, 0, "false", "False ", "no", "OFF"])
+def test_a_plain_no_turns_it_off_and_says_nothing(tmp_path, value, caplog):
+    with caplog.at_level(logging.WARNING):
+        assert _load(tmp_path, value).page_shows_other_agents is False
+    assert "page_shows_other_agents" not in caplog.text
+
+
+@pytest.mark.parametrize("value", [None, "disabled", "flase", [], {}, 2, 1.0, "y", ["true"], {"on": True}])
+def test_anything_else_turns_it_off_and_hermes_log_says_so_once(tmp_path, value, caplog):
+    """Read loosely, 0, null, "disabled", "flase", [] and {} all left the
+    other agents shown (round seven, p11)."""
+    with caplog.at_level(logging.WARNING):
+        assert _load(tmp_path, value).page_shows_other_agents is False
+        home = tmp_path / "hermes"
+        assert HermesMnemosConfig.load(home).page_shows_other_agents is False  # read again: said once
+    told = [r for r in caplog.records if "page_shows_other_agents" in r.getMessage()]
+    assert len(told) == 1 and told[0].levelno == logging.WARNING, caplog.text
+    # The setting's name and its file, never its value.
+    assert re.fullmatch(
+        r"Mnemos's page_shows_other_agents in \S+/hermes/mnemos\.json isn't a yes or a no, "
+        r"so the page shows only this agent meanwhile\.", told[0].getMessage(),
+    ), told[0].getMessage()
+
+
+def test_turned_off_by_a_word_it_doesnt_know_the_page_is_its_own(tmp_path):
+    _other_beside(tmp_path)
+    home = tmp_path / "home-a"
+    home.mkdir()
+    (home / "mnemos.json").write_text(json.dumps({
+        "db_path": str(tmp_path / "a.db"), "agent_id": "a", "person_id": "user",
+        "project_scope": "global", "page_shows_other_agents": "disabled",
+    }))
+    mine = MnemosMemoryProviderCore()
+    mine.initialize("session-1", hermes_home=str(home), platform="cli")
+    try:
+        assert mine.scope.agent_id == "a"
+        assert _minds(_call(mine, "mnemos_page")) == ["a"]
+    finally:
+        mine.shutdown()
