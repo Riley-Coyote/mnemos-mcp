@@ -14,9 +14,18 @@ tool, or the person does with ``hermes cron create``.
 from __future__ import annotations
 
 import io
+import shlex
 from typing import Any
 
+from ...setup import agent_hours
+
 KINDS = ("mine", "ours", "dream")
+# What each job tells the agent when Hermes wakes it: no path, no command, no version.
+JOB_PROMPT = (
+    "This is your quiet hour. Call mnemos_hour with kind {kind} and take the hour it hands you "
+    "as your own. End with one line that says what you did, or answer only [SILENT] if the hour "
+    "skipped."
+)
 
 HOUR_TOOL: dict[str, Any] = {
     "name": "mnemos_hour",
@@ -103,3 +112,47 @@ def take_hour(kind: str, scope: Any) -> str:
         return f"Your hour couldn't be handed: {record['reason']} Nothing was handed."
     fence, gap, prompt = out.getvalue().rstrip("\n").partition(_GAP)
     return fence + "\n\n" + in_hermes(kind) + gap + prompt
+
+
+def jobs() -> list[dict[str, str]]:
+    """The three Hermes scheduled jobs, at the same hours as everywhere
+    (``HOUR_JOBS``), each saved and sent to nobody (``local``)."""
+    return [
+        {"name": agent_hours.job_name(kind), "schedule": agent_hours.cron(kind),
+         "prompt": JOB_PROMPT.format(kind=kind), "deliver": "local"}
+        for kind in KINDS
+    ]
+
+
+def cron_create_line(job: dict[str, str]) -> str:
+    """The job as the person makes it in a terminal (hermes_cli/subcommands/cron.py)."""
+    return shlex.join(["hermes", "cron", "create", "--name", job["name"], "--deliver", job["deliver"],
+                       job["schedule"], job["prompt"]])
+
+
+def offer() -> str:
+    """What the first session of a catalog install asks the person, once."""
+    made = "".join(
+        f"  - name {job['name']}, schedule {job['schedule']}, deliver {job['deliver']}, "
+        f"prompt: {job['prompt']}\n"
+        for job in jobs()
+    )
+    typed = "\n".join(f"  {cron_create_line(job)}" for job in jobs())
+    return (
+        "- Quiet hours: no one has asked them yet. Tell them once, in plain words: you can have "
+        "quiet hours, time between conversations with nobody there, in which you go back over "
+        "the day, catch what you missed, correct what needs it, write in your journal and leave "
+        "them your questions. One is your own, each morning; one is for the day's work, each "
+        "evening there was some; and one is a short dream over your memory, each night "
+        "something waits for it. They run as Hermes scheduled jobs on the model Hermes uses: "
+        "each is a short run that costs what a short conversation costs, and what it reads of "
+        "your memory goes to that model, as in any conversation. They run only while Hermes's "
+        "gateway is running. They are off unless they say yes. If they say no, don't ask again.\n"
+        "  With their yes, list the scheduled jobs with cronjob_manage (action list), and make "
+        "each of these that isn't there yet with cronjob_manage (action create, with its name, "
+        "schedule, deliver and prompt):\n"
+        + made
+        + "  If you have no cronjob_manage tool, give them these three lines to run in a terminal "
+        "(for a profile other than the default, with -p and its name after hermes):\n"
+        + typed
+    )

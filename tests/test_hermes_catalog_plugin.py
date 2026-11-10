@@ -136,7 +136,8 @@ def test_a_catalog_install_offers_nothing_scheduled_outside_hermes(tmp_path, mon
     it updates and deletes when the plugin is removed. The first session used to
     offer `mnemos connect hermes --write` (upkeep, an OS scheduler job) and quiet
     hours (Hermes cron jobs), each running the mnemos in that environment: a job
-    that breaks at Hermes's next update and outlives a removal."""
+    that breaks at Hermes's next update and outlives a removal. The quiet hours
+    are offered as Hermes's own jobs now (tests/test_hermes_offers_its_quiet_hours.py)."""
     from mnemos.setup import connect
     from mnemos.setup import harnesses as hs
 
@@ -154,9 +155,8 @@ def test_a_catalog_install_offers_nothing_scheduled_outside_hermes(tmp_path, mon
     finally:
         provider.shutdown()
     said = "\n".join(settle + [lines or ""])
-    assert settle == [], said
-    assert "connect hermes" not in said and "--hours" not in said, said
-    assert "Quiet hours aren't offered" in said
+    assert len(settle) == 1 and "cronjob_manage" in settle[0], said
+    assert "connect hermes" not in said and "--hours" not in said and "mnemos life" not in said, said
 
     # Mnemos connected by `mnemos connect hermes` (its own install) is asked as before.
     other = MnemosMemoryProviderCore()

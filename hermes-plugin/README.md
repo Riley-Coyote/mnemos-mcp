@@ -59,8 +59,43 @@ In a scheduled job (cron) nobody is there, so Mnemos writes nothing by itself. T
 gets a short read of its memory that records nothing, what comes with the job's prompt
 leaves no trace, and upkeep and the copy of MEMORY.md wait for a conversation. Its own
 tools still work, so a job can keep something when that's what you asked of it: that one
-thing is kept, and the upkeep that follows a save in a conversation waits too. Subagents
-have no memory: Hermes gives them none.
+thing is kept, and the upkeep that follows a save in a conversation waits too. A job can be
+the agent's quiet hour (below), where what it keeps is the point. Subagents have no memory:
+Hermes gives them none.
+
+## Quiet hours
+
+Between conversations the agent can have quiet hours: time with nobody there, in which it
+goes back over the day, catches what it missed, corrects what needs it, writes in its
+journal and leaves you its questions. One is its own, each morning at 8; one is for the
+day's work, each evening at 7, when there was some; and one is a short dream over its
+memory, each night at 3:30, when something waits for it.
+
+They're off until you say yes. The agent asks you once, in its first session, and with your
+yes it makes three of Hermes's scheduled jobs with Hermes's own scheduling tool. Each job
+wakes the agent and asks it to call `mnemos_hour`, which hands it the hour. Nothing is
+scheduled outside Hermes, and no job names a path. To make them yourself:
+
+```bash
+hermes cron create --name mnemos-hour-mine --deliver local '0 8 * * *' 'This is your quiet hour. Call mnemos_hour with kind mine and take the hour it hands you as your own. End with one line that says what you did, or answer only [SILENT] if the hour skipped.'
+hermes cron create --name mnemos-hour-ours --deliver local '0 19 * * *' 'This is your quiet hour. Call mnemos_hour with kind ours and take the hour it hands you as your own. End with one line that says what you did, or answer only [SILENT] if the hour skipped.'
+hermes cron create --name mnemos-hour-dream --deliver local '30 3 * * *' 'This is your quiet hour. Call mnemos_hour with kind dream and take the hour it hands you as your own. End with one line that says what you did, or answer only [SILENT] if the hour skipped.'
+```
+
+For a profile other than the default, put `-p <profile>` after `hermes`. `hermes cron list`
+shows them, and `hermes cron remove mnemos-hour-mine` (and the other two, by name) stops
+them.
+
+- They run only while Hermes's gateway is running: Hermes's scheduler runs there.
+- They run on the model Hermes uses. Each is a short run that costs what a short
+  conversation costs, and what the agent reads of its memory in it goes to that model, as
+  in any conversation. Its answer is saved on this machine and sent to nobody.
+- Mnemos runs nothing in them and calls no model. It prepares the hour from the memory
+  without changing it, and hands each hour's material once; the agent keeps what it keeps
+  with its own tools, and the day's conversations it reads with Hermes's `session_search`.
+- Hermes denies dangerous commands in a scheduled run unless you've set it otherwise
+  (`approvals.cron_mode`).
+- You can also ask the agent to take its hour now.
 
 ## Each profile is its own agent
 
@@ -176,8 +211,8 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   withhold.
 - **A short background process.** When upkeep is due (at the end of a session, every 24
   turns, after the agent saves something) it runs in a Python process of its own,
-  Hermes's Python, which ends when it's done. Nothing is scheduled, and it starts no
-  other program. It runs in the memory's folder and runs nothing it finds there. It isn't
+  Hermes's Python, which ends when it's done. Mnemos schedules nothing (the quiet hours
+  are Hermes's own jobs), and it starts no other program. It runs in the memory's folder and runs nothing it finds there. It isn't
   given Hermes's environment. It gets, each by name, what a process needs to run (the
   path, your home folder, your language, where the machine's certificates and a model's
   cache are), Mnemos's own settings if you set any, and what you chose for Mnemos, as the

@@ -92,7 +92,11 @@ release before it, run both ways, found nothing else.
   waits for the person, and, for the day's work, that the day's conversations are read with
   `session_search`. It runs nothing and calls no model. It is for a quiet-hour job, or for when
   the person asks for it; where the hour can't be prepared (Windows) it says so and changes
-  nothing.
+  nothing. A catalog install's first session no longer says quiet hours aren't offered: the agent
+  asks the person once what they are, what they cost and where what it reads goes, and with a yes
+  makes three Hermes scheduled jobs with Hermes's own `cronjob_manage` (or gives the person the
+  three `hermes cron create` lines in the README). They run at the usual hours, only while Hermes's
+  gateway runs, and each is saved and sent to nobody. Mnemos makes no job itself.
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
   `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
   of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass

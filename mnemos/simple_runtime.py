@@ -3238,10 +3238,11 @@ class MnemosRuntime:
         hours = harness.hours
         agent_id, db_path = self.scope.agent_id, self.db_path
         if self.host_manages_install:
-            return "", (
-                f"- Quiet hours aren't offered when {harness.label} installed Mnemos from its "
-                "plugin catalog. Don't offer them."
-            )
+            # Hermes's own scheduler wakes the agent, and it takes its hour with
+            # mnemos_hour: nothing runs from the folder Hermes rebuilds.
+            from .integrations.hermes.hours import offer
+
+            return offer(), ""
         if hours is None:
             return "", (
                 f"- Quiet hours aren't offered for {harness.label}: nothing is scheduled for it "
