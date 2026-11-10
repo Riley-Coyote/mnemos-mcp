@@ -914,24 +914,33 @@ class MnemosMemoryProviderCore:
             # it (previous_content, newer Hermes) or a piece of it (old_text,
             # which Hermes requires to match one entry). A remove may carry
             # no content at all, only these.
-            predecessor = self._mirrored_entry(
+            predecessors = self._mirrored_entries(
                 target,
                 whole=_own_words(meta.get("previous_content")),
                 piece=_own_words(meta.get("old_text")) or (clean if action != "replace" else ""),
             )
             if action != "replace":
-                # Forgotten only when exactly one mirrored entry is it;
-                # otherwise nothing here is retired on a guess.
-                if predecessor:
+                # Forgotten only when the mirrored entries that match are one
+                # entry; otherwise nothing here is retired on a guess.
+                if predecessors:
                     self._prefetch_cache.clear()
+                for predecessor in predecessors:
                     self._runtime.correct("", target_id=predecessor, action="forget")
                 return
-            if predecessor and clean:
+            if predecessors and clean:
                 # Corrected to the new words, written as a mirrored capture is,
-                # so a later replace or remove finds it.
+                # so a later replace or remove finds it; the same line kept
+                # twice before 0.6.7 is let go of with it.
                 self._prefetch_cache.clear()
-                self._runtime.correct(f"{clean}\n\nContext: {context}", target_id=predecessor, action="update")
+                first, *again = predecessors
+                for predecessor in again:
+                    self._runtime.correct("", target_id=predecessor, action="forget")
+                self._runtime.correct(f"{clean}\n\nContext: {context}", target_id=first, action="update")
                 return
+        if action == "add" and clean and self._mirrored_entries(target, whole=clean):
+            # Hermes answers an add of a line it already holds with success,
+            # and keeps the line once: so does Mnemos.
+            return
         if action in {"add", "replace"} and clean:
             self._capture(clean, context=context, importance="high" if target == "user" else "auto")
 
@@ -1193,16 +1202,17 @@ class MnemosMemoryProviderCore:
             started["model"] = self._named_model  # the one a turn named since, if one did
         self.initialize(self._session_id or "mnemos-hermes", **started)
 
-    def _mirrored_entry(self, target: str, *, whole: str = "", piece: str = "") -> str | None:
-        """The one memory in use here mirrored from this Hermes ``target``
-        ("memory" or "user") that is the entry Hermes names, or None: its own
-        words (before the mirror's context) equal to ``whole``, or else
-        containing ``piece``, ignoring case. None too when more than one
-        matches: a replace or remove then retires nothing on a guess. A
+    def _mirrored_entries(self, target: str, *, whole: str = "", piece: str = "") -> list[str]:
+        """The memories in use here mirrored from this Hermes ``target``
+        ("memory" or "user") that are the entry Hermes names: their own words
+        (before the mirror's context) equal to ``whole``, or else containing
+        ``piece``, ignoring case. Several with the same words are one entry
+        kept more than once, as Hermes reads it; several with different words
+        are none: a replace or remove then retires nothing on a guess. A
         memory mirrored from the other target, or one the agent wrote
         itself, is never it."""
         if not whole and not piece:
-            return None
+            return []
         self._runtime._ensure_init()
         scope = self._runtime.scope
         marker = f"\n\nContext: {_MIRROR_MARK} {target} memory."
@@ -1219,10 +1229,12 @@ class MnemosMemoryProviderCore:
         # the entry's own spacing in old_text, and a double space or a line
         # break in it is still the same entry.
         if whole:
-            matches = [r[0] for r in rows if own(r[1]) == " ".join(whole.split()).casefold()]
+            matches = [r for r in rows if own(r[1]) == " ".join(whole.split()).casefold()]
         else:
-            matches = [r[0] for r in rows if " ".join(piece.split()).casefold() in own(r[1])]
-        return matches[0] if len(matches) == 1 else None
+            matches = [r for r in rows if " ".join(piece.split()).casefold() in own(r[1])]
+        if len({own(r[1]) for r in matches}) != 1:
+            return []
+        return [r[0] for r in matches]
 
     def _capture(self, content: str, context: str = "", importance: str | float = "auto", **options: Any) -> str:
         self._ensure_runtime()

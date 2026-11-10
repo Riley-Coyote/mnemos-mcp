@@ -153,6 +153,11 @@ release before it, run both ways, found nothing else.
   forgotten.
 - **Asking for a backup leaves nothing behind.** Each time Hermes asked what to back up, a timer
   thread stayed for the hold on the files; asked again, the first hold now ends with its timer.
+- **A line Hermes's memory tool adds twice is kept once, and removing it removes it.** Hermes
+  answers an add of a line MEMORY.md already holds with success and keeps the line once; Mnemos
+  kept it twice, and a later remove or replace, finding two, retired neither, so the removed line
+  kept coming up. Now the line is kept once, and the same words kept twice by an earlier release
+  are one entry: the next remove or replace retires both.
 
 ### Everywhere
 
