@@ -794,7 +794,7 @@ class MnemosMemoryProviderCore:
             assert self._scope is not None
             if self._scope.platform != "cli":
                 packet = _PAGE_OFFERED.sub(_page_where_it_opens, packet)
-            else:
+            elif self._page_shows_others():
                 packet = _PAGE_OFFERED.sub(lambda found: found.group(0) + _PAGE_ALSO_THE_OTHERS, packet)
             body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
         else:
@@ -949,7 +949,7 @@ class MnemosMemoryProviderCore:
                 return {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
             if tool["name"] == "mnemos_page":
                 said = _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, tool["description"])
-                if self._scope is not None and self._scope.platform == "cli":
+                if self._page_shows_others():
                     said = said.replace(_ONLY_THEY_WRITE, _ONLY_THEY_WRITE + _PAGE_READS_OTHERS)
                 return {**tool, "description": said}
             return tool
@@ -1368,13 +1368,14 @@ class MnemosMemoryProviderCore:
             "person_id": scope.person_id,
             "project_scope": scope.project_scope,
         }
-        # In Hermes's terminal the page also shows the other agents, only to read.
-        # Anywhere else the agent may be a bot handed the link: one page of its own.
-        in_terminal = scope.platform == "cli"
-        key = (*kwargs.values(), in_terminal)
+        # In Hermes's classic terminal the page also shows the other agents, only to
+        # read, unless the settings say not to. Anywhere else the agent may be a bot
+        # handed the link: one page of its own.
+        reads_others = self._page_shows_others()
+        key = (*kwargs.values(), reads_others)
         with _pages_lock:
             open_already = _pages.get(key)
-            said, page = open_page(kwargs, open_already, reads_others=in_terminal)
+            said, page = open_page(kwargs, open_already, reads_others=reads_others)
             if page is not None:
                 _pages[key] = page
                 _page_holders.setdefault(key, weakref.WeakSet()).add(self)
@@ -1385,6 +1386,16 @@ class MnemosMemoryProviderCore:
 
     def _tool_hour(self, args: dict[str, Any]) -> str:
         return take_hour(_words(args, "kind"), self.scope)
+
+    def _page_shows_others(self) -> bool:
+        """Whether the page also lets the person read the other agents kept
+        beside this one: in Hermes's classic terminal (platform "cli"), unless
+        ``page_shows_other_agents`` is off. Never in the TUI ("tui"), which
+        Hermes's web dashboard also runs for a browser on another computer."""
+        return bool(
+            self._scope is not None and self._scope.platform == "cli"
+            and self._config is not None and self._config.page_shows_other_agents
+        )
 
     def _ensure_runtime(self) -> None:
         """A call after shutdown starts the conversation again, as Hermes

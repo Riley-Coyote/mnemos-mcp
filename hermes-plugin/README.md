@@ -142,6 +142,11 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
 - `maintenance_interval` (24): upkeep every this many turns in a long session; 0 turns
   that off.
 - `deep_maintenance` (false): let upkeep use a model, below.
+- `page_shows_other_agents` (true): in Hermes's classic terminal, the page also lets you read
+  the other agents Mnemos keeps a memory for on this machine (below). Turn it off when other
+  people reach this profile through the terminal's own entry, as a third-party integration
+  started with `hermes chat --source tool` does: Hermes gives that the terminal's platform
+  too, and doesn't tell Mnemos. Off, the page is this agent's alone everywhere.
 - `agent_id` and `db_path`: which agent this profile is, and where its memory is.
   `person_id` and `project_scope` name who it's with and which part of its memory this is:
   user and global, or the person and project `~/.mnemos/config.json` names. The first
@@ -224,14 +229,17 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   the system picks and a path made fresh each time, and answers only this machine. It
   stays while the conversation that opened it goes on and while you're using it, and
   closes about ten minutes after both end. It writes only in this agent's memory. Opened
-  in Hermes's terminal, it also lets you switch to the other agents Mnemos keeps a memory
-  for on this machine and read each one: it reads their memory files in `~/.mnemos`, beside
-  this one's, so that nothing in them changes, and shows them without the places to write.
-  Opened anywhere else (in Telegram, say, where the agent may be a bot other people talk
-  to), it shows this agent's memory alone. It never shows what agents share, it looks at
-  nothing else on the machine, and a scheduled job can't open it. Outside Hermes's
-  terminal, the first session tells the agent the page opens on the computer Hermes runs
-  on, and not to offer it unless you ask.
+  in Hermes's classic terminal, it also lets you switch to the other agents Mnemos keeps a
+  memory for on this machine and read each one: it reads their memory files in `~/.mnemos`,
+  beside this one's, so that nothing in them changes, and shows them without the places to
+  write. `page_shows_other_agents` (above) turns that off; turn it off when other people
+  reach this profile through the terminal's own entry, as a third-party integration started
+  with `hermes chat --source tool` does. Opened anywhere else (in Telegram, say, where the
+  agent may be a bot other people talk to, or in the TUI, which Hermes's web dashboard also
+  runs for a browser), it shows this agent's memory alone. It never shows what agents
+  share, it looks at nothing else on the machine, and a scheduled job can't open it.
+  Outside Hermes's classic terminal, the first session tells the agent the page opens on
+  the computer Hermes runs on, and not to offer it unless you ask.
 - **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
   `hermes backup`, which takes them along: this profile's and each other profile's, since
   a backup is of every profile. It finds each one as that profile opens it: by its

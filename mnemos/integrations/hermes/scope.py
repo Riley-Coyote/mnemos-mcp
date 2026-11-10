@@ -245,7 +245,13 @@ class HermesMnemosConfig:
     ``max_context_chars`` bounds what recall adds to each message.
     ``max_wake_chars`` bounds the memory a session wakes with; 0 leaves that to
     the wake's own budget, the one every agent's wake has (``PACKET_MAX_CHARS``,
-    and the handoff shown whole takes no room from it)."""
+    and the handoff shown whole takes no room from it).
+
+    ``page_shows_other_agents``: in Hermes's classic terminal the page also
+    lets the person read the other agents kept beside this one. Hermes gives
+    that platform to a third-party integration too (``hermes chat --source
+    tool``), and doesn't say so to the provider; false keeps the page this
+    agent's alone everywhere."""
 
     db_path: str | None = None
     agent_id: str | None = None
@@ -258,6 +264,7 @@ class HermesMnemosConfig:
     max_context_chars: int = 2200
     max_wake_chars: int = 0
     maintenance_interval: int = 24
+    page_shows_other_agents: bool = True
 
     @classmethod
     def load(cls, hermes_home: str | Path | None = None) -> "HermesMnemosConfig":
@@ -277,6 +284,7 @@ class HermesMnemosConfig:
             max_context_chars=_as_int(raw.get("max_context_chars"), 2200, minimum=800, maximum=12000),
             max_wake_chars=_as_int(raw.get("max_wake_chars"), 0, minimum=0, maximum=100000),
             maintenance_interval=_as_int(raw.get("maintenance_interval"), 24, minimum=0, maximum=500),
+            page_shows_other_agents=_as_bool(raw.get("page_shows_other_agents"), True),
         )
 
     def to_json_dict(self) -> dict[str, Any]:
@@ -292,6 +300,7 @@ class HermesMnemosConfig:
             "max_context_chars": self.max_context_chars,
             "max_wake_chars": self.max_wake_chars,
             "maintenance_interval": self.maintenance_interval,
+            "page_shows_other_agents": self.page_shows_other_agents,
         }
 
 
