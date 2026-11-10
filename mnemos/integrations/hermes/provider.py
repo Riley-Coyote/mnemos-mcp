@@ -1137,18 +1137,26 @@ class MnemosMemoryProviderCore:
         try:
             _take_hermes_secrets()
             scope = self._scope
-            if scope is None:
+            stores: list[Path] = []
+            if scope is not None:
+                here = Path(scope.hermes_home).expanduser().resolve()
+                stores.append(Path(scope.db_path).expanduser())
+            else:
                 home = default_hermes_home()
-                if self._config is None:
-                    read_settings(home)
-                scope = derive_hermes_scope(hermes_home=home, config=self._config or HermesMnemosConfig.load(home))
-            here = Path(scope.hermes_home).expanduser().resolve()
+                here = home.expanduser().resolve()
+                try:
+                    if self._config is None:
+                        read_settings(home)
+                    scope = derive_hermes_scope(
+                        hermes_home=home, config=self._config or HermesMnemosConfig.load(home),
+                    )
+                    stores.append(Path(scope.db_path).expanduser())
+                except SettingsUnreadable as exc:
+                    # Only this profile's own memory is left out: every other
+                    # profile's is still named.
+                    logger.warning("Mnemos left this profile's memory out of the backup. %s", exc)
             root = here.parent.parent if here.parent.name == "profiles" else here
-            stores = [Path(scope.db_path).expanduser()]
             stores.extend(_memories_of_other_profiles(root, here))
-        except SettingsUnreadable as exc:
-            logger.warning("Mnemos named nothing for the backup. %s", exc)
-            return []
         except Exception:
             logger.debug("Mnemos couldn't name its memory for a backup", exc_info=True)
             return []

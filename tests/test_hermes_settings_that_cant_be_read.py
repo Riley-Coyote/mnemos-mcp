@@ -180,3 +180,25 @@ def test_a_write_that_fails_leaves_the_settings_whole(monkeypatch):
     assert json.loads(settings.read_text()) == _KEPT
     assert [name for name in os.listdir(home) if name.endswith(".tmp")] == []
 
+
+
+def test_a_backup_from_a_profile_whose_settings_cant_be_read_still_takes_the_others(monkeypatch, caplog):
+    """It named nothing at all: every other profile's memory was left out with it."""
+    root = Path.home() / ".hermes"
+    _a_home_with_a_memory(root)
+    work = root / "profiles" / "work"
+    work.mkdir(parents=True)
+    (work / "mnemos.json").write_text(json.dumps({"db_path": "~/.mnemos/work.db", "agent_id": "w", "hermes_home": str(work)}))
+    provider = MnemosMemoryProviderCore()
+    provider.initialize("s-1", hermes_home=str(work), platform="cli")
+    assert json.loads(provider.handle_tool_call("mnemos_capture", {"content": "Work keeps the invoices."}))["ok"]
+    provider.shutdown()
+    (root / "mnemos.json").write_text('{"db_path": "~/.mnemos/custom.db" "agent_id": "sage"}')
+    monkeypatch.setenv("HERMES_HOME", str(root))
+
+    with caplog.at_level(logging.WARNING, logger=provider_module.logger.name):
+        named = MnemosMemoryProviderCore().backup_paths()
+
+    assert [Path(path).name for path in named] == ["work.db", "work.db-wal"]
+    said = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert sum(str(root / "mnemos.json") in line for line in said) == 1
