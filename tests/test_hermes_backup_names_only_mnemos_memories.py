@@ -9,12 +9,18 @@ Mnemos's.
 Now a file is first opened read-only, and named only if it has Mnemos's own
 tables. Anything else is left out and untouched, and the log says once which
 file and why. The profile's own memory is checked the same way.
+
+A file that can't be checked at all (it can't be opened: its permissions, no
+file left to open it with, a lock) is not taken for another program's: leaving
+a real memory out of a backup is the worse mistake. It is named as it is,
+neither held nor folded in, and the log says it couldn't be checked.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 from pathlib import Path
 
@@ -110,3 +116,44 @@ def test_the_profiles_own_memory_is_checked_too(monkeypatch, caplog):
         assert any(str(cookies.resolve()) in record.getMessage() for record in caplog.records)
     finally:
         program.close()
+
+
+def test_a_memory_that_cant_be_checked_is_still_named(monkeypatch, caplog):
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root opens any file")
+    memory = Path.home() / ".mnemos" / "kept.db"
+    _a_memory(memory)
+    monkeypatch.setenv("HERMES_HOME", str(Path.home() / ".hermes"))
+    config = HermesMnemosConfig(db_path=str(memory), agent_id="a", person_id="user", project_scope="global")
+    os.chmod(memory, 0)
+    try:
+        with caplog.at_level(logging.WARNING, logger=provider_module.logger.name):
+            named = MnemosMemoryProviderCore(config).backup_paths()
+    finally:
+        os.chmod(memory, 0o600)
+
+    assert Path(named[0]) == memory.resolve(), "a memory that couldn't be checked was left out"
+    assert not provider_module._backup_holds, "it was held"
+    said = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert any(str(memory.resolve()) in line and "couldn't be checked" in line for line in said), said
+
+
+def test_a_memory_with_no_file_left_to_open_it_is_still_named(monkeypatch, caplog):
+    memory = Path.home() / ".mnemos" / "kept.db"
+    _a_memory(memory)
+    monkeypatch.setenv("HERMES_HOME", str(Path.home() / ".hermes"))
+    config = HermesMnemosConfig(db_path=str(memory), agent_id="a", person_id="user", project_scope="global")
+    opens = sqlite3.connect
+
+    def no_file_left(target, *args, **kwargs):
+        if "mode=ro" in str(target):
+            raise sqlite3.OperationalError("unable to open database file")
+        return opens(target, *args, **kwargs)
+
+    monkeypatch.setattr(provider_module.sqlite3, "connect", no_file_left)
+    with caplog.at_level(logging.WARNING, logger=provider_module.logger.name):
+        named = MnemosMemoryProviderCore(config).backup_paths()
+    monkeypatch.undo()
+
+    assert [Path(path).name for path in named][:1] == ["kept.db"]
+    assert not provider_module._backup_holds

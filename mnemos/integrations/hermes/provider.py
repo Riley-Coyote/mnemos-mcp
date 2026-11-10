@@ -222,21 +222,38 @@ _backup_exit_seen = False
 _A_MEMORYS_TABLES = frozenset({"engrams", "connections", "versions", "meta"})
 
 
-def _why_not_a_memory(store: Path) -> str:
-    """"" for a Mnemos memory; otherwise why the file isn't one. It is opened
-    read-only and only its list of tables is read: nothing in it changes."""
+def _not_another_programs(exc: sqlite3.Error) -> bool:
+    """Whether SQLite opened the file and found it isn't a database at all."""
+    code = getattr(exc, "sqlite_errorcode", None)  # Python 3.11 on
+    if code is not None:
+        return code == getattr(sqlite3, "SQLITE_NOTADB", 26)
+    return "not a database" in str(exc)
+
+
+def _what_a_backup_finds(store: Path) -> tuple[str, str]:
+    """Whether ``store`` is a Mnemos memory: ("memory", ""), ("other", why) for
+    a file that opens and isn't one, or ("unchecked", why) for one that
+    couldn't be looked into (its permissions, no file left to open it with, a
+    lock). It is opened read-only and only its list of tables is read:
+    nothing in it changes."""
     try:
         conn = sqlite3.connect(f"{store.as_uri()}?mode=ro", uri=True, timeout=2.0)
     except sqlite3.Error as exc:
-        return f"it can't be opened as a database ({exc})"
+        if _not_another_programs(exc):
+            return "other", f"it isn't a database ({exc})"
+        return "unchecked", f"it couldn't be checked ({exc})"
     try:
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     except sqlite3.Error as exc:
-        return f"it isn't a database Mnemos can read ({exc})"
+        if _not_another_programs(exc):
+            return "other", f"it isn't a database ({exc})"
+        return "unchecked", f"it couldn't be checked ({exc})"
     finally:
         conn.close()
     missing = sorted(_A_MEMORYS_TABLES - tables)
-    return f"it hasn't Mnemos's own tables ({', '.join(missing)} missing)" if missing else ""
+    if missing:
+        return "other", f"it hasn't Mnemos's own tables ({', '.join(missing)} missing)"
+    return "memory", ""
 
 
 def _hold_still_for_a_backup(store: Path) -> None:
@@ -1130,15 +1147,20 @@ class MnemosMemoryProviderCore:
                 if store in seen or not store.is_file() or store.is_relative_to(root):
                     continue
                 seen.add(store)
-                why = _why_not_a_memory(store)
-                if why:
+                found, why = _what_a_backup_finds(store)
+                if found == "other":
                     # Never named, held or folded in: another program's file.
                     logger.warning("Mnemos left %s out of the backup: %s.", store, why)
                     continue
-                try:
-                    _hold_still_for_a_backup(store)
-                except sqlite3.Error:
-                    logger.debug("Mnemos couldn't hold a memory still for a backup", exc_info=True)
+                if found == "unchecked":
+                    # Maybe a memory: named as it is, neither held nor folded
+                    # in. Leaving a memory out would be the worse mistake.
+                    logger.warning("Mnemos named %s for the backup as it is: %s.", store, why)
+                else:
+                    try:
+                        _hold_still_for_a_backup(store)
+                    except sqlite3.Error:
+                        logger.debug("Mnemos couldn't hold a memory still for a backup", exc_info=True)
                 log = store.with_name(store.name + "-wal")
                 named.extend([str(store), *([str(log)] if log.is_file() else [])])
             except Exception:

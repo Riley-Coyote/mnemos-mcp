@@ -174,7 +174,10 @@ release before it, run both ways, found nothing else.
   pointed at, a key in `~/.ssh` or another program's database, and folded that database's log
   into it and held it open for the copy. Now each file is first opened read-only and named only
   if it has Mnemos's own tables; anything else is left out and untouched, with a warning in
-  Hermes's log that gives the file and why. The same holds for the profile's own memory.
+  Hermes's log that gives the file and why. The same holds for the profile's own memory. A file
+  that can't be checked (its permissions, no file left to open it with, a lock) may be a memory,
+  and leaving one out is the worse mistake: it is named as it is, neither held nor folded in,
+  with a warning that it couldn't be checked.
 - **A backup of many profiles doesn't run out of open files.** `hermes backup` runs with the
   shell's limit, 256 files on a Mac, and each memory held still for the copy takes three. With
   a hundred profiles the last memories were left out and Hermes couldn't open the files to
