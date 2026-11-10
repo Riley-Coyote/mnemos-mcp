@@ -817,6 +817,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Print, for the model, the memories that may bear on a message (UserPromptSubmit)",
     )
     _scope_options(p_hook_prompt)
+    for hook_parser in (p_hook_start, p_hook_prompt):
+        hook_parser.add_argument(
+            "--codex-origin", action="store_true",
+            help="Read explicit project and chat labels from local Codex state",
+        )
 
     # ── hooks ──
     p_hooks = sub.add_parser(
@@ -1050,8 +1055,9 @@ def _cmd_hook(args: argparse.Namespace) -> int:
     # The payload can name the model starting the session (Claude Code sends
     # `model` on SessionStart when it has one), always names the session
     # (`session_id`, the same id its MCP servers get as CLAUDE_CODE_SESSION_ID,
-    # kept across compaction) and says where it works (`cwd`). Those are the
-    # only uses made of it: the packet can then say whether the reader wrote a
+    # kept across compaction) and says where it works (`cwd`). With
+    # --codex-origin, explicit local project assignments enrich it too. The
+    # packet can then say whether the reader wrote a
     # handoff, hand a session its own note first, and rank what the reader is
     # carrying by the folder and repository it works in. The folder ranks; it
     # never chooses whose memory this is.
@@ -1071,17 +1077,23 @@ def _cmd_hook(args: argparse.Namespace) -> int:
         wake = "full"
     if wake == "off":
         return 0
+    payload = {}
     reader_model = ""
     reader_session = ""
     workdir = ""
     environ: dict[str, str] = dict(os.environ)
     try:
-        from .authorship import clean_model_id, clean_session_id
+        from .authorship import clean_model_id
+        from .attribution import hook_origin
 
         payload = json.loads(bytes(received).decode("utf-8")) if received.strip() else {}
         if isinstance(payload, dict):
+            if getattr(args, "codex_origin", False):
+                from .integrations.codex_origin import enrich_local_payload
+
+                payload = enrich_local_payload(payload)
             reader_model = clean_model_id(payload.get("model"))
-            reader_session = clean_session_id(payload.get("session_id"))
+            reader_session = hook_origin(payload).get("thread_id", "")
             if isinstance(payload.get("cwd"), str):
                 workdir = payload["cwd"]
         if reader_session:
@@ -1108,6 +1120,9 @@ def _cmd_hook(args: argparse.Namespace) -> int:
             return 0
         store = EngramStore(scope.db_path)
         try:
+            from .attribution import hook_origin, register_hook_origin
+
+            register_hook_origin(store, payload, scope)
             # Who is reading, found the way the MCP server finds who is
             # writing: the operator's setting, what the harness said (or, when
             # it said nothing, what this session last introduced itself as),
@@ -1143,6 +1158,7 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 workdir=workdir,
                 person_name=person_name,
                 wake=wake,
+                reader_project_id=hook_origin(payload).get("project_id", ""),
             )
             # Waking is living: the day counts on the agent's own clock.
             try:
@@ -1209,7 +1225,15 @@ def _hook_prompt(args: argparse.Namespace) -> int:
         payload = json.loads(raw.decode("utf-8")) if raw.strip() else None
         if not isinstance(payload, dict):
             return 0
+        if getattr(args, "codex_origin", False):
+            from .integrations.codex_origin import enrich_local_payload
+
+            payload = enrich_local_payload(payload)
         scope = _cli_scope(args)
+        if "mnemos_origin" in payload:
+            from .attribution import register_prompt_origin
+
+            register_prompt_origin(scope.db_path, payload, scope)
         # The answer names the event it answers, as the harness named it.
         event = payload.get("hook_event_name")
         event = event if event in cue.PROMPT_EVENTS else "UserPromptSubmit"
@@ -1924,7 +1948,8 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
     ):
         if value:
             scope_flags.extend([flag, value])
-    command_parts = [_mnemos_command(), "hook", "session-start", *scope_flags]
+    origin_flags = ["--codex-origin"] if args.client == "codex" else []
+    command_parts = [_mnemos_command(), "hook", "session-start", *origin_flags, *scope_flags]
 
     # Gemini CLI counts hook timeouts in milliseconds; the others in seconds.
     unit = 1000 if gemini else 1
@@ -1960,7 +1985,7 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
             # `hook prompt` itself always exits 0; the guard covers a Mnemos
             # that cannot run it at all (rolled back to a version without
             # it, or moved), which argparse would answer with a 2.
-            "command": shlex.join([_mnemos_command(), "hook", "prompt", *scope_flags]) + " || true",
+            "command": shlex.join([_mnemos_command(), "hook", "prompt", *origin_flags, *scope_flags]) + " || true",
             "timeout": PROMPT_HOOK_TIMEOUT * unit,
         }
         if gemini:

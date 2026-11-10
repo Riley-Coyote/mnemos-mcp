@@ -40,8 +40,8 @@ from ..core.identity import AgentIdentity
 # meaning index (see embedding_index.PASSAGE_TABLE_SQL). v16: journal_entries
 # and notes, the agent's journal and the notes between the agent and the
 # person (see JOURNAL_WRITTEN and NOTE_KINDS). v18: lived_days, the days the
-# agent lived (see consolidation/lived.py).
-SCHEMA_VERSION = 19
+# agent lived (see consolidation/lived.py). v20: immutable entry origin snapshots.
+SCHEMA_VERSION = 20
 # How long opening a store waits for anyone in its way, all told. Sixteen sessions
 # opening a new store together take a fraction of a second; a store someone is
 # holding for longer won't free up in time for what's waiting, and a session-start
@@ -60,7 +60,7 @@ def code_version_first_opened_key(version: int) -> str:
 # Who wrote each memory's words (schema v12; see mnemos/authorship.py). Set
 # once, when the memory is first stored: a later save never changes it.
 VALID_AUTHOR_KINDS = frozenset(AUTHOR_KINDS)
-_AUTHOR_COLUMNS = frozenset({"author_kind", "author_model", "author_session"})
+_AUTHOR_COLUMNS = frozenset({"author_kind", "author_model", "author_session", "origin_json"})
 # Set, with the counts, once the memories a store held before v12 have been
 # labelled. Its presence is what stops the labelling from running again.
 AUTHORS_LABELED_KEY = "engram_authors_labeled"
@@ -311,6 +311,7 @@ _CAPTURED_AS = (
 
 # Allowed column names for engrams table — prevents SQL injection via to_dict() keys
 _ENGRAM_COLUMNS = frozenset({
+    "origin_json",
     "id", "content", "content_at_encoding", "impact", "impact_source",
     "author_kind", "author_model", "author_session",
     "resolution", "kind", "tags",
@@ -349,6 +350,7 @@ _BELIEF_COLUMNS = frozenset({
 # originals present in any store that has the table.
 _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "engrams": [
+        ("origin_json", "origin_json TEXT NOT NULL DEFAULT '{}'"),
         ("impact", "impact TEXT NOT NULL DEFAULT ''"),
         ("impact_source", "impact_source TEXT NOT NULL DEFAULT ''"),
         ("author_kind", "author_kind TEXT NOT NULL DEFAULT 'unknown'"),
@@ -392,6 +394,7 @@ _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("author_session", "author_session TEXT NOT NULL DEFAULT ''"),
     ],
     "hypomnema_entries": [
+        ("origin_json", "origin_json TEXT NOT NULL DEFAULT '{}'"),
         (
             "entry_kind",
             "entry_kind TEXT NOT NULL "
@@ -411,6 +414,8 @@ _RECONCILABLE_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("last_surfaced_at", "last_surfaced_at TEXT"),
         ("surface_count", "surface_count INTEGER NOT NULL DEFAULT 0"),
     ],
+    "journal_entries": [("origin_json", "origin_json TEXT NOT NULL DEFAULT '{}'")],
+    "notes": [("origin_json", "origin_json TEXT NOT NULL DEFAULT '{}'")],
 }
 
 
@@ -475,6 +480,7 @@ _REFLECTION_QUEUE_INDEXES = (
 SQL_CREATE_TABLES = """
 -- Core engram storage
 CREATE TABLE IF NOT EXISTS engrams (
+    origin_json TEXT NOT NULL DEFAULT '{}',
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
     content_at_encoding TEXT NOT NULL,
@@ -575,6 +581,7 @@ CREATE TABLE IF NOT EXISTS beliefs (
 
 -- Hypomnema: scoped durable continuity that can revise before promotion
 CREATE TABLE IF NOT EXISTS hypomnema_entries (
+    origin_json TEXT NOT NULL DEFAULT '{}',
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL DEFAULT 'default',
     person_id TEXT NOT NULL DEFAULT 'user',
@@ -747,6 +754,7 @@ CREATE TABLE IF NOT EXISTS memory_trace (
 -- between sessions (then `hour_id` names the hour). `model_id` is who signed it,
 -- empty when no one could say. No CHECK on `written`: see JOURNAL_WRITTEN.
 CREATE TABLE IF NOT EXISTS journal_entries (
+    origin_json TEXT NOT NULL DEFAULT '{}',
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL DEFAULT 'default',
     person_id TEXT NOT NULL DEFAULT 'user',
@@ -767,6 +775,7 @@ CREATE TABLE IF NOT EXISTS journal_entries (
 -- waking packet; `read_at` is when the person first read an agent note.
 -- Both are bookkeeping and nothing else changes after a note is written.
 CREATE TABLE IF NOT EXISTS notes (
+    origin_json TEXT NOT NULL DEFAULT '{}',
     id TEXT PRIMARY KEY,
     agent_id TEXT NOT NULL DEFAULT 'default',
     person_id TEXT NOT NULL DEFAULT 'user',
@@ -1840,6 +1849,17 @@ class EngramStore:
 
     # ── Engram CRUD ──
 
+    def entry_origin(self, agent_id: str, person_id: str, project_scope: str) -> dict[str, str]:
+        """Snapshot this request's origin, never derive identity from cwd."""
+        from ..attribution import clean_origin, current_origin, origin_key
+
+        origin = current_origin()
+        thread = origin.get("thread_id")
+        if not thread:
+            return {}
+        registered = _decode_json(self.get_meta(origin_key(thread, agent_id, person_id, project_scope)), {})
+        return {**clean_origin(registered), **origin}
+
     def save_engram(self, engram: Engram) -> None:
         """Insert or update an engram.
 
@@ -1858,22 +1878,21 @@ class EngramStore:
         by a later one: authorship is a fact of the writing, not something a
         pass that loads and saves a memory can restate.
         """
-        data = engram.to_dict()
-
-        # Validate column names to prevent SQL injection
-        safe_data = {k: v for k, v in data.items() if k in _ENGRAM_COLUMNS}
-        columns = ", ".join(safe_data.keys())
-        placeholders = ", ".join("?" for _ in safe_data)
-        updates = ", ".join(
-            f"{k}=excluded.{k}" for k in safe_data
-            if k != "id" and k not in _AUTHOR_COLUMNS
-        )
-
         with self.transaction() as conn:
             before = conn.execute(
                 "SELECT content, impact, resolution FROM engrams WHERE id = ?",
                 (engram.id,),
             ).fetchone()
+            if before is None and not engram.origin:
+                engram.origin = self.entry_origin(engram.owner_agent_id, engram.person_id or "user", engram.project_scope or "global")
+            data = engram.to_dict()
+            safe_data = {k: v for k, v in data.items() if k in _ENGRAM_COLUMNS}
+            columns = ", ".join(safe_data)
+            placeholders = ", ".join("?" for _ in safe_data)
+            updates = ", ".join(
+                f"{k}=excluded.{k}" for k in safe_data
+                if k != "id" and k not in _AUTHOR_COLUMNS
+            )
             changed = before is None or (
                 before["content"] != engram.content
                 or (before["impact"] or "") != (engram.impact or "")
@@ -3527,14 +3546,15 @@ class EngramStore:
             conn.execute(
                 """
                 INSERT INTO hypomnema_entries(
-                    id, agent_id, person_id, project_scope, content,
+                    origin_json, id, agent_id, person_id, project_scope, content,
                     entry_kind, authored_by, author_id, author_model, author_session,
                     source, density, domain, tags_json, confidence, salience,
                     active, foundational, revision_count, revisions_json,
                     related_session_id, related_engram_id, created_at, last_revised_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '[]', ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, 0, '[]', ?, ?, ?, ?)
                 """,
                 (
+                    _encode_json(self.entry_origin(agent_id, person_id, project_scope)),
                     entry_id,
                     agent_id,
                     person_id,
@@ -3632,17 +3652,18 @@ class EngramStore:
             conn.execute(
                 """
                 INSERT INTO hypomnema_entries(
-                    id, agent_id, person_id, project_scope, content,
+                    origin_json, id, agent_id, person_id, project_scope, content,
                     entry_kind, authored_by, author_id, author_model,
                     author_session, author_place, source,
                     density, domain, tags_json, confidence, salience,
                     active, foundational, revision_count, revisions_json,
                     created_at, last_revised_at, surface_count
-                ) VALUES (?, ?, ?, ?, ?, 'handoff', 'agent', ?, ?, ?, ?, 'observed',
+                ) VALUES (?, ?, ?, ?, ?, ?, 'handoff', 'agent', ?, ?, ?, ?, 'observed',
                           0.9, 'situational', ?, 1.0, 1.0,
                           1, 0, 0, '[]', ?, ?, 0)
                 """,
                 (
+                    _encode_json(self.entry_origin(agent_id, person_id, project_scope)),
                     new_id,
                     agent_id,
                     person_id,
@@ -3727,6 +3748,7 @@ class EngramStore:
         project_scope: str = "global",
         reader_session: str = "",
         reader_place: str = "",
+        reader_project_id: str = "",
         limit: int = PACKET_HANDOFFS,
         within_hours: float = LIVE_HANDOFF_HOURS,
     ) -> list[dict[str, Any]]:
@@ -3735,16 +3757,15 @@ class EngramStore:
         First the note the reader's own session left, if it left one: a
         session coming back from compaction or a resume gets its own thread
         back before anyone else's, even when more sessions have left notes
-        since than are kept. Otherwise the newest note written where the
-        reader works (``reader_place``, as ``place_of`` gives it), or in a
-        related place: a session started in a project picks up that project's
-        thread, however long ago it was left. Otherwise the newest note.
+        since than are kept. Otherwise prefer a matching explicit project,
+        then where the reader works (``reader_place``, as ``place_of`` gives
+        it), then related places, newest first within each. The first note
+        is kept however long ago it was left.
 
         Then every other session's note no older than ``within_hours``, up to
-        ``limit`` notes in all: those written here first, then related places,
-        then the rest, newest first within each. Several sessions are often
-        live at once, and one that coordinates the others needs to see them
-        all.
+        ``limit`` notes in all, in the same project, place, and recency order.
+        Several sessions are often live at once, and one that coordinates
+        the others needs to see them all.
         """
 
         rows = self._get_conn().execute(
@@ -3773,15 +3794,20 @@ class EngramStore:
         near = {
             note["id"]: nearness(here, note.get("author_place") or "") for note in notes
         }
-        # Newest first already; a stable sort keeps that order within each place.
-        by_place = sorted(notes, key=lambda note: -near[note["id"]])
-        first = own if own is not None else by_place[0]
+        # Stable sorting keeps recency within each project and place match.
+        from ..attribution import stored_origin
+
+        ranked = sorted(notes, key=lambda note: (
+            -(bool(reader_project_id) and stored_origin(note).get("project_id") == reader_project_id),
+            -near[note["id"]],
+        ))
+        first = own if own is not None else ranked[0]
         cutoff = datetime.now(timezone.utc) - timedelta(hours=within_hours)
         # Back after long enough to be crowded out, it still gets the thread it
-        # would have had: the newest here, however long ago that was left.
-        kept_anyway = by_place[0]["id"] if crowded_out is not None and by_place else None
+        # would have had: the best match, however long ago that was left.
+        kept_anyway = ranked[0]["id"] if crowded_out is not None and ranked else None
         others = [
-            note for note in by_place
+            note for note in ranked
             if note["id"] != first["id"]
             and (note["id"] == kept_anyway or _written_since(note.get("created_at"), cutoff))
         ]
@@ -4620,9 +4646,10 @@ class EngramStore:
         """
         if not self.has_engram_column("standing"):
             return []
+        origin = "origin_json" if self.has_engram_column("origin_json") else "'{}' AS origin_json"
         rows = self._get_conn().execute(
             "SELECT id, content, state, created_at, "
-            "standing_by, standing_session, standing_at FROM engrams "
+            f"standing_by, standing_session, standing_at, {origin} FROM engrams "
             "WHERE owner_agent_id = ? AND person_id = ? AND project_scope = ? "
             "AND standing = 1 AND state IN ('active', 'dormant') "
             "ORDER BY standing_at DESC, id DESC",
@@ -5192,11 +5219,12 @@ class EngramStore:
             conn.execute(
                 """
                 INSERT INTO journal_entries (
-                    id, agent_id, person_id, project_scope, text, mood, written,
+                    origin_json, id, agent_id, person_id, project_scope, text, mood, written,
                     session_id, model_id, hour_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    _encode_json(self.entry_origin(agent_id, person_id, project_scope)),
                     entry_id, agent_id, person_id, project_scope, text, (mood or "").strip(),
                     written, (session_id or "").strip(), (model_id or "").strip(),
                     (hour_id or "").strip(), _utc_now(),
@@ -5292,11 +5320,12 @@ class EngramStore:
             conn.execute(
                 """
                 INSERT INTO notes (
-                    id, agent_id, person_id, project_scope, kind, text, author,
+                    origin_json, id, agent_id, person_id, project_scope, kind, text, author,
                     model_id, in_reply_to, session_id, hour_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
+                    _encode_json(self.entry_origin(agent_id, person_id, project_scope)),
                     entry_id, agent_id, person_id, project_scope, kind, text, author,
                     (model_id or "").strip(), in_reply_to, (session_id or "").strip(),
                     (hour_id or "").strip(), _utc_now(),

@@ -285,7 +285,10 @@ class Engram:
     """The model that wrote the words, when known. Empty means unsigned."""
 
     author_session: str = ""
-    """The harness session that wrote them (CLAUDE_CODE_SESSION_ID), when known."""
+    """The writing harness session or Codex request thread, when known."""
+
+    origin: dict[str, str] = field(default_factory=dict)
+    """Source project and task at creation; provenance, never access scope."""
 
     # Encoding context
     encoding_context: EncodingContext = field(default_factory=EncodingContext)
@@ -388,6 +391,7 @@ class Engram:
             "author_kind": self.author_kind,
             "author_model": self.author_model,
             "author_session": self.author_session,
+            "origin_json": json.dumps(self.origin),
             "encoding_context": json.dumps(self.encoding_context.to_dict()),
             "kind": self.kind,
             "tags": json.dumps(self.tags),
@@ -431,7 +435,10 @@ class Engram:
         if isinstance(schema_refs, str):
             schema_refs = json.loads(schema_refs)
 
+        from ..attribution import stored_origin
+
         return cls(
+            origin=stored_origin(d),
             id=d["id"],
             created_at=d.get("created_at", _now_iso()),
             content=d.get("content", ""),

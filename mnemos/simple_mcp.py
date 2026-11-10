@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import inspect
+from functools import wraps
 import logging
 import signal
 import sys
@@ -18,6 +19,7 @@ from typing import Any
 from mcp import types
 
 from .mcp_compat import Context, Server, client_name as _handshake_client_name, make_server
+from .attribution import bind_origin, mcp_origin
 from .package_version import mnemos_version
 from .simple_runtime import MnemosRuntime, RECALL_RESULTS, SIMPLE_TOOL_NAMES, format_health_card
 from .simple_tools import (
@@ -183,6 +185,15 @@ def start_warm_up() -> threading.Thread | None:
     return thread
 
 
+def _attributed(fn):
+    """Bind SDK metadata only while this tool executes, including direct calls."""
+    @wraps(fn)
+    def call(*args, **kwargs):
+        with _runtime_lock, bind_origin(mcp_origin(kwargs.get("ctx"))):
+            return fn(*args, **kwargs)
+    return call
+
+
 def register_simple_tools(server: Server) -> None:
     """Register the simple continuity tools on an MCP server: all of them,
     on either server. Advanced mode serves these unchanged and only adds.
@@ -211,6 +222,7 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
+    @_attributed
     def mnemos_context(
         query: str = "",
         max_results: int = 5,
@@ -275,7 +287,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
-    def mnemos_handoff(text: str, signed_as: str = "") -> str:
+    @_attributed
+    def mnemos_handoff(text: str, signed_as: str = "", ctx: Context | None = None) -> str:
         """Leave your own note on where you are, in first person, signed.
 
         Use after meaningful progress or a changed plan, while unresolved
@@ -314,7 +327,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
-    def mnemos_journal(text: str = "", signed_as: str = "", mood: str = "") -> str:
+    @_attributed
+    def mnemos_journal(text: str = "", signed_as: str = "", mood: str = "", ctx: Context | None = None) -> str:
         """Write in your own journal, or, with no text, read it back.
 
         The journal is yours. Write in it when something is there: what you
@@ -353,8 +367,10 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
+    @_attributed
     def mnemos_note(
         text: str, kind: str, signed_as: str = "", in_reply_to: str = "",
+        ctx: Context | None = None,
     ) -> str:
         """Leave the human a note, in your own words, for them to read when
         they choose.
@@ -404,7 +420,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=True,
         )
     )
-    def mnemos_page() -> str:
+    @_attributed
+    def mnemos_page(ctx: Context | None = None) -> str:
         """Open your page for the human you're with, and get its address.
 
         It shows them your memory, on this machine only: your notes to them,
@@ -430,6 +447,7 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
+    @_attributed
     def mnemos_capture(
         content: str,
         context: str = "",
@@ -438,6 +456,7 @@ def register_simple_tools(server: Server) -> None:
         signed_as: str = "",
         standing: bool = False,
         shared: bool = False,
+        ctx: Context | None = None,
     ) -> str:
         """Capture durable continuity from the current conversation.
 
@@ -484,11 +503,13 @@ def register_simple_tools(server: Server) -> None:
         ),
         meta={"anthropic/maxResultSizeChars": RECALL_RESULT_CHARS},
     )
+    @_attributed
     def mnemos_recall(
         query: str,
         max_results: int = RECALL_RESULTS,
         include_archived: bool = False,
         standing: bool = False,
+        ctx: Context | None = None,
     ) -> str:
         """Recall what memory holds for a question: memories, lessons,
         handoffs and journal entries, found by their words and by their
@@ -550,6 +571,7 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
+    @_attributed
     def mnemos_correct(
         correction: str,
         target_id: str = "",
@@ -557,6 +579,7 @@ def register_simple_tools(server: Server) -> None:
         action: str = "update",
         impact: str = "",
         signed_as: str = "",
+        ctx: Context | None = None,
     ) -> str:
         """Correct, supersede, or archive stale continuity.
 
@@ -603,7 +626,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
-    def mnemos_maintain(deep: bool = False) -> str:
+    @_attributed
+    def mnemos_maintain(deep: bool = False, ctx: Context | None = None) -> str:
         """Run the best available maintenance without additional setup.
 
         Baseline maintenance is local and deterministic. If a dedicated model
@@ -620,8 +644,10 @@ def register_simple_tools(server: Server) -> None:
             idempotent=False,
         )
     )
+    @_attributed
     def mnemos_reflect(
         target_id: str, text: str, verdict: str = "", signed_as: str = "",
+        ctx: Context | None = None,
     ) -> str:
         """Answer something your memory asked you about itself.
 
@@ -672,7 +698,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=True,
         )
     )
-    def mnemos_introduce(agent_model: str, agent_name: str = "") -> str:
+    @_attributed
+    def mnemos_introduce(agent_model: str, agent_name: str = "", ctx: Context | None = None) -> str:
         """Declare who you are, so your notes are signed and maintenance stays kin.
 
         Call at the start of a session with agent_model set to your exact
@@ -697,7 +724,8 @@ def register_simple_tools(server: Server) -> None:
             idempotent=True,
         )
     )
-    def mnemos_health() -> types.CallToolResult:
+    @_attributed
+    def mnemos_health(ctx: Context | None = None) -> types.CallToolResult:
         """Report a human-relayable health card for this memory scope.
 
         Read-only. Shows where memory lives, how much there is, whom this

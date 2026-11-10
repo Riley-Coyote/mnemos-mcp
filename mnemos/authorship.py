@@ -181,7 +181,10 @@ def run_by_agent(signed_as: str = "", environ: Mapping[str, str] | None = None) 
 
 
 def harness_session(environ: Mapping[str, str] | None = None) -> str:
-    """The Claude Code session this process serves, or ``""``.
+    """The request's originating thread, else the harness session, or ``""``.
+
+    Codex supplies threadId on each MCP request. Its sessionId identifies a
+    tree of threads, so it must not merge subagents' handoffs into the parent.
 
     Claude Code gives every MCP server it spawns ``CLAUDE_CODE_SESSION_ID``,
     and its SessionStart hook receives the same id as ``session_id``, so a
@@ -191,7 +194,9 @@ def harness_session(environ: Mapping[str, str] | None = None) -> str:
     """
 
     env = os.environ if environ is None else environ
-    return clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
+    from .attribution import current_origin
+
+    return clean_session_id(current_origin().get("thread_id")) or clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
 
 
 def detect_harness_model(environ: Mapping[str, str] | None = None) -> str:

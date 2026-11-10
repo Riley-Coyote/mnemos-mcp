@@ -99,19 +99,66 @@ def test_windows_read_payload_reassembles_json_chunks():
     assert json.loads(data["payload"]) == {"session_id": "late"}
 
 
-def test_posix_pipe_readiness_still_uses_select():
+@pytest.mark.parametrize("minimum_fd", [0, 1024])
+def test_posix_pipe_readiness(minimum_fd):
     if os.name == "nt":
         pytest.skip("Windows pipes tested above")
+    import fcntl
+    import resource
+
     from mnemos.cue import stdin_ready
 
+    limits = resource.getrlimit(resource.RLIMIT_NOFILE)
     reader, writer = os.pipe()
     try:
+        if limits[0] <= minimum_fd:
+            if limits[1] != resource.RLIM_INFINITY and limits[1] <= minimum_fd:
+                pytest.skip("The hard descriptor limit is too low for this case")
+            resource.setrlimit(resource.RLIMIT_NOFILE, (minimum_fd + 1, limits[1]))
+        duplicate = fcntl.fcntl(reader, fcntl.F_DUPFD, minimum_fd)
+        os.close(reader)
+        reader = duplicate
+        assert reader >= minimum_fd
         assert stdin_ready(reader, 0.01) is False
         os.write(writer, b"x")
         assert stdin_ready(reader, 0.01) is True
         assert os.read(reader, 1) == b"x"
+        assert stdin_ready(reader, -1) is False
+        os.close(writer)
+        writer = None
+        assert stdin_ready(reader, 0) is True  # EOF is readable too.
     finally:
         os.close(reader)
+        if writer is not None:
+            os.close(writer)
+        resource.setrlimit(resource.RLIMIT_NOFILE, limits)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file readiness")
+def test_posix_redirected_file_is_readable_at_eof(tmp_path):
+    from mnemos.cue import stdin_ready
+
+    path = tmp_path / "payload.json"
+    path.write_bytes(b"{}")
+    with path.open("rb") as stream:
+        assert stdin_ready(stream.fileno(), 0) is True
+        assert stream.read() == b"{}"
+        assert stdin_ready(stream.fileno(), 0) is True
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX invalid descriptor")
+def test_posix_closed_descriptor_raises():
+    import errno
+
+    from mnemos.cue import stdin_ready
+
+    reader, writer = os.pipe()
+    os.close(reader)
+    try:
+        with pytest.raises(OSError) as error:
+            stdin_ready(reader, 0)
+        assert error.value.errno == errno.EBADF
+    finally:
         os.close(writer)
 
 

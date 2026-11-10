@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Codex MCP calls retain their originating task, keeping parallel handoffs
+  separate and restoring the returning task's own handoff first.
+- Entries can retain explicit project/task provenance without splitting the
+  shared store or changing access scope. Labels appear in recall and startup
+  context; existing entries keep unknown origins. Standard installed Codex hooks
+  resolve desktop project assignments locally; a helper supports custom commands.
+
+
 ## 0.6.6 (2026-11-08)
 
 Mnemos can be installed from Hermes's plugin catalog, and it runs on mcp 2, which Hermes pins.

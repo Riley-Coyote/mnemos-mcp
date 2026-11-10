@@ -226,6 +226,47 @@ transcript). The packet shows who left the handoff, marks each note
 kind of model's name (Sonnet's, read by Opus) is a colleague's, not its own;
 an earlier version's notes are the reader's own. Nothing unsigned is guessed.
 
+### Codex project and task provenance
+
+Codex sends `threadId` and `sessionId` on MCP tool calls. Mnemos uses the
+thread ID for task attribution and handoff ownership; the session ID may be
+shared with subagents. These fields are transport metadata, not arguments the
+model must remember to supply. They do not change the agent, person, or
+`project_scope`, and recall remains available across projects in the same store.
+
+New captures, handoffs, journal entries, and notes snapshot their source
+project and task when known. Recall and startup handoffs display these labels.
+Moving a chat changes future entries, not earlier ones. Older entries remain
+unattributed unless their source is known; opening or saving them does not
+invent an origin.
+
+Project IDs are not currently included in Codex's hook or MCP payloads. The
+standard hook installer enables local project lookup for both SessionStart
+and UserPromptSubmit. Install or refresh the hooks with:
+
+```sh
+mnemos hooks install codex --write
+```
+
+The generated commands use `--codex-origin` to read that chat's explicit project
+assignment from Codex state on the same machine. The hooks register the source
+context only in an existing store for subsequent MCP writes. Missing state
+leaves project provenance unknown and does not prevent the hook from running.
+The working directory never determines project membership or memory scope.
+
+Custom hook runners must resolve project membership where Codex keeps its
+state, before forwarding the hook payload elsewhere. The
+`mnemos.integrations.codex_origin` helper can enrich a custom command's stdin;
+standard local hooks do not need an extra wrapper.
+
+The lookup reads `state_5.sqlite` and, for desktop assignments not yet migrated,
+`.codex-global-state.json` under `CODEX_HOME` (default `~/.codex`). These are
+internal desktop formats, so a future format change may require updating the
+helper. Clients can also supply the same optional labels under MCP
+`_meta["mnemos/origin"]`: `project_id`, `project_name`, `thread_title`, and `cwd`.
+Wire `threadId`/`sessionId` take precedence over IDs in that extension. Labels
+are bounded provenance, never authorization or a filesystem access grant.
+
 ### Install Simple MCP Into Clients
 
 Claude Code (runs `claude mcp add` for you; without `--write` it prints the line):

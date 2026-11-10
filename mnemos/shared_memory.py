@@ -10,13 +10,14 @@ from __future__ import annotations
 import os
 import json
 import sqlite3
+import time
 from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
 from .core.engram import Engram
 from .cue import local_day
-from .store.sqlite_store import EngramStore
+from .store.sqlite_store import EngramStore, OPENING_PATIENCE_SECONDS, SCHEMA_VERSION
 
 PERSON_OWNER = "person:local"  # Agent ids are slugs; a colon cannot occur in one.
 PREFIX = "shared_"
@@ -38,7 +39,7 @@ def path() -> Path:
 
 
 class _Graph(EngramStore):
-    """Existing graph, without migrations or a create-on-open side effect."""
+    """Writable existing graph, upgraded without creating a missing file."""
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
@@ -50,6 +51,21 @@ class _Graph(EngramStore):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA busy_timeout=0")
         self._conn.execute("PRAGMA foreign_keys=ON")
+        try:
+            try:
+                version = int(self.get_meta("schema_version") or 0)
+            except (TypeError, ValueError):
+                version = 0
+            if version < SCHEMA_VERSION:
+                # Recall also writes reinforcement. Upgrade on this existing
+                # connection, with the ordinary recovery backup and migrations.
+                self._opening_deadline = time.monotonic() + OPENING_PATIENCE_SECONDS
+                self._init_db()
+                self._record_code_version()
+        except BaseException:
+            self._conn.close()
+            self._conn = None
+            raise
 
     def engram_visible_in_scope(self, engram_id, **_scope):
         return self.engram_state_in_scope(engram_id) is not None

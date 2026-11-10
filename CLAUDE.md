@@ -168,6 +168,15 @@ the CLI, and every serve mode route through `resolve_scope()` or
 Scope must never be inferred from ambient state such as the working directory;
 an MCP server's cwd belongs to whichever client spawned it.
 
+Entry provenance is separate from scope (`mnemos/attribution.py`). The simple
+MCP tools bind request metadata for one call: Codex's thread ID attributes
+writes and keeps parallel handoffs separate; its session-tree ID is retained
+as metadata. Explicit project/task labels are snapshotted at creation, not
+inferred from cwd or retroactively attached to existing entries. The
+`--codex-origin` option enables desktop assignment lookup in standard Codex
+hooks; `integrations/codex_origin.py` also supports custom hook commands.
+See `docs/guide.md`.
+
 Storage is local SQLite, one file per agent by default
 (`~/.mnemos/<agent>.db`). Nothing leaves the machine unless a provider is
 configured, or the quiet hours are on: then the agent thinks over its memory

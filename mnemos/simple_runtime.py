@@ -64,6 +64,7 @@ from .interface.context_packet import (
     standing_words,
     whose_handoff,
 )
+from .attribution import bind_origin, current_origin, origin_suffix, stored_origin
 from .place import place_of
 from .retrieval.reactive import MATCHED_WORDS, ReactiveRetriever, RetrievalResult
 # Re-exported: MnemosScope and resolve_scope moved to simple_scope but
@@ -4374,7 +4375,12 @@ class MnemosRuntime:
         """The folder this session works in: the one its host named, else this
         process's own."""
 
-        return _working_folder() if self._host_workdir is None else self._host_workdir
+        if self._host_workdir is not None:
+            return self._host_workdir
+        origin = current_origin()
+        if origin.get("thread_id") and self._store is not None:
+            origin = self._store.entry_origin(**self._scope_args())
+        return origin.get("cwd", _working_folder())
 
     def signs_for_host(self, model: str) -> None:
         """What the host says this session is running signs its writes, as an
@@ -4401,7 +4407,7 @@ class MnemosRuntime:
             self._ensure_init()
         if harness_session() and self._store is not None:
             model, name = session_introduction(self._store.get_meta)
-            if model or name:
+            if model or name or current_origin().get("thread_id"):
                 return model, name
         return self._session_author, self._session_name
 
@@ -4529,17 +4535,18 @@ class MnemosRuntime:
             )
 
         self._set_meta("agent_model", model)
-        self._session_author = clean_model_id(model)
         name = " ".join(agent_name.split())
-        self._session_name = name
         session = harness_session()
+        if not current_origin().get("thread_id"):
+            self._session_author = clean_model_id(model)
+            self._session_name = name
         if session:
             # Written even when the id doesn't look like a model's, so an
             # earlier introduction of this session stops signing its writes.
             assert self._store is not None
             self._store.set_meta(
                 session_introduction_key(session),
-                session_introduction_record(self._session_author, name),
+                session_introduction_record(clean_model_id(model), name),
             )
         # An id Mnemos can't parse still names its giver, so two unknown models
         # never share a name.
@@ -4618,28 +4625,32 @@ class MnemosRuntime:
         status = self._onboarding_status()
         self._current_session()
         packet = self._briefing_packet(session_counter=self._current_session())
-        if packet["wake"] == "light":
+        light = packet["wake"] == "light"
+        if light:
             # Dreams leave delivery markers for the next interactive session.
             self._traced_read(*sorted(shown_ids(packet)))
-            return packet["prompt"]
-        self._record_briefing_shown(packet)
-        shown = packet.get("shown") or {}
-        asked = set(shown.get("questions") or [])
-        self._traced_read(
-            *sorted(shown_ids(packet)),
-            *(item["target_id"] for item in packet.get("reflections") or [] if item["id"] in asked),
-        )
+        else:
+            self._record_briefing_shown(packet)
+            shown = packet.get("shown") or {}
+            asked = set(shown.get("questions") or [])
+            self._traced_read(
+                *sorted(shown_ids(packet)),
+                *(item["target_id"] for item in packet.get("reflections") or [] if item["id"] in asked),
+            )
 
         parts = [packet["prompt"]] if packet["prompt"] else []
-        block = self._onboarding_block(status)
-        if block:
-            parts.append(block)
+        if not light:
+            block = self._onboarding_block(status)
+            if block:
+                parts.append(block)
         if query.strip():
             # The handoff shown whole takes no room from the rest.
             room = room_after("\n\n".join(parts), PACKET_MAX_CHARS + handoff_room(packet))
             section = self._query_results(query, max_results, shown_ids(packet), room)
             if section:
                 parts.append(section)
+        if light:
+            return "\n\n".join(parts)
         if not parts:
             # The wake is the agent's own words; memories kept without them are
             # still here, and saying nothing carried over would be untrue.
@@ -4708,6 +4719,7 @@ class MnemosRuntime:
         hook's payload does; it never chooses the scope.
         """
         assert self._store is not None
+        origin = self._store.entry_origin(**self._scope_args())
         return build_context_packet(
             self._store,
             "",
@@ -4722,6 +4734,7 @@ class MnemosRuntime:
             older_than_store=self._older_than_store() is not None,
             person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
             wake=os.environ.get("MNEMOS_WAKE", "full"),
+            reader_project_id=origin.get("project_id", ""),
         )
 
     def _query_results(self, query: str, max_results: int, shown: set[str], room: int) -> str:
@@ -5082,7 +5095,7 @@ class MnemosRuntime:
             if brought is None:
                 return ""
             lines = [
-                f"Note {note_id}, {note_signature(note)}, {_age_text(note['created_at'])}:",
+                f"Note {note_id}, {note_signature(note)}, {_age_text(note['created_at'])}{origin_suffix(note)}:",
                 note["content"],
             ]
             return "\n".join(lines + ([brought] if brought else []))
@@ -5100,7 +5113,7 @@ class MnemosRuntime:
                 engram = self._restore_faded(engram)
             quiet = engram.state == "dormant"
             kind = "Lesson" if {"lesson", "distilled"} & set(engram.tags or []) else "Memory"
-            lines = [f"{kind} {note_id}, {_age_text(engram.created_at)}:", engram.content]
+            lines = [f"{kind} {note_id}, {_age_text(engram.created_at)}{origin_suffix({'origin': engram.origin})}:", engram.content]
             if engram.impact and engram.impact != engram.content:
                 lines.append(f"What it changed: {engram.impact}")
             if faded:
@@ -5827,6 +5840,7 @@ class MnemosRuntime:
                 "entry_kind": "journal",
                 "author_model": entry["model_id"],
                 "author_session": entry["session_id"],
+                "origin_json": entry.get("origin_json", "{}"),
                 "created_at": entry["created_at"],
                 "written": entry["written"],
                 "mood": entry["mood"],
@@ -7680,22 +7694,28 @@ class MnemosRuntime:
             # The memory holds the note's words, so it keeps the note's
             # author and signature: only the agent's notes get here, and one
             # of any other kind would not be claimed for the agent.
-            engram = self._encoder.encode(
-                content=entry["content"],
-                kind="semantic",
-                tags=["continuity", "promoted", *entry.get("tags", [])],
-                source=SourceType.BACKGROUND,
-                agent_id=self.scope.agent_id,
-                person_id=self.scope.person_id,
-                project_scope=self.scope.project_scope,
-                override_confidence=float(entry["confidence"]),
-                skip_surprise_detection=True,
-                author_kind={"agent": "agent", "system": "system"}.get(
-                    entry.get("authored_by") or "", "unknown"
-                ),
-                author_model=entry.get("author_model") or "",
-                author_session=entry.get("author_session") or "",
-            )
+            # Preserve gaps in the historical snapshot too: neither today's
+            # hook registration nor the maintaining task is evidence for them.
+            with bind_origin({}):
+                engram = self._encoder.prepare(
+                    content=entry["content"],
+                    kind="semantic",
+                    tags=["continuity", "promoted", *entry.get("tags", [])],
+                    source=SourceType.BACKGROUND,
+                    agent_id=self.scope.agent_id,
+                    person_id=self.scope.person_id,
+                    project_scope=self.scope.project_scope,
+                    override_confidence=float(entry["confidence"]),
+                    skip_surprise_detection=True,
+                    author_kind={"agent": "agent", "system": "system"}.get(
+                        entry.get("authored_by") or "", "unknown"
+                    ),
+                    author_model=entry.get("author_model") or "",
+                    author_session=entry.get("author_session") or "",
+                )
+                engram.origin = stored_origin(entry)
+                self._store.save_engram(engram)
+                self._encoder.finish(engram)
             self._traced_write(engram.id)
             self._store.mark_hypomnema_promoted(entry["id"], engram.id)
             said["memory_id"] = engram.id
@@ -7867,7 +7887,7 @@ def _format_continuity(entry: dict[str, Any], query: str) -> str:
     return (
         f"- [{'words: ' + ', '.join(words) if words else 'words'}] {_row_words(entry['content'], query)}\n"
         f"  id={entry['id']} domain={entry['domain']} confidence={entry['confidence']:.2f} "
-        f"{note_signature(entry)}"
+        f"{note_signature(entry)}{origin_suffix(entry)}"
     )
 
 
@@ -8046,7 +8066,7 @@ def _format_memory(result: Any, query: str = "") -> str:
     return (
         f"- {how_found(result)} {_row_words(engram.content or engram.impact or '', query, MEMORY_ROW_CHARS)}\n"
         f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}"
-        f"{_kept(engram)}{quiet}{whose}"
+        f"{_kept(engram)}{quiet}{whose}{origin_suffix({'origin': engram.origin})}"
     )
 
 
@@ -8114,7 +8134,7 @@ def _format_note(result: Any, query: str = "") -> str:
     return (
         f"- {how_found(result)} {_row_words(note.get('content') or '', query)}\n"
         f"  id={note.get('id')} kind={kind} {note_signature(note)}, "
-        f"{_age_text(note.get('created_at') or '')}"
+        f"{_age_text(note.get('created_at') or '')}{origin_suffix(note)}"
     )
 
 
@@ -8206,6 +8226,7 @@ def _signed_row(row: Mapping[str, Any]) -> dict[str, Any]:
         "author_model": row.get("model_id") or row.get("author_model") or "",
         "author_session": row.get("session_id") or row.get("author_session") or "",
         "created_at": row.get("created_at") or "",
+        "origin": stored_origin(row),
     }
 
 
@@ -8226,7 +8247,7 @@ def _format_archived(engram: Engram, query: str = "") -> str:
     resonance never reaches the archive; the query named it."""
     return (
         f"- {_row_words(engram.content or engram.impact or '', query, MEMORY_ROW_CHARS)}\n"
-        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{_kept(engram)}"
+        f"  id={engram.id} kind={engram.kind} confidence={engram.source.confidence:.2f}{_kept(engram)}{origin_suffix({'origin': engram.origin})}"
     )
 
 

@@ -83,6 +83,7 @@ from ..authorship import (
 )
 from ..dream_journal import DREAM_JOURNAL_TAG
 from ..retrieval.reactive import ReactiveRetriever, RetrievalResult
+from ..attribution import origin_suffix
 from ..place import place_name, place_of, place_words
 
 if TYPE_CHECKING:
@@ -213,6 +214,7 @@ def build_context_packet(
     max_engrams: int = 6,
     reader_model: str = "",
     reader_session: str = "",
+    reader_project_id: str = "",
     workdir: str = "",
     older_than_store: bool | None = None,
     person_name: str = "",
@@ -257,6 +259,7 @@ def build_context_packet(
 
     handoffs = store.live_handoffs(
         **scope, reader_session=reader_session, reader_place=place_of(workdir),
+        reader_project_id=reader_project_id,
     )
     handoff = handoffs[0] if handoffs else None
 
@@ -594,12 +597,12 @@ def when_left(
     whose, name, age, session = _whose(note, reader_model, reader_session)
     if whose == _OWN:
         where = {True: "this session", False: "in another session"}.get(session)
-        return _joined(age, where), _OWN
+        return _joined(age, where) + origin_suffix(note), _OWN
     if whose == _COLLEAGUE:
         during = "earlier in this session" if session is True else None
-        return _joined(f"{name}, a colleague", during, age), _COLLEAGUE
+        return _joined(f"{name}, a colleague", during, age) + origin_suffix(note), _COLLEAGUE
     elsewhere = "in another session" if session is False else None
-    return _joined(name or "unsigned", age, elsewhere), _UNPLACED
+    return _joined(name or "unsigned", age, elsewhere) + origin_suffix(note), _UNPLACED
 
 
 def _whose(
@@ -1007,7 +1010,7 @@ def _format_journal(
     shown["journal"] = entry["id"]
     if cut or sum(1 for row in text.splitlines() if row.strip()) > 1:
         tools["cut"].append(entry["id"])
-    return line
+    return line + origin_suffix(entry)
 
 
 def _person_words_line(item: dict[str, Any]) -> str:
@@ -1161,7 +1164,7 @@ def _format_who(
         # Riley asks of me" as describing it from outside (2026-09-30).
         lines.append("how we work, every session:")
         for item in kept:
-            lines.append(f"- {standing_words(item['content'])}")
+            lines.append(f"- {standing_words(item['content'])}{origin_suffix(item)}")
             shown["standing"].append(item["id"])
             tools["standing"].append(item["id"])
         more = len(standing) - len(kept)
@@ -1189,7 +1192,7 @@ def _cut(
     text, cut = cut_at_sentence(item.get(key) or "", limit)
     if cut:
         tools["cut"].append(item["id"])
-    return text
+    return text + (origin_suffix(item) if item.get("entry_kind") != "handoff" else "")
 
 
 def _format_beliefs(
@@ -1983,4 +1986,5 @@ def _serialize_retrieval_result(result: RetrievalResult) -> dict[str, Any]:
         "score": result.score,
         "confidence": engram.source.confidence,
         "retrieval_path": result.retrieval_path,
+        "origin": engram.origin,
     }

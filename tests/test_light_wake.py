@@ -8,6 +8,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mnemos.simple_runtime import MnemosRuntime
 
 
@@ -87,18 +89,37 @@ def _rows(db, sql, params=()):
         conn.close()
 
 
-def test_light_context_traces_shown_memories_without_spending_delivery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("query", ["", "harbour ledger"])
+def test_light_context_traces_shown_memories_without_spending_delivery(tmp_path, monkeypatch, query):
     db, ids = _store(tmp_path)
     monkeypatch.setenv("MNEMOS_WAKE", "light")
     runtime = MnemosRuntime(db_path=db, use_dedicated_model=False, **SCOPE)
     try:
-        assert STANDING in runtime.context()
+        assert STANDING in runtime.context(query)
     finally:
         runtime.close()
     [reads] = _rows(db, "SELECT read_ids FROM memory_trace WHERE tool = 'context'")
     assert ids["standing"] in json.loads(reads[0])
     assert _rows(db, "SELECT delivered_at FROM notes WHERE id = ?", (ids["reply"],)) == [(None,)]
     assert _rows(db, "SELECT surfaced_count FROM reflection_queue WHERE id = ?", (ids["question"],)) == [(0,)]
+    assert not _rows(db, "SELECT value FROM meta WHERE key LIKE '%:last_context_delivery_at'")
+
+
+def test_light_context_keeps_explicit_queries(tmp_path, monkeypatch):
+    db = tmp_path / "memory.db"
+    words = "The copper lantern workshop schedules safety inspections on Fridays."
+    runtime = MnemosRuntime(db_path=db, use_dedicated_model=False, **SCOPE)
+    try:
+        captured = runtime.capture(words, signed_as=OPUS)
+        memory_id = re.search(r"Memory ID: (engram_\w+)", captured).group(1)
+        monkeypatch.setenv("MNEMOS_WAKE", "light")
+        assert words not in runtime.context()
+        result = runtime.context("copper lantern safety inspections", max_results=1)
+        assert words in result
+    finally:
+        runtime.close()
+    reads = _rows(db, "SELECT read_ids FROM memory_trace WHERE tool = 'context'")
+    assert any(memory_id in json.loads(read[0]) for read in reads)
     assert not _rows(db, "SELECT value FROM meta WHERE key LIKE '%:last_context_delivery_at'")
 
 

@@ -302,14 +302,16 @@ class LogServer(ThreadingHTTPServer):
                 return {"error": f'"{key}" is a time of day, like 08:00.'}
             times[key] = (int(match.group(1)), int(match.group(2)))
         from ..setup.state import hour_settings
+        from ..authorship import clean_model_id
 
         selected = hour_settings(mind.exporter.scope.agent_id)
         runner = request.get("runner", selected["runner"])
         model = request.get("model", selected["model"])
         if runner not in ("claude-code", "codex"):
             return {"error": '"runner" must be claude-code or codex.'}
-        if not isinstance(model, str) or (model and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model)):
+        if on and (not isinstance(model, str) or (model.strip() and not clean_model_id(model))):
             return {"error": '"model" must be a model ID, or empty for the default.'}
+        model = clean_model_id(model) if isinstance(model, str) else ""
         scope = mind.exporter.scope
         args = argparse.Namespace(
             daemon_command="install" if on else "uninstall", hours=True, write=True, runner=runner, model=model,
