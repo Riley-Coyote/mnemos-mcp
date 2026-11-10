@@ -1055,8 +1055,8 @@ class MnemosMemoryProviderCore:
             {"key": "db_path", "description": (
                 "Where this agent's memory is kept, a file on this machine. Left empty: "
                 "~/.mnemos/hermes.db, or ~/.mnemos/hermes-<profile>.db for another profile. A home that "
-                "already had a memory with this empty goes on with it where it is: "
-                "$HERMES_HOME/mnemos/mnemos.db.")},
+                "already had a memory with this empty goes on with it where it is: mnemos/mnemos.db "
+                "in the profile's own folder.")},
             {"key": "agent_id", "description": (
                 "The agent's name in its memory. Left empty: hermes, or hermes-<profile>. A home that "
                 "already had a memory with this empty goes on as before: the profile's name as Hermes "

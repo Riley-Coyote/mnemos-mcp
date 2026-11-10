@@ -106,7 +106,8 @@ def test_the_help_says_where_and_which_agent():
     where, who = shown["db_path"], shown["agent_id"]
     for said in (where, who):
         assert "already had a memory" in said, said
-    assert "$HERMES_HOME/mnemos/mnemos.db" in where and "~/.mnemos/hermes.db" in where
+    # Said without $HERMES_HOME, which the dashboard never shows (test_hermes_same_tools.py).
+    assert "mnemos/mnemos.db in the profile's own folder" in where and "~/.mnemos/hermes.db" in where
     assert "the profile's name as Hermes gives it" in who and "default" in who and "hermes" in who
 
 
