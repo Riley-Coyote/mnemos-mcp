@@ -36,7 +36,8 @@ agent keeps its memory and its settings.
   question its memory asks it.
 - **What comes to mind.** With each message, up to four memories that came up by
   themselves, by the words they share with the message (searching by meaning is a
-  choice, below). When some did, Hermes says so in a line of its own.
+  choice, below). A long message is looked up by its start and its end. When some came
+  up, Hermes says so in a line of its own.
 - **Eleven tools** to keep the memory itself: `mnemos_capture`, `mnemos_recall`,
   `mnemos_correct`, `mnemos_handoff`, `mnemos_journal`, `mnemos_note`, `mnemos_reflect`,
   `mnemos_introduce`, `mnemos_maintain`, `mnemos_health` and `mnemos_page`.
@@ -47,7 +48,10 @@ agent keeps its memory and its settings.
 - **A page.** Ask the agent to show you its memory and it opens a page on this machine,
   where you can read all of it, reply to its notes, and correct a memory or let it go.
 
-Each conversation (a chat, or a topic in one) keeps its own note of where it was.
+Each conversation (a chat, or a topic in one) keeps its own note of where it was. On the
+command line a conversation is one `hermes` session, through its compressions. Resumed
+in a new `hermes` after Hermes compressed it, it counts as a new conversation: the note it
+left is still there at the wake, as one from another session.
 
 In a scheduled job (cron) nobody is there, so Mnemos writes nothing by itself. The agent
 gets a short read of its memory that records nothing, what comes with the job's prompt
@@ -78,7 +82,8 @@ that want a profile each.
 ## Where it's kept
 
 - The memory: `~/.mnemos/hermes.db` for the default profile, and
-  `~/.mnemos/hermes-<profile>.db` for each other one.
+  `~/.mnemos/hermes-<profile>.db` for each other one, unless you name another file
+  (`db_path`, below) before the first session.
 - Its settings: `$HERMES_HOME/mnemos.json`, with `mnemos.json.bak` beside it once they've
   been rewritten: the copy from before.
 
@@ -95,54 +100,86 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
 - `deep_maintenance` (false): let upkeep use a model, below.
 - `agent_id` and `db_path`: which agent this profile is, and where its memory is.
   `person_id` (user) and `project_scope` (global) name who it's with and which part of its
-  memory this is. The first session writes all four; they're there to read more than to set.
+  memory this is. The first session writes the ones you left empty and keeps the ones you
+  set; once there's a memory, they're there to read more than to change.
+
+A conversation reads its settings when it starts. After changing one, restart Hermes (the
+gateway, or the `hermes` you're in).
 
 ## What it does on your machine
 
 - **No network unless you choose it, and no telemetry.** Two settings send words off this
   machine, and both are off until you set them.
   - `deep_maintenance: true`, with a model provider chosen for Mnemos
-    (`MNEMOS_LLM_PROVIDER`: `openrouter`, `openai` or `anthropic`), lets Mnemos use a model
-    on the memory. Memory text then goes to that provider whenever the agent saves or
-    corrects a memory (the new one, with up to ten it may be linked to and the beliefs the
-    agent holds), and during upkeep.
-  - `MNEMOS_EMBEDDING_PROVIDER=gemini` sends the words of each memory and of each message
-    to Google, for meaning search.
+    (`MNEMOS_LLM_PROVIDER`: `openrouter` or `openai`), lets Mnemos use a model on the
+    memory. Memory text then goes to that provider whenever the agent saves or corrects a
+    memory (the new one, with up to ten it may be linked to and the beliefs the agent
+    holds), and during upkeep. The model is Mnemos's own choice there
+    (`anthropic/claude-sonnet-4-5` through OpenRouter, `gpt-4o-mini` at OpenAI) unless you
+    name one (`MNEMOS_MODEL`). `anthropic` is a third provider only where Hermes's Python
+    has the `anthropic` package; where it hasn't, Mnemos uses no model and says so in
+    Hermes's log.
+  - `MNEMOS_EMBEDDING_PROVIDER=gemini` sends words to Google, for meaning search: what the
+    agent keeps and what it shares, as it keeps it (its memories and what they taught it,
+    the notes it leaves itself and you, its journal), and each message and each search (of
+    a long message, its start and its end).
 
   Either provider can also be chosen in `~/.mnemos/config.json` (`llm.provider`,
   `embeddings.provider`), which every Mnemos agent on the machine reads. A key alone
   chooses nothing.
+
+  Without either, memories are found by their words. One case is neither: if Hermes's
+  Python already has `sentence-transformers` and its small model (`all-MiniLM-L6-v2`) is
+  already on this machine, Mnemos searches by meaning with that, here, sending nothing.
+  It never downloads a model. For the moment that model loads, Hugging Face's libraries
+  are switched offline in Hermes's process, and two loggers of those libraries are turned
+  down there so they don't fill Hermes's log.
 - **Keys and settings come only from Hermes.** What Mnemos reads from the environment it
   asks of Hermes (`agent.secret_scope`), which answers for the profile that is speaking:
-  its own settings (the `MNEMOS_` names) and the key of a provider you chose
-  (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`). It reads
-  no `.env` file and no other tool's credentials.
+  its own settings (every `MNEMOS_` name) and the key of a provider you chose
+  (`OPENROUTER_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`). So a
+  setting goes in that profile's own `.env`, and one profile's never counts for another.
+  It reads no `.env` file itself and no other tool's credentials, and inside Hermes it
+  takes no notice of another agent's marks in the environment (Claude Code's, when Hermes
+  was started from there).
 - **Its own files.** It keeps the memory in `~/.mnemos/` and its settings in
   `$HERMES_HOME/mnemos.json`, and reads `~/.mnemos/config.json` if you have one. It reads
-  Hermes's `config.yaml` to see whether it is the memory provider and which model the
-  agent runs, to sign what it writes. What the agent marks as shared goes to
+  Hermes's `config.yaml` for three things: whether it is the memory provider, which model
+  the agent runs (to sign what it writes), and whether Mnemos was connected there before
+  as an MCP server (it then keeps that memory).
+- **The machine's shared memory.** What the agent marks as shared goes to
   `~/.mnemos/shared-memory.db`, which every Mnemos agent on this machine can read; nothing
-  goes there unless the agent marks it so. Upkeep tends that shared memory too (what fades
-  there, what links to what), whoever wrote it.
+  goes there unless the agent marks it so. `mnemos_recall` searches it too, so what another
+  agent here shared can come into this agent's answer, and a shared memory that is found
+  is marked as used. Upkeep tends it (what fades there, what links to what), whoever wrote
+  it. `MNEMOS_SHARED_MEMORY=off` in a profile's `.env` turns all of that off for that
+  profile.
 - **A short background process.** When upkeep is due (at the end of a session, every 24
   turns, after the agent saves something) it runs in a Python process of its own,
   Hermes's Python, which ends when it's done. Nothing is scheduled, and it starts no
-  other program. It isn't given Hermes's environment. It gets, each by name, what a
-  process needs to run (the path, your home folder, your language), Mnemos's own tuning
-  numbers if you set any, and what you chose for Mnemos, as the profile that is speaking
-  has it: the chosen model provider's key, only with `deep_maintenance` on; Gemini's key,
-  only with meaning search set to it; and your proxy settings, only with one of those.
-  No other key of Hermes's reaches it.
+  other program. It runs in the memory's folder and runs nothing it finds there. It isn't
+  given Hermes's environment. It gets, each by name, what a process needs to run (the
+  path, your home folder, your language, where the machine's certificates and a model's
+  cache are), Mnemos's own settings if you set any, and what you chose for Mnemos, as the
+  profile that is speaking has it: the chosen model provider's key, only with
+  `deep_maintenance` on; Gemini's key, only with meaning search set to it; and your proxy
+  settings (an address there can hold a password), only with one of those. No other key
+  of Hermes's reaches it.
 - **The page.** `mnemos_page` serves the page from inside Hermes on 127.0.0.1, on a port
   the system picks and a path made fresh each time, and answers only this machine. It
   stays while the conversation that opened it goes on and while you're using it, and
-  closes about ten minutes after both end. It writes only in this agent's memory.
-  Beside it, it shows, read only, the other agents whose memory Mnemos keeps in
-  `~/.mnemos` and what they share. It looks at nothing else on the machine, and a
-  scheduled job can't open it.
-- **Backups.** The memory is outside Hermes's folder, so Mnemos names it to
-  `hermes backup`, which takes it along. Hermes copies the file as it stands, so Mnemos
-  first folds into it what SQLite still holds in its log. Restore with Hermes stopped.
+  closes about ten minutes after both end. It shows this agent's memory and writes only
+  there: not the other agents Mnemos keeps a memory for on this machine, and not what
+  they share. It looks at nothing else on the machine, and a scheduled job can't open it.
+- **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
+  `hermes backup`, which takes them along: this profile's and each other profile's, since
+  a backup is of every profile (to find them it reads each profile's `mnemos.json`).
+  Hermes copies a file as it stands, so Mnemos first folds into each what SQLite still
+  holds in its log, and keeps it still for the copy. Three things a backup leaves out: the
+  machine's shared memory, which isn't any one Hermes's; a memory you keep outside your
+  home folder, which Hermes skips and says so; and all of it in a quick snapshot
+  (`hermes backup --quick`, `/snapshot`), which takes only Hermes's own state files.
+  Restore with Hermes stopped.
 - **The system prompt.** Mnemos adds its rules for keeping a memory, and the agent's wake.
 - **The open-file limit.** On its first start it raises Hermes's limit on open files to
   4,096 if it's lower, since every conversation holds a few files open on the memory. It
