@@ -14,6 +14,7 @@ from typing import Any
 
 from ...file_security import atomic_write_text
 from ...setup.state import mnemos_command
+from ...simple_scope import named_in_the_environment
 from .scope import (
     HermesMnemosConfig,
     _load_json_config,
@@ -644,7 +645,7 @@ def settle_one_memory(hermes_home: str | Path | None = None) -> bool:
     raw = _load_json_config(home)
     if raw.get("db_path") or raw.get("agent_id"):
         return False
-    if os.environ.get("MNEMOS_DB_PATH") or os.environ.get("MNEMOS_AGENT_ID"):
+    if named_in_the_environment("MNEMOS_DB_PATH") or named_in_the_environment("MNEMOS_AGENT_ID"):
         return False
     if (home / "mnemos" / "mnemos.db").exists():
         return False  # the memory it has kept until now stays its memory

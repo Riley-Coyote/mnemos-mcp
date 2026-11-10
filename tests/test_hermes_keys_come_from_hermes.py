@@ -349,3 +349,34 @@ def test_upkeep_that_cant_be_handed_its_settings_runs_here_instead(tmp_path, mon
     assert not runtime._store.get_meta(runtime._meta_key(simple_runtime._UPKEEP_CLAIM)), "the claim was left held"
     provider.shutdown()
 
+
+
+def test_a_profiles_memory_is_never_the_one_the_gateway_names(keys_all_around, tmp_path, monkeypatch):
+    """MNEMOS_DB_PATH and MNEMOS_AGENT_ID in a gateway's environment are the
+    launch profile's. Read straight from it, they were the memory of every
+    profile the gateway serves that had named none: all of them in one file,
+    as one agent. They are asked of Hermes, as the keys are."""
+    monkeypatch.setenv("MNEMOS_DB_PATH", str(tmp_path / "the-gateways.db"))
+    monkeypatch.setenv("MNEMOS_AGENT_ID", "the-gateways-agent")
+    monkeypatch.setenv("MNEMOS_PERSON_ID", "the-gateways-person")
+    monkeypatch.setenv("MNEMOS_PROJECT_SCOPE", "the-gateways-project")
+
+    provider = _start(tmp_path)  # Hermes holds none of these for the profile speaking
+    scope = provider._runtime.scope
+    provider.shutdown()
+    assert "gateways" not in " ".join((scope.db_path, scope.agent_id, scope.person_id, scope.project_scope)), scope
+    assert not (tmp_path / "the-gateways.db").exists()
+    kept = json.loads((tmp_path / "hermes" / "mnemos.json").read_text())
+    assert "gateways" not in json.dumps(kept), "the gateway's names were written down as this profile's"
+
+    # A profile that names its own memory, in what Hermes holds for it, has that one.
+    monkeypatch.setitem(_HERMES_KEYS, "MNEMOS_DB_PATH", str(tmp_path / "named" / "mine.db"))
+    monkeypatch.setitem(_HERMES_KEYS, "MNEMOS_AGENT_ID", "named-by-the-profile")
+    provider = MnemosMemoryProviderCore()
+    provider.initialize(
+        "20261107_200500_keys", platform="cli", hermes_home=str(tmp_path / "another"),
+        agent_context="primary", agent_identity="default", agent_workspace="hermes",
+    )
+    scope = provider._runtime.scope
+    provider.shutdown()
+    assert (scope.db_path, scope.agent_id) == (str(tmp_path / "named" / "mine.db"), "named-by-the-profile")

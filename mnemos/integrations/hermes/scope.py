@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ...file_security import atomic_write_text
+from ...simple_scope import named_in_the_environment
 
 
 def conversation_id(*, gateway_session_key: str = "", session_id: str = "") -> str:
@@ -278,14 +279,14 @@ def derive_hermes_scope(
 
     agent_raw = (
         cfg.agent_id
-        or os.environ.get("MNEMOS_AGENT_ID")
+        or named_in_the_environment("MNEMOS_AGENT_ID")
         or context.get("agent_identity")
         or context.get("profile")
         or "hermes"
     )
     person_raw = (
         cfg.person_id
-        or os.environ.get("MNEMOS_PERSON_ID")
+        or named_in_the_environment("MNEMOS_PERSON_ID")
         or context.get("user_name")
         or context.get("user_id")
         or context.get("chat_id")
@@ -293,13 +294,13 @@ def derive_hermes_scope(
     )
     project_raw = (
         cfg.project_scope
-        or os.environ.get("MNEMOS_PROJECT_SCOPE")
+        or named_in_the_environment("MNEMOS_PROJECT_SCOPE")
         or context.get("project_scope")
         or context.get("chat_name")
         or _cwd_project_scope()
     )
 
-    explicit_db = cfg.db_path or os.environ.get("MNEMOS_DB_PATH")
+    explicit_db = cfg.db_path or named_in_the_environment("MNEMOS_DB_PATH")
     db_path = explicit_db or str(home / "mnemos" / "mnemos.db")
     db_path = db_path.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
     session = str(session_id or context.get("session_id") or "")

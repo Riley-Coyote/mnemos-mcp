@@ -39,6 +39,20 @@ class MnemosScope:
     db_path: str
 
 
+def named_in_the_environment(name: str) -> str:
+    """A setting of Mnemos's as the environment has it, or "".
+
+    Inside a host that hands the settings out (Hermes) it is asked of the host,
+    which answers for the profile that is speaking. One gateway can serve
+    several profiles, and its own environment is the one it was started for: a
+    MNEMOS_DB_PATH read there was the memory of every profile that named none."""
+    from .llm import _find_env_key, host_secrets_active
+
+    if host_secrets_active():
+        return _find_env_key(name)[0]
+    return os.environ.get(name, "")
+
+
 def resolve_scope(
     *,
     db_path: str | None = None,
@@ -55,14 +69,14 @@ def resolve_scope(
 
     resolved_agent = _slugify(
         agent_id
-        or os.environ.get("MNEMOS_AGENT_ID", "")
+        or named_in_the_environment("MNEMOS_AGENT_ID")
         or str(config.get("agent_id", ""))
         or "mnemos-agent",
         "mnemos-agent",
     )
     resolved_person = _slugify(
         person_id
-        or os.environ.get("MNEMOS_PERSON_ID", "")
+        or named_in_the_environment("MNEMOS_PERSON_ID")
         or str(config.get("person_id", ""))
         or str(config.get("user_name", ""))
         or "user",
@@ -70,13 +84,13 @@ def resolve_scope(
     )
     resolved_project = _slugify(
         project_scope
-        or os.environ.get("MNEMOS_PROJECT_SCOPE", "")
+        or named_in_the_environment("MNEMOS_PROJECT_SCOPE")
         or str(config.get("project_scope", ""))
         or DEFAULT_PROJECT_SCOPE,
         DEFAULT_PROJECT_SCOPE,
     )
 
-    explicit_db = db_path or os.environ.get("MNEMOS_DB_PATH")
+    explicit_db = db_path or named_in_the_environment("MNEMOS_DB_PATH")
     if explicit_db:
         resolved_db = explicit_db
     else:
