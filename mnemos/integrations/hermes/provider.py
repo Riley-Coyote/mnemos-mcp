@@ -713,7 +713,7 @@ class MnemosMemoryProviderCore:
                 "Let Mnemos use a model of its own on the memory. Only with a provider chosen for it "
                 "(MNEMOS_LLM_PROVIDER: openrouter, openai or anthropic) and that provider's key. Memory "
                 "text then goes to that provider whenever the agent saves or corrects a memory, and "
-                "during upkeep. Off: nothing leaves this machine.")},
+                "during upkeep. Off: Mnemos uses no model.")},
         ]
 
     def backup_paths(self) -> list[str]:
