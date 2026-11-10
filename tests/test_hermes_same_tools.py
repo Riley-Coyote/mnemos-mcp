@@ -865,7 +865,7 @@ def test_what_the_page_is_said_to_last_is_what_it_lasts_here(tmp_path):
         provider.shutdown()
         _close_pages()
     for said in (told, answered):
-        assert "session ends" not in said and "within ten minutes of both ending" in said, said
+        assert "session ends" not in said and "about ten minutes after both end" in said, said
     assert "\n\n" in told, "the tool's paragraphs were run together"
 
 

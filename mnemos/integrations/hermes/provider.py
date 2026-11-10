@@ -124,8 +124,8 @@ _UNATTENDED_RUNS = {"cron": "a scheduled run", "subagent": "a subagent's run", "
 # server's, whose page lasts as long as its session does.
 _PAGE_LASTS_A_SESSION = re.compile(r"until\s+this\s+session\s+ends")
 _PAGE_LASTS_HERE = (
-    "while this conversation goes on and while they're using it, and closes within ten "
-    "minutes of both ending"
+    "while this conversation goes on and while they're using it, and closes about ten "
+    "minutes after both end"
 )
 # How to turn meaning search on, where pip is the way and where it isn't: a
 # Mnemos that Hermes's catalog installed is in an environment Hermes builds
