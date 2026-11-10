@@ -11,11 +11,17 @@ lock 37 times, 25 ms at the longest.
 
 Now that session starts on what a read gives, as a run nobody is in does:
 who the agent is with and where it left off, nothing counted.
+
+A scheduled run (cron) or a subagent's, which only reads at its start, had
+no such fall-back: in a store that couldn't be opened to write, its read
+raised too, and that run had no Mnemos in it. It now opens the store to read.
 """
 
 from __future__ import annotations
 
 import sqlite3
+
+import pytest
 
 from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore
 from mnemos.simple_runtime import MnemosRuntime
@@ -75,6 +81,32 @@ def test_a_wake_in_a_store_that_couldnt_be_opened_to_write_reads(tmp_path, monke
         block = provider.system_prompt_block()
 
         assert "mnemos_recall" in block and "sorting the tide tables" in block
+    finally:
+        provider.shutdown()
+
+
+@pytest.mark.parametrize("run", ["cron", "subagent"])
+def test_a_run_nobody_is_in_reads_a_store_that_couldnt_be_opened_to_write(tmp_path, monkeypatch, run):
+    _a_memory_with_a_handoff(tmp_path)
+    opens = MnemosRuntime._ensure_init
+
+    def no_room_for_a_writer(self):
+        if not self._read_only:
+            raise sqlite3.OperationalError("database is locked")
+        return opens(self)
+
+    monkeypatch.setattr(MnemosRuntime, "_ensure_init", no_room_for_a_writer)
+    provider = _provider(tmp_path)
+    try:
+        try:
+            provider.initialize("job-1", hermes_home=str(tmp_path), platform=run, agent_context=run)
+        except sqlite3.OperationalError:
+            pass  # as Hermes does: it logs the failed start and goes on calling
+
+        block = provider.system_prompt_block()
+
+        assert "# Mnemos Identity Continuity" in block
+        assert "sorting the tide tables" in block, "the run got none of its memory"
     finally:
         provider.shutdown()
 

@@ -657,7 +657,10 @@ class MnemosMemoryProviderCore:
             # once (a question, the person's note) on a run nobody is in.
             assert self._scope is not None
             run = _UNATTENDED_RUNS.get(self._scope.agent_context, "a background run")
-            packet = self._runtime.glance()
+            try:
+                packet = self._runtime.glance()
+            except sqlite3.OperationalError:
+                packet = self._read_without_waking()
             rules = _RULES_UNATTENDED.format(run=run, read=_READ_NOT_WOKEN if packet else _NOTHING_TO_READ)
             body = f"# Mnemos Identity Continuity\n{rules}" + (f"\n\n{packet}" if packet else "")
         wake_limit = self._config.max_wake_chars

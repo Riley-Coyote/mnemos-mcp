@@ -117,8 +117,9 @@ release before it, run both ways, found nothing else.
 - **A session that starts while another process is writing still wakes.** A wake counts a
   session, so it writes; with the store's write lock held past the wait SQLite gives (one long
   write: a migration, a VACUUM, a stuck process), it raised, and Hermes builds its prompt once:
-  the whole session ran with no Mnemos in it. That session now starts on what a read gives.
-  Upkeep is not such a writer: on 1,500 memories a whole cycle held the lock 37 times, 25 ms at
+  the whole session ran with no Mnemos in it. That session now starts on what a read gives, and
+  so does a scheduled job or a subagent's run, whose read raised too when the store couldn't be
+  opened to write. Upkeep is not such a writer: on 1,500 memories a whole cycle held the lock 37 times, 25 ms at
   the longest.
 - **How many threads torch takes is Hermes's to say.** Where Hermes's Python has a local
   embedding model, loading it capped torch at two threads for everything in Hermes's process.
