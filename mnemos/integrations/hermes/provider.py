@@ -60,6 +60,7 @@ from .scope import (
     save_hermes_mnemos_config,
     settle_config_home,
 )
+from .hours import HOUR_TOOL, take_hour
 from .tools import TOOL_SCHEMAS
 
 try:  # POSIX only: Windows has no such limit to raise.
@@ -957,7 +958,7 @@ class MnemosMemoryProviderCore:
             here(tool) for tool in TOOL_SCHEMAS
             # A run nobody is in isn't offered the page: there is no one to open it for.
             if self._writes_enabled or tool["name"] != "mnemos_page"
-        ]
+        ] + [HOUR_TOOL]  # every agent's tools, and the quiet hour Hermes's scheduler wakes it for
 
     def _said_here(self, text: str) -> str:
         """What a tool says, where it names a command that isn't one here."""
@@ -1382,6 +1383,9 @@ class MnemosMemoryProviderCore:
             _watch_page(key, page)
         return _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, said)
 
+    def _tool_hour(self, args: dict[str, Any]) -> str:
+        return take_hour(_words(args, "kind"), self.scope)
+
     def _ensure_runtime(self) -> None:
         """A call after shutdown starts the conversation again, as Hermes
         started it. Until 0.6.7 it started with nothing Hermes had said: the
@@ -1471,6 +1475,7 @@ _TOOLS = {
     "mnemos_maintain": MnemosMemoryProviderCore._tool_maintain,
     "mnemos_health": MnemosMemoryProviderCore._tool_health,
     "mnemos_page": MnemosMemoryProviderCore._tool_page,
+    "mnemos_hour": MnemosMemoryProviderCore._tool_hour,
 }
 
 

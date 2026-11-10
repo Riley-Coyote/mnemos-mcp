@@ -26,6 +26,7 @@ from .scope import (
     save_hermes_mnemos_config,
     slugify,
 )
+from .hours import HOUR_TOOL
 from .tools import TOOL_SCHEMAS
 
 
@@ -211,7 +212,7 @@ def render_plugin_manifest() -> str:
         "kind: exclusive\n"
         "description: Local-first Mnemos identity-continuity provider for Hermes\n"
         "provides_tools:\n"
-        + "".join(f"  - {tool['name']}\n" for tool in TOOL_SCHEMAS)
+        + "".join(f"  - {tool['name']}\n" for tool in [*TOOL_SCHEMAS, HOUR_TOOL])
         + "hooks:\n"
         "  - prefetch\n"
         "  - on_session_end\n"

@@ -29,7 +29,8 @@ from mnemos.simple_mcp import plain_tool_schemas
 from mnemos.simple_tools import SERVER_INSTRUCTIONS
 
 HOST_MODEL = "anthropic/claude-opus-4.7"
-NAMES = {tool["name"] for tool in TOOL_SCHEMAS}
+# Every agent's tools, and the quiet hour Hermes's own scheduler wakes it for.
+NAMES = {tool["name"] for tool in TOOL_SCHEMAS} | {"mnemos_hour"}
 
 
 def _provider(tmp_path, name: str = "a", **init) -> MnemosMemoryProviderCore:

@@ -38,9 +38,10 @@ agent keeps its memory and its settings.
   themselves, by the words they share with the message (searching by meaning is a
   choice, below). A long message is looked up by its start and its end. When some came
   up, Hermes says so in a line of its own.
-- **Eleven tools** to keep the memory itself: `mnemos_capture`, `mnemos_recall`,
+- **Twelve tools** to keep the memory itself: `mnemos_capture`, `mnemos_recall`,
   `mnemos_correct`, `mnemos_handoff`, `mnemos_journal`, `mnemos_note`, `mnemos_reflect`,
-  `mnemos_introduce`, `mnemos_maintain`, `mnemos_health` and `mnemos_page`.
+  `mnemos_introduce`, `mnemos_maintain`, `mnemos_health`, `mnemos_page`, and
+  `mnemos_hour`, which hands the agent its quiet hour.
 - **Hermes's own memory, kept too.** MEMORY.md and USER.md stay on. What the agent
   writes there is kept in Mnemos as well, and changed or removed with it. A line added
   there twice, word for word, is kept once, as Hermes keeps it.

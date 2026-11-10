@@ -84,6 +84,15 @@ release before it, run both ways, found nothing else.
 
 ### Inside Hermes: the rest
 
+- **The agent has its quiet hours again, inside Hermes.** A twelfth tool, `mnemos_hour`, hands it
+  the hour `mnemos life --hour <kind> --handoff` hands any agent (its own, the day's work, or a
+  dream), from the same code: the same words and material, read from the profile's own memory
+  without changing it, and each hour's material handed once. After the hand-off's opening come a
+  few sentences true only in Hermes: which of its memory's tools answer the hour, where a note
+  waits for the person, and, for the day's work, that the day's conversations are read with
+  `session_search`. It runs nothing and calls no model. It is for a quiet-hour job, or for when
+  the person asks for it; where the hour can't be prepared (Windows) it says so and changes
+  nothing.
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
   `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
   of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass
