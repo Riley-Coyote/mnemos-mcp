@@ -267,13 +267,26 @@ def _held(path) -> list[tuple]:
         conn.close()
 
 
-def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path, monkeypatch):
-    """The page shows the other agents whose memory is kept beside this one's,
-    and the plugin's README and catalog entry said it only read them. It wrote
-    in them too: a note, a correction, a memory let go, in the memory of an
-    agent Hermes doesn't run, and in the shared memory, where it could let go
-    of what another agent had shared (Nous's review of the catalog entry,
-    2026-11-09). Inside Hermes it reads them, and writes in its own."""
+def _page_get(url: str) -> tuple[int, str]:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as answer:
+            return answer.status, answer.read().decode()
+    except urllib.error.HTTPError as refused:
+        return refused.code, refused.read().decode()
+
+
+def test_a_hermes_agents_page_is_of_its_own_memory_and_no_other(tmp_path, monkeypatch):
+    """Anywhere else the page is the person's, over every agent's memory kept
+    beside this one's and over the shared one. Inside Hermes it wrote in them
+    too, when the plugin's README and catalog entry said it only read them
+    (Nous's review of the catalog entry, 2026-11-09): a note, a correction, a
+    memory let go, in the memory of an agent Hermes doesn't run, and it could
+    let go of what another agent had shared. And reading them was itself more
+    than a Hermes agent's page should do: every other profile's memory, and
+    any other agent's on the machine, was at the address the agent holds.
+
+    Inside Hermes the page is of its own agent's memory: it shows no other,
+    not the shared one either, and writes in none."""
     from mnemos import llm
 
     shared = tmp_path / "shared.db"
@@ -292,8 +305,19 @@ def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path, monkeyp
         url = _page_address(_call(mine, "mnemos_page"))
         base = url.rsplit("/log/", 1)[0]
 
-        with urllib.request.urlopen(f"{base}/data/memories.json?agent=b", timeout=10) as shown:
-            assert "glaze room" in shown.read().decode(), "the other agent's memory is no longer shown"
+        # Its own memory is there; no other mind is, by any of the page's addresses.
+        status, own_memories = _page_get(f"{base}/data/memories.json")
+        assert status == 200 and "kiln" in own_memories
+        minds = json.loads(_page_get(f"{base}/data/minds.json")[1])["minds"]
+        assert [mind["agentId"] for mind in minds] == ["a"], minds
+        for document in ("memories.json", "life.json", "pulse.json", "search.json?q=glaze"):
+            joiner = "&" if "?" in document else "?"
+            status, said = _page_get(f"{base}/data/{document}{joiner}agent=b")
+            assert status == 404 and "glaze" not in said, (document, status, said[:200])
+        # Nor the shared memory, whoever wrote in it.
+        status, life = _page_get(f"{base}/data/life.json")
+        assert status == 200 and json.loads(life)["shared"] == {"status": "elsewhere", "rows": []}
+        assert "studio closes at nine" not in life
 
         before = _held(tmp_path / "b.db"), _held(shared)
         for asked in (
@@ -303,15 +327,15 @@ def test_a_hermes_agents_page_writes_in_no_other_agents_memory(tmp_path, monkeyp
             {"command": "read", "note_ids": ["any"]},
         ):
             refused = _page_act(url, "b", **asked)
-            assert "only reads your other agents' memories" in refused.get("error", ""), (asked, refused)
+            assert "only this agent's own memory" in refused.get("error", ""), (asked, refused)
         for asked in (
             {"action": "add", "text": "Written into the shared memory from a Hermes page."},
             {"action": "correct", "memory_id": shared_id, "text": "The studio never closes."},
             {"action": "forget", "memory_id": shared_id, "confirmed": True},
         ):
-            for agent in ("a", "b"):  # whichever mind the page is showing
+            for agent in ("a", "b"):  # whichever mind the page is asked for
                 refused = _page_act(url, agent, command="shared", **asked)
-                assert "only reads the shared memory" in refused.get("error", ""), (asked, refused)
+                assert "only this agent's own memory" in refused.get("error", ""), (asked, refused)
         assert (_held(tmp_path / "b.db"), _held(shared)) == before, "the page wrote outside its own agent's memory"
 
         own = _page_act(url, "a", command="note", text="Left on my own agent's page.")

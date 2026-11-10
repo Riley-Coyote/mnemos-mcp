@@ -243,6 +243,7 @@ export class Room {
   sharedHTML() {
     const data = this.ctx().life.shared || { status: 'error', rows: [] }, busy = !!this.sending;
     if (data.status === 'off') return `<p class="empty">${SHARED.off}</p>`;
+    if (data.status === 'elsewhere') return `<p class="empty">${SHARED.elsewhere}</p>`;
     if (data.status === 'error') return `<p class="empty" role="status">${SHARED.error}</p>`;
     const draft = this.drafts.get('shared-new') || '', notice = this.notices.get('shared-new');
     const authors = new Map(data.rows.map(m => [m.author, m.person ? SHARED.you : m.author]));

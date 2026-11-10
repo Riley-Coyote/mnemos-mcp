@@ -751,7 +751,9 @@ class Exporter:
         """The page's two documents, ``(life, memories)``. Writes nothing."""
         from ..shared_memory import notebook
 
-        shared = notebook()
+        # Inside a host the page is of this agent's memory alone, and the
+        # shared one is every agent's: not read here, and the page says so.
+        shared = {"status": "elsewhere", "rows": []} if _served_from_a_host() else notebook()
         now = now or datetime.now(timezone.utc)
         if not self.db.is_file():
             return ({"made": iso(now), "missing": True, "identity": self.identity(), "shared": shared},

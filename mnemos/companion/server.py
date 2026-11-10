@@ -108,7 +108,9 @@ def _inside_hermes() -> bool:
     Hermes's plugin rules: a plugin uses no other program's sign-in and keeps no
     key of its own outside Hermes, so from there the page changes neither the
     quiet hours (``claude -p``, on the person's own account, in the system's
-    scheduler) nor Jev (a key in a file): both are Claude Code's, and set there."""
+    scheduler) nor Jev (a key in a file): both are Claude Code's, and set there.
+    And a plugin keeps to its own data: from there the page is of its own
+    agent's memory, and shows no other agent's, nor the shared one."""
     from ..llm import host_secrets_active
 
     return host_secrets_active()
@@ -248,19 +250,15 @@ class LogServer(ThreadingHTTPServer):
         from ..interface.person import Interface  # the writing runtime, only when someone writes
 
         mind = self.mind(agent)
+        if _inside_hermes() and (mind is not self._home or request.get("command") == "shared"):
+            # A Hermes agent's page is of that agent's memory and no other's:
+            # the others belong to agents this profile doesn't run, and the
+            # shared memory to all of them. (Until 0.6.7 it showed them all,
+            # and wrote in any of them.)
+            return {"error": "From inside Hermes this page is of only this agent's own memory. "
+                             "An agent changes what it shared itself, with its own tools."}
         if mind is None:
             return {"error": "There's no such mind on this machine."}
-        if _inside_hermes():
-            # A Hermes agent's page writes in that agent's memory and nowhere
-            # else: the others belong to agents Hermes doesn't run, and the
-            # shared memory to all of them, and the page it serves is theirs
-            # only to show. (Until 0.6.7 it wrote in any of them.)
-            if request.get("command") == "shared":
-                return {"error": "From inside Hermes this page only reads the shared memory. "
-                                 "An agent changes what it shared itself, with its own tools."}
-            if mind is not self._home:
-                return {"error": "From inside Hermes this page only reads your other agents' memories. "
-                                 "To write in one, open that agent's own page."}
         if request.get("command") == "shared":
             from ..shared_memory import notebook_act
             with self._settings:
@@ -417,7 +415,12 @@ class LogServer(ThreadingHTTPServer):
         return self.others().get(agent)
 
     def others(self) -> dict[str, _Mind]:
-        """The other minds beside this one, looked for again at most once a minute."""
+        """The other minds beside this one, looked for again at most once a minute.
+        None inside Hermes: the address of a Hermes agent's page is the agent's
+        to hold, and every other profile's memory, and any other agent's on
+        the machine, was to be read at it."""
+        if _inside_hermes():
+            return {}
         with self._lock:
             now = time.monotonic()
             if self._others is None or now - self._others[0] >= MINDS_SECONDS:

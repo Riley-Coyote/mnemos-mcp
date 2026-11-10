@@ -172,6 +172,7 @@ export const SHARED = {
   title: 'Shared', you: 'You', all: 'Everyone', author: 'Who wrote it', search: 'Filter by words',
   empty: 'Nothing has been shared yet. Shared memory holds words every agent on this machine can read.',
   off: 'Shared memory is off.', error: "Shared memory couldn't be read just now.",
+  elsewhere: "This page shows this agent's own memory. What agents share isn't shown here; the agent reads it with its own tools.",
   add: 'Add', adding: 'Adding…', placeholder: 'Write something to share',
   hint: "Every agent on this machine can read these words. They're signed as you.",
   none: 'No shared memories match.', more: 'Load more',
