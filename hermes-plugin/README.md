@@ -90,7 +90,8 @@ that want a profile each.
   one; when that file isn't there and the old one is beside yours (`/Users/old` seen from
   `/Users/new`), the file of the same name in your own `~/.mnemos/` is opened, the log says so
   once, and the path the settings name is left as it is. A memory on a drive that isn't plugged
-  in never falls back.
+  in never falls back, and neither does one you named anywhere else: after a move, name where
+  it is now.
 - Its settings: `$HERMES_HOME/mnemos.json`, with `mnemos.json.bak` beside it once they've
   been rewritten: the copy from before.
 
@@ -161,7 +162,8 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   profile takes its person and project from there). It reads Hermes's `config.yaml` for
   three things: whether it is the memory provider, which model the agent runs (to sign what
   it writes), and whether Mnemos was connected there before as an MCP server (it then keeps
-  that memory).
+  that memory). Hermes 0.23.0 doesn't tell the plugin a model named for one run (`-m`), so
+  that run is signed with the model in `config.yaml`.
 - **The machine's shared memory.** What the agent marks as shared goes to
   `~/.mnemos/shared-memory.db`, which every Mnemos agent on this machine can read; nothing
   goes there unless the agent marks it so. `mnemos_recall` searches it too, so what another
