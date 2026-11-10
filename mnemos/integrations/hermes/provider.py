@@ -626,7 +626,7 @@ class MnemosMemoryProviderCore:
         recalled = self._runtime._recall_own(
             clean, max_results=self._config.max_recall_results, reinforce=self._writes_enabled,
         )
-        if "No relevant continuity found" in recalled:
+        if recalled.startswith("No relevant continuity found"):
             return ""
         # Recall heads its answer with the query it was asked. Here that is the
         # person's message, which the model has: what was found goes on, and

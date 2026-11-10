@@ -84,3 +84,19 @@ def test_a_message_the_tool_would_take_is_looked_up_whole(tmp_path):
         assert len(searched[-1]) <= MAX_QUERY_CHARS
     finally:
         provider.shutdown()
+
+
+def test_a_memory_that_quotes_the_empty_answer_still_comes_up(tmp_path):
+    """Nothing found was told by its sentence being anywhere in the answer, so
+    a memory holding that sentence silenced every answer it was part of."""
+    provider, _searched = _provider(tmp_path)
+    try:
+        provider.handle_tool_call("mnemos_capture", {
+            "content": 'The old search box answered "No relevant continuity found." to every question about the kiln.',
+        })
+        brought = provider.prefetch("What did the old search box answer about the kiln?", session_id="cli-1")
+        assert "old search box answered" in brought
+
+        assert provider.prefetch("zzyzx quuxing flibbertigibbet", session_id="cli-1") == ""
+    finally:
+        provider.shutdown()
