@@ -22,6 +22,47 @@ WORDS = "The copper lantern keeper closes the storm shutters each evening."
 
 
 @pytest.mark.parametrize("snapshot", [
+    {}, {"thread_id": THREAD},
+    {"thread_id": THREAD, "project_id": "original-project", "project_name": "Original"},
+])
+@pytest.mark.parametrize("mode", ["interactive", "scheduled", "reflection"])
+def test_distilled_lessons_preserve_historical_origins_and_fresh_reflections(tmp_path, snapshot, mode):
+    from mnemos.consolidation.softening import run_softening_pass
+
+    runtime = MnemosRuntime(db_path=str(tmp_path / "memory.db"), use_dedicated_model=False)
+    try:
+        runtime._ensure_init()
+        store = runtime._store
+        memory = Engram(
+            content=WORDS, impact="" if mode == "reflection" else "Close the storm shutters before lighting the lantern.",
+            author_kind="agent", impact_source="agent", accessibility=0.1,
+            owner_agent_id=runtime.scope.agent_id, person_id=runtime.scope.person_id,
+            project_scope=runtime.scope.project_scope,
+        )
+        with bind_origin(snapshot):
+            store.save_engram(memory)
+        register_hook_origin(store, {
+            "session_id": THREAD,
+            "mnemos_origin": {"project_id": "later-project", "project_name": "Later"},
+        }, runtime.scope)
+        request = {} if mode == "scheduled" else {
+            "thread_id": "maintaining-thread-123", "project_id": "current-project", "project_name": "Current",
+        }
+        with bind_origin(request):
+            stats = run_softening_pass(store, {"softening_min_age_hours": 0}, None, **runtime._scope_args())
+            if mode == "reflection":
+                runtime._enqueue_lesson_reflections(stats)
+                runtime.reflect(memory.id, "Close the storm shutters before lighting the lantern.", signed_as="gpt-6.1-sol")
+        lessons = [item for item in store.get_active_engrams(**runtime._scope_args()) if "lesson" in item.tags]
+        assert len(lessons) == 1
+        assert lessons[0].origin == (request if mode == "reflection" else snapshot)
+        assert store.get_engram(memory.id).origin == snapshot
+        assert any(link.target_id == lessons[0].id for link in store.get_engram(memory.id).connections)
+    finally:
+        runtime.close()
+
+
+@pytest.mark.parametrize("snapshot", [
     {"thread_id": THREAD},
     {"thread_id": THREAD, "project_id": "original-project"},
 ])
