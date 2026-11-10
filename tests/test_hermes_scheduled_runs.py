@@ -132,6 +132,71 @@ def test_a_scheduled_run_keeps_what_its_task_asks_it_to(tmp_path, monkeypatch):
     chat.shutdown()
 
 
+def _cycles(tmp_path) -> int:
+    conn = sqlite3.connect(tmp_path / "a.db")
+    try:
+        return conn.execute("SELECT COUNT(*) FROM consolidation_log").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_what_a_scheduled_run_keeps_starts_no_upkeep(tmp_path, monkeypatch):
+    """After a save in a conversation the memory's upkeep runs, when it is due:
+    fading, linking and lessons, across all of it. A job that keeps one thing
+    asked for one thing. It was followed by a cycle all the same, so a
+    scheduled job did write by itself, which the README said it didn't. Now the
+    cycle waits for a conversation, or for being asked for by name."""
+    monkeypatch.setenv("MNEMOS_MAINTENANCE", "inline")
+    monkeypatch.setenv("MNEMOS_CONSOLIDATION_MIN_IDLE_MINUTES", "0")  # due at every chance
+    _a_memory_in_use(tmp_path)
+    ran = _cycles(tmp_path)
+
+    job = _provider(tmp_path, "cron-1", platform="cron", agent_context="cron")
+    kept = _call(job, "mnemos_capture", content="The feed the digest reads moved to the new address in March.")
+    changed = _call(job, "mnemos_correct", query="kiln fired Tuesdays", correction="The kiln is fired on Wednesdays now.")
+    assert kept["ok"] and changed["ok"]
+    assert _cycles(tmp_path) == ran, "a save in a scheduled run was followed by the memory's upkeep"
+    assert "waits for a conversation" in kept["result"]
+
+    # Asked for by name, it runs there too: that is the job's own act.
+    assert _call(job, "mnemos_maintain")["ok"]
+    assert _cycles(tmp_path) == ran + 1
+    job.shutdown()
+
+    # And in a conversation a save is followed by it, as before.
+    chat = _provider(tmp_path, "chat-2")
+    assert _call(chat, "mnemos_capture", content="Mara reads the digest on the tram, so it has to fit one screen.")["ok"]
+    assert _cycles(tmp_path) == ran + 2
+    chat.shutdown()
+
+
+def test_what_a_scheduled_run_keeps_starts_no_process(tmp_path, monkeypatch):
+    """The same, where upkeep runs in a process of its own: a job's save
+    starts none."""
+    from mnemos import simple_runtime
+
+    started: list[tuple] = []
+
+    def start(*args, **kwargs) -> bool:
+        started.append(args)
+        return True
+
+    monkeypatch.setattr(simple_runtime, "_spawn_upkeep", start)
+    monkeypatch.setenv("MNEMOS_CONSOLIDATION_MIN_IDLE_MINUTES", "0")
+    monkeypatch.delenv("MNEMOS_MAINTENANCE", raising=False)
+
+    job = _provider(tmp_path, "cron-1", platform="cron", agent_context="cron")
+    assert _call(job, "mnemos_capture", content="The feed the digest reads moved to the new address in March.")["ok"]
+    job.on_session_end([])
+    job.shutdown()
+    assert started == [], "a scheduled run started the upkeep process"
+
+    chat = _provider(tmp_path, "chat-1")
+    assert _call(chat, "mnemos_capture", content="Mara reads the digest on the tram, so it has to fit one screen.")["ok"]
+    chat.shutdown()
+    assert len(started) == 1
+
+
 def test_a_scheduled_run_opens_no_page(tmp_path):
     """The page is served for a person to read, and closes once the run that
     opened it has ended and nobody has it open: from a job, before anyone

@@ -423,6 +423,8 @@ class MnemosMemoryProviderCore:
             # with none. Never this process's own: Hermes's gateway runs every
             # chat in Hermes's install folder.
             workdir=str(kwargs.get("cwd") or ""),
+            # In a run nobody is in, a save is followed by no upkeep either.
+            upkeep_waits=not self._writes_enabled,
         )
         Path(self._scope.db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
         # Opened, not read: a wake counts what it shows as shown, so one built

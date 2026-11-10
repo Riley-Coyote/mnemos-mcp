@@ -1286,6 +1286,7 @@ class MnemosRuntime:
         conversation: str = "",
         host_manages_install: bool = False,
         workdir: str | None = None,
+        upkeep_waits: bool = False,
     ) -> None:
         # Which agent this runtime serves, when its host says so (the Hermes
         # provider does), and the name an MCP client gave in its handshake
@@ -1351,6 +1352,12 @@ class MnemosRuntime:
         # The token of the last claim on this scope's maintenance this runtime
         # took (claim_upkeep), which alone gives it up.
         self._upkeep_token = ""
+        # Whether this runtime's automatic maintenance waits: in a host's run
+        # that nobody is in (a Hermes scheduled job) the agent's tool calls
+        # keep what they say to keep, and the cycle a save would be followed
+        # by (fading, linking, lessons, across the whole memory) is left to a
+        # conversation. ``maintain`` asked for by name still runs.
+        self._upkeep_waits = upkeep_waits
 
     @property
     def db_path(self) -> Path:
@@ -7128,6 +7135,17 @@ class MnemosRuntime:
                 f"Completed: {completed}",
                 f"Code: version {MAINTENANCE_CODE_VERSION}; the store needs {store_minimum} or newer",
                 "Passes: none",
+            ])
+
+        if auto and self._upkeep_waits:
+            # Recall's index catches up all the same, so what this call kept
+            # can be found by meaning: the call's own work, not the cycle's.
+            return "\n".join([
+                "Requested: standard",
+                "Cycle: skipped",
+                "Completed: no maintenance in a run nobody is in; it waits for a conversation",
+                "Passes: none",
+                *_index_lines(self._index_for_recall(AUTO_INDEX_BUDGET)),
             ])
 
         if auto and not requested_deep and self._maintains_later():
