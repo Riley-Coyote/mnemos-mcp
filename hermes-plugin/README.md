@@ -89,8 +89,8 @@ that want a profile each.
   After a backup is restored under another home folder, the settings still name the old
   one; when that file isn't there and the old one is beside yours (`/Users/old` seen from
   `/Users/new`), the file of the same name in your own `~/.mnemos/` is opened, the log says so
-  once, and the settings are left as they are. A memory on a drive that isn't plugged in never
-  falls back.
+  once, and the path the settings name is left as it is. A memory on a drive that isn't plugged
+  in never falls back.
 - Its settings: `$HERMES_HOME/mnemos.json`, with `mnemos.json.bak` beside it once they've
   been rewritten: the copy from before.
 

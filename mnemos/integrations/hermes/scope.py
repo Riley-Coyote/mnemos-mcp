@@ -340,9 +340,9 @@ def _here_if_restored(home: Path, db_path: str) -> str:
     (``/Users/old/.mnemos/x.db`` seen from ``/Users/new``), and this user's
     ``~/.mnemos/`` holds a file of the same name, that one: a backup restored
     under another home folder (a new Mac, another username) puts the memory
-    there, and the settings it restores name it under the old one. The settings
-    are left as they are; the log says so once. Anything else, a drive that
-    isn't plugged in among them, is the path as named."""
+    there, and the settings it restores name it under the old one. The path the
+    settings name is left as it is; the log says so once. Anything else, a drive
+    that isn't plugged in among them, is the path as named."""
 
     named = Path(db_path)
     if not named.is_absolute() or named.parent.name != ".mnemos" or named.exists():
@@ -360,7 +360,7 @@ def _here_if_restored(home: Path, db_path: str) -> str:
     if first:
         logger.warning(
             "Mnemos's settings in %s name %s, which isn't there; the memory of the same name in this "
-            "user's ~/.mnemos is opened instead: %s. The settings are left as they are.",
+            "user's ~/.mnemos is opened instead: %s. The path the settings name is left as it is.",
             _config_path(home), db_path, here,
         )
     return str(here)

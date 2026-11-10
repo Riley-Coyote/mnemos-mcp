@@ -181,8 +181,8 @@ release before it, run both ways, found nothing else.
   The path is still written spelled out, and never rewritten. When the file it names isn't
   there, the folder it names is the `.mnemos` of another home folder beside yours
   (`/Users/old/.mnemos/` seen from `/Users/new`), and your own `~/.mnemos/` holds a file of the
-  same name, that file is opened, and the log says so once, with both paths; `mnemos.json` is
-  left as it is. A memory on a drive that isn't plugged in, or anywhere else, never falls back. A home used by two processes with different `HOME` opens the one memory it
+  same name, that file is opened, and the log says so once, with both paths; the `db_path` in
+  `mnemos.json` is left as it is. A memory on a drive that isn't plugged in, or anywhere else, never falls back. A home used by two processes with different `HOME` opens the one memory it
   names, and any other path a person set is opened, or made, exactly where it is named.
 - **A backup names only Mnemos memories.** It named whatever file a profile's `mnemos.json`
   pointed at, a key in `~/.ssh` or another program's database, and folded that database's log

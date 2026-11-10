@@ -14,8 +14,8 @@ profile not started since the upgrade still restored to an empty memory.
 Now nothing is rewritten. When the file a home names isn't there, the folder
 it names is called ``.mnemos``, and this user's own ``~/.mnemos/`` holds a
 file of the same name, that file is the memory: it is opened, and the log
-says so once, with both paths. ``mnemos.json`` is left as it is. In every
-other case nothing changes: a named file that is there is opened, and one
+says so once, with both paths. The path ``mnemos.json`` names is left as it
+is. In every other case nothing changes: a named file that is there is opened, and one
 that is nowhere is made where it is named.
 """
 
