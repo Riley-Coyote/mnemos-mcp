@@ -226,19 +226,39 @@ def _configured_model(hermes_home: Path) -> str:
     return model.strip() if isinstance(model, str) else ""
 
 
+def _whole(text: str) -> str:
+    """``text`` with any half of a character pair (a lone surrogate) replaced.
+    A model's JSON can carry one, and UTF-8 has no way to write it: SQLite
+    refused the memory with a codec error, and an answer holding one can't be
+    sent on."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return text
+
+
+def _answer(payload: dict[str, Any]) -> str:
+    """A tool's answer, in the words that were kept. Until 0.6.7 everything
+    outside ASCII was written as an escape (\\uXXXX): a memory in Chinese or
+    Japanese came back five times its size, past the limit its text was cut to,
+    for a model to read letter by letter."""
+    return _whole(json.dumps(payload, ensure_ascii=False, default=str))
+
+
 def _json_ok(**payload: Any) -> str:
     payload.setdefault("ok", True)
-    return json.dumps(payload, ensure_ascii=True, default=str)
+    return _answer(payload)
 
 
 def _json_error(message: str, **payload: Any) -> str:
     payload.update({"ok": False, "error": message})
-    return json.dumps(payload, ensure_ascii=True, default=str)
+    return _answer(payload)
 
 
 def _words(args: dict[str, Any], name: str) -> str:
     """An argument as the agent wrote it."""
-    return str(args.get(name) or "")
+    return _whole(str(args.get(name) or ""))
 
 
 def _cleaned(args: dict[str, Any], name: str) -> str:
@@ -271,7 +291,7 @@ def _without_fenced_context(value: str) -> str:
 
 
 def _clean_text(text: Any) -> str:
-    value = _without_fenced_context(str(text or ""))
+    value = _without_fenced_context(_whole(str(text or "")))
     value = _MNEMOS_CONTEXT_RE.sub("", value)
     return value.strip()
 

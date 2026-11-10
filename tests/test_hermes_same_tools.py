@@ -808,3 +808,24 @@ def test_a_backup_of_hermes_takes_the_agents_memory_with_it(tmp_path, monkeypatc
     kept_inside.shutdown()
     assert MnemosMemoryProviderCore(inside).backup_paths() == []
     assert MnemosMemoryProviderCore(HermesMnemosConfig(db_path=str(Path.home() / "none.db"))).backup_paths() == []
+
+
+def test_a_tool_answers_in_the_words_that_were_kept(tmp_path):
+    """Everything outside ASCII came back as an escape: a memory in Japanese
+    was five times its size in the answer, past the limit its text was cut to.
+    And half a character pair in what the model sent (its JSON can carry one)
+    came back as a codec error in place of the memory being kept."""
+    provider = _provider(tmp_path)
+    kept = "窯 (the kiln) は火曜日に焚く。釉薬は前の晩に混ぜる。"
+    _call(provider, "mnemos_capture", content=kept)
+    answer = provider.handle_tool_call("mnemos_recall", {"query": "kiln"})
+    assert kept in json.loads(answer)["result"]
+    assert kept in answer and "\\u" not in answer, "the answer spells its characters out as escapes"
+
+    half = "The bell is rung at noon \ud83d and again at six."
+    assert json.loads(provider.handle_tool_call("mnemos_capture", {"content": half}))["ok"]
+    answer = provider.handle_tool_call("mnemos_recall", {"query": "when is the bell rung \ud83d"})
+    answer.encode("utf-8")  # it can be sent
+    assert "The bell is rung at noon" in json.loads(answer)["result"]
+    assert provider.prefetch("when is the bell rung \ud83d", session_id="session-1").encode("utf-8")
+    provider.shutdown()
