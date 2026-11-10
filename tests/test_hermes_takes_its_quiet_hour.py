@@ -28,6 +28,7 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import types
 
 import pytest
 
@@ -327,3 +328,45 @@ def test_what_is_said_about_handing_once_is_true(tmp_path):
     assert "Each hour's material is handed once" not in said
     assert ("What waits for the day's work or a dream is handed once; your own hour hands an open "
             "question again, each time, until you answer it.") in said
+
+
+@pytest.mark.parametrize("status", ["skipped", "failed"])
+@pytest.mark.parametrize("reason, said", [
+    ("The hand-off hit an error: OperationalError: database is locked",
+     "The hand-off hit an error: OperationalError: database is locked."),
+    ("Another hour is running.", "Another hour is running."),
+    ("There is no memory store at /tmp/x.db ", "There is no memory store at /tmp/x.db."),
+    ("The hand-off hit an error: ValueError: bad (see the log)", "The hand-off hit an error: ValueError: bad (see the log)."),
+    ("Is the store there?", "Is the store there?"),
+    ("It stopped…", "It stopped…."),
+])
+def test_a_reason_ends_its_sentence_before_the_next(tmp_path, monkeypatch, status, reason, said):
+    """A locked or damaged store's reason ran into the next sentence:
+    "…database is locked Nothing was handed." (round seven, p03)."""
+    import mnemos.life as life
+
+    monkeypatch.setattr(life, "run_hour", lambda *a, **k: {"status": status, "reason": reason})
+    provider = _provider(tmp_path)
+    try:
+        text = _call(provider, "mnemos_hour", kind="mine")
+    finally:
+        provider.shutdown()
+    assert text.endswith(f"{said} Nothing was handed."), text
+
+
+def test_a_damaged_store_is_said_in_whole_sentences(tmp_path):
+    provider = _provider(tmp_path)
+    try:
+        _work(provider)
+    finally:
+        provider.shutdown()
+    (tmp_path / "a.db").write_bytes(b"not a database, not at all" * 200)
+    for leftover in tmp_path.glob("a.db-*"):
+        leftover.unlink()
+    scope = types.SimpleNamespace(db_path=str(tmp_path / "a.db"), agent_id="a", person_id="user",
+                                  project_scope="global")
+    from mnemos.integrations.hermes.hours import take_hour
+
+    said = take_hour("mine", scope)
+    assert said.startswith("Your hour couldn't be handed: The hand-off hit an error: DatabaseError:"), said
+    assert said.endswith("file is not a database. Nothing was handed."), said

@@ -99,7 +99,8 @@ release before it, run both ways, found nothing else.
   profile's, asked of Hermes, never the gateway's own environment. It runs nothing and calls no
   model. It is for a quiet-hour job, or for when
   the person asks for it; where the hour can't be prepared (Windows) it says so and changes
-  nothing. A catalog install's first session no longer says quiet hours aren't offered: the agent
+  nothing, and where it can't be handed (a store locked or damaged) it says why in a sentence of
+  its own. A catalog install's first session no longer says quiet hours aren't offered: the agent
   asks the person once, in that first session only (a no is kept nowhere), what they are, what they cost and where what it reads goes, and with a yes
   makes three Hermes scheduled jobs with Hermes's own `cronjob_manage` (or gives the person the
   three `hermes cron create` lines in the README). They run at the usual hours, only while Hermes's

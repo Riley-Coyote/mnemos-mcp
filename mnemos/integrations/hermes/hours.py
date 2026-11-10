@@ -88,6 +88,13 @@ def in_hermes(kind: str) -> str:
     return said
 
 
+def _a_sentence(reason: str) -> str:
+    """A reason as a sentence of its own: an error's words end where the
+    error ended ("database is locked"), and the next sentence followed them."""
+    reason = (reason or "").strip()
+    return reason if reason.endswith((".", "!", "?")) else reason + "."
+
+
 def take_hour(kind: str, scope: Any) -> str:
     """The hour of this kind, handed as ``mnemos life --hour <kind> --handoff``
     hands it, for this scope's memory, with what is true inside Hermes after
@@ -109,9 +116,9 @@ def take_hour(kind: str, scope: Any) -> str:
         project_scope=scope.project_scope, handoff=True, out=out,
     )
     if record["status"] == "skipped":
-        return f"The hour would skip: {record['reason']} Nothing was handed."
+        return f"The hour would skip: {_a_sentence(record['reason'])} Nothing was handed."
     if record["status"] != "done":
-        return f"Your hour couldn't be handed: {record['reason']} Nothing was handed."
+        return f"Your hour couldn't be handed: {_a_sentence(record['reason'])} Nothing was handed."
     fence, gap, prompt = out.getvalue().rstrip("\n").partition(_GAP)
     return fence + "\n\n" + in_hermes(kind) + gap + prompt
 
