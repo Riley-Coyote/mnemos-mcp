@@ -506,6 +506,42 @@ def _without_fenced_context(value: str) -> str:
     return "".join(kept)
 
 
+# The line that ends a memory in what recall brings: its id, indented.
+_ROW_END_RE = re.compile(r"^[ \t]+id=\S.*$", re.MULTILINE)
+
+
+def _no_half_fences(rows: str) -> str:
+    """What recall brought, with each fence tag a row holds without its other
+    half taken out of it. Hermes strips from an opening tag to the next closing
+    one before it fences the recall: one memory's opening tag and another's
+    closing tag cut out every memory between them. A pair in one row stays."""
+
+    def alone_out(row: str) -> str:
+        kept: list[str] = []
+        at, opened = 0, None
+        for tag in _CONTEXT_TAG_RE.finditer(row):
+            closing = tag.group(1) is not None
+            if opened is None and not closing:
+                opened = tag
+            elif opened is not None and closing:
+                opened = None  # a pair, as Hermes reads it: the first opening to the next closing
+            elif closing:
+                kept.append(row[at:tag.start()])
+                at = tag.end()
+        if opened is not None:
+            kept.append(row[at:opened.start()])
+            at = opened.end()
+        return "".join(kept) + row[at:]
+
+    pieces: list[str] = []
+    at = 0
+    for end in _ROW_END_RE.finditer(rows):
+        pieces.append(alone_out(rows[at:end.end()]))
+        at = end.end()
+    pieces.append(alone_out(rows[at:]))
+    return "".join(pieces)
+
+
 def _own_words(text: Any) -> str:
     """What the agent wrote, whole, but for any span Hermes fenced into it.
 
@@ -785,7 +821,7 @@ class MnemosMemoryProviderCore:
         heading = f"Mnemos recall for: {clean}"
         rows = recalled[len(heading):].lstrip("\n") if recalled.startswith(heading) else recalled
         context = _truncate(
-            f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{self._said_here(rows)}", self._config.max_context_chars,
+            f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{self._said_here(_no_half_fences(rows))}", self._config.max_context_chars,
         )
         brought = self._last_recalled = max(1, self._runtime.last_recall_rows)
         after = self._store_revision()

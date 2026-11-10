@@ -100,6 +100,12 @@ release before it, run both ways, found nothing else.
   remembered; a long one filled the room there was and left none for what had been. And a memory
   that quoted the sentence recall says when it finds nothing silenced every answer it was part
   of.
+- **Half of Hermes's fence in a memory hides nothing.** Hermes strips from what comes with a
+  message whatever it takes for a block it fenced already, from `<memory-context>` to the next
+  `</memory-context>`. A memory holding the opening tag and another holding the closing one, as
+  words about Hermes, made it cut out every memory between them, and leave one memory's words
+  under another's id. A tag a memory holds without its other half is now taken out of it before
+  the memories go to Hermes.
 - **A long message is looked up by its start and its end.** Hermes hands over the whole message,
   however much was pasted into it, and every word of it was searched before the turn began: on
   1,500 memories, 18 ms for a question, 1.3 seconds with 50,000 characters pasted in, 2.4 with
