@@ -414,6 +414,22 @@ def _clean_text(text: Any) -> str:
     return _MNEMOS_CONTEXT_RE.sub("", _own_words(text)).strip()
 
 
+def _looked_up_by(text: str) -> str:
+    """What a message is looked up by: itself, or its start and its end when
+    it is longer than the recall tool takes. A long message is mostly what was
+    pasted into it, with the person's own words before it or after. Every word
+    of it used to be searched before the turn began (on 1,500 memories, 2.4
+    seconds for 100,000 characters), and with a provider chosen for meaning
+    search all of it went there."""
+    if len(text) <= MAX_QUERY_CHARS:
+        return text
+    half = MAX_QUERY_CHARS // 2 - 1
+    # Whole words, where there are words: a word cut in two is another word.
+    start = text[:half].rsplit(None, 1)[0]
+    end = text[-half:].split(None, 1)[-1]
+    return f"{start}\n{end}"
+
+
 def _truncate(text: str, limit: int) -> str:
     if len(text) <= limit:
         return text
@@ -596,7 +612,7 @@ class MnemosMemoryProviderCore:
         assert self._config is not None
         if not self._config.auto_recall:
             return ""
-        clean = _clean_text(query)
+        clean = _looked_up_by(_clean_text(query))
         if not clean:
             return ""
         cache_key = session_id or self._session_id or self.scope.session_id
@@ -612,7 +628,13 @@ class MnemosMemoryProviderCore:
         )
         if "No relevant continuity found" in recalled:
             return ""
-        rows = recalled.split("\n", 1)[1].lstrip("\n") if recalled.startswith("Mnemos recall for:") else recalled
+        # Recall heads its answer with the query it was asked. Here that is the
+        # person's message, which the model has: what was found goes on, and
+        # none of the message. Cut at the heading's first line, a message of
+        # several lines came back from its second line on, as if remembered,
+        # and a long one left no room for what was.
+        heading = f"Mnemos recall for: {clean}"
+        rows = recalled[len(heading):].lstrip("\n") if recalled.startswith(heading) else recalled
         context = _truncate(
             f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{self._said_here(rows)}", self._config.max_context_chars,
         )
