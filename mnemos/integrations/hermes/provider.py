@@ -272,7 +272,14 @@ def _hold_still_for_a_backup(store: Path) -> None:
     timer.name = "mnemos-backup-hold"
     timer.daemon = True
     with _backup_holds_lock:
+        displaced = _backup_holds.get(key)  # another backup's, asked for at the same moment
         _backup_holds[key] = (conn, timer)
+        if displaced is not None:
+            displaced[1].cancel()
+            try:
+                displaced[0].close()
+            except sqlite3.Error:
+                logger.debug("Mnemos couldn't close the read a backup left open", exc_info=True)
         if not _backup_exit_seen:
             _backup_exit_seen = True
             atexit.register(_let_go_of_backups)
