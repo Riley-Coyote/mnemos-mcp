@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import threading
 import time
 import weakref
@@ -47,6 +48,7 @@ from .scope import (
     HermesScope,
     _as_bool,
     conversation_id,
+    default_hermes_home,
     derive_hermes_scope,
     running_for_home,
     save_hermes_mnemos_config,
@@ -649,6 +651,40 @@ class MnemosMemoryProviderCore:
             {"key": "auto_recall", "description": "Auto-inject scoped identity continuity", "default": "true", "choices": ["true", "false"]},
             {"key": "deep_maintenance", "description": "Enable optional model-assisted Mnemos maintenance when model keys exist", "default": "false", "choices": ["true", "false"]},
         ]
+
+    def backup_paths(self) -> list[str]:
+        """This agent's memory, for ``hermes backup``. It is kept outside
+        Hermes's own folder (``~/.mnemos``), and a backup takes only that folder
+        unless the provider names more. Until 0.6.7 Mnemos named nothing: a
+        backup of Hermes left the agent's memory behind, without a word.
+
+        Hermes copies the file as it stands, so what SQLite still holds in its
+        write-ahead log is folded into the file first; the log goes along too
+        while it exists, so a copy taken mid-write is still whole. Works on a
+        provider that was never started, and touches nothing but that file.
+        A memory kept inside Hermes's folder is in the backup already."""
+        try:
+            _take_hermes_secrets()
+            scope = self._scope
+            if scope is None:
+                home = default_hermes_home()
+                scope = derive_hermes_scope(hermes_home=home, config=self._config or HermesMnemosConfig.load(home))
+            store = Path(scope.db_path).expanduser().resolve()
+            if not store.is_file() or store.is_relative_to(Path(scope.hermes_home).expanduser().resolve()):
+                return []
+            try:
+                conn = sqlite3.connect(str(store), timeout=2.0)
+                try:
+                    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                logger.debug("Mnemos couldn't fold its log into the memory before a backup", exc_info=True)
+            log = store.with_name(store.name + "-wal")
+            return [str(store), *([str(log)] if log.is_file() else [])]
+        except Exception:
+            logger.debug("Mnemos couldn't name its memory for a backup", exc_info=True)
+            return []
 
     def post_setup(self, hermes_home: str, config: dict[str, Any]) -> None:
         """``hermes memory setup`` with Mnemos chosen: the memory ``mnemos connect

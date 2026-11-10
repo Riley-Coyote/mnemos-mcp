@@ -769,3 +769,42 @@ def test_a_finished_turn_is_not_recalled_again(tmp_path, monkeypatch):
     provider.prefetch("when is the kiln fired", session_id="session-1")
     assert len(asked) == 1
     provider.shutdown()
+
+
+def test_a_backup_of_hermes_takes_the_agents_memory_with_it(tmp_path, monkeypatch):
+    """``hermes backup`` takes Hermes's own folder, and what the memory
+    provider names outside it (``backup_paths``). The memory is kept outside
+    it, in ~/.mnemos, and Mnemos named nothing: a backup left it behind. Hermes
+    asks a provider it never started, and copies the file as it stands."""
+    import shutil
+    from pathlib import Path
+
+    home = tmp_path / "hermes"
+    store = Path.home() / ".mnemos" / "kept.db"  # the test's own home (conftest)
+    config = HermesMnemosConfig(db_path=str(store), agent_id="a", person_id="user", project_scope="global")
+    talking = MnemosMemoryProviderCore(config)
+    talking.initialize("session-1", hermes_home=str(home), platform="cli")
+    _call(talking, "mnemos_capture", content="The spare key is under the blue pot.")
+
+    # Asked of a provider that was never started, while the conversation is
+    # still open: its last words are in SQLite's log, not yet in the file.
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    named = MnemosMemoryProviderCore(config).backup_paths()
+    assert named and named[0] == str(store.resolve())
+    assert all(Path(path).is_absolute() and Path(path).is_file() for path in named)
+
+    copy = tmp_path / "restored"
+    copy.mkdir()
+    for path in named:
+        shutil.copy(path, copy / Path(path).name)
+    talking.shutdown()
+    assert any("blue pot" in row[1] for row in _held(copy / "kept.db")), "the copy isn't the whole memory"
+
+    # A memory kept in Hermes's own folder is in the backup already; one that
+    # isn't there yet is nothing to name; and neither is ever an error.
+    inside = HermesMnemosConfig(db_path=str(home / "mnemos" / "mnemos.db"), agent_id="b")
+    kept_inside = MnemosMemoryProviderCore(inside)
+    kept_inside.initialize("session-1", hermes_home=str(home), platform="cli")
+    kept_inside.shutdown()
+    assert MnemosMemoryProviderCore(inside).backup_paths() == []
+    assert MnemosMemoryProviderCore(HermesMnemosConfig(db_path=str(Path.home() / "none.db"))).backup_paths() == []
