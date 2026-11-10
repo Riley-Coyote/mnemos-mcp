@@ -117,6 +117,17 @@ packages = ["mnemos"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    # From Python 3.13 a SQLite connection collected unclosed says so, with
+    # itself as the warning's source, and pytest keeps every warning it
+    # records until the session ends. So the connection outlives its own
+    # finalizer and its files stay open, three for each one. The suite leaves
+    # a few hundred to the collector; under coverage, where they are collected
+    # late and while pytest is recording, the run passed 1,024 open files,
+    # where select() stops working (test_windows_hook_stdin, on Linux).
+    # Unrecorded, each closes when it is collected, as it always has.
+    "ignore:unclosed database:ResourceWarning",
+]
 markers = [
     "lived_time: runs on the agent's real lived days, not the suite's every day lived (see tests/conftest.py)",
 ]
