@@ -14,7 +14,7 @@ import pytest
 from mnemos.cli import main
 from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderCore, installer
 from mnemos.integrations.hermes.installer import PROVIDER_MODE, install_hermes_plugin
-from mnemos.integrations.hermes.scope import profile_agent_id, profile_store
+from mnemos.integrations.hermes.scope import in_own_mnemos, profile_agent_id, profile_store
 
 yaml = pytest.importorskip("yaml")
 
@@ -71,7 +71,7 @@ def test_connecting_a_profile_gives_it_its_own_memory(default_home, capsys):
     assert _connect("--profile", "work") == 0
 
     kept = HermesMnemosConfig.load(work)
-    assert (kept.agent_id, kept.db_path) == ("hermes-work", profile_store(work))
+    assert (kept.agent_id, kept.db_path) == ("hermes-work", in_own_mnemos(profile_store(work)))
     assert yaml.safe_load((work / "config.yaml").read_text())["memory"]["provider"] == "mnemos"
     assert not (default_home / "config.yaml").exists()
     assert "hermes-work" in capsys.readouterr().out
@@ -128,7 +128,7 @@ def test_a_renamed_profile_is_the_same_agent_with_the_same_memory(default_home):
     renamed = default_home / "profiles" / "studio"
     work.rename(renamed)
     kept = HermesMnemosConfig.load(renamed)
-    assert (kept.agent_id, kept.db_path) == ("hermes-work", profile_store(work))
+    assert (kept.agent_id, kept.db_path) == ("hermes-work", in_own_mnemos(profile_store(work)))
 
 
 def test_a_full_copy_beside_another_provider_stops_sharing_when_connected(default_home):
@@ -216,7 +216,7 @@ def test_the_same_from_a_server_that_names_them(default_home):
     }}}))
     assert _connect() == 0
     kept = HermesMnemosConfig.load(default_home)
-    assert (kept.db_path, kept.person_id, kept.project_scope) == (store, "riley", "work")
+    assert (kept.db_path, kept.person_id, kept.project_scope) == (in_own_mnemos(store), "riley", "work")
 
 
 def test_naming_another_memory_starts_fresh_for_who_and_what(default_home):
@@ -247,7 +247,7 @@ def test_a_copy_stays_itself_when_the_one_it_was_copied_from_goes(default_home):
     shutil.rmtree(original)
 
     kept = HermesMnemosConfig.load(copy)
-    assert (kept.agent_id, kept.db_path) == ("hermes-second", profile_store(copy))
+    assert (kept.agent_id, kept.db_path) == ("hermes-second", in_own_mnemos(profile_store(copy)))
     agent = _agent(copy)
     try:
         assert "bees" in _call(agent, "mnemos_recall", query="bees")
@@ -266,7 +266,7 @@ def test_a_renamed_profile_stays_itself_when_a_new_one_takes_its_old_name(defaul
     _make_profile(default_home, "work")
 
     kept = HermesMnemosConfig.load(renamed)
-    assert (kept.agent_id, kept.db_path) == ("hermes-work", store)
+    assert (kept.agent_id, kept.db_path) == ("hermes-work", in_own_mnemos(store))
 
 
 def test_two_memories_connect_keeps_the_one_it_wakes_from_and_names_the_other(default_home, capsys):
@@ -280,7 +280,7 @@ def test_two_memories_connect_keeps_the_one_it_wakes_from_and_names_the_other(de
 
     assert _connect() == 0
 
-    assert HermesMnemosConfig.load(default_home).db_path == wakes
+    assert HermesMnemosConfig.load(default_home).db_path == in_own_mnemos(wakes)
     assert "mcp_servers" not in yaml.safe_load((default_home / "config.yaml").read_text())
     assert tools in capsys.readouterr().out
 

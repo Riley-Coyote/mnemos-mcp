@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from mnemos.integrations.hermes.provider import MnemosMemoryProviderCore
-from mnemos.integrations.hermes.scope import profile_agent_id, profile_store
+from mnemos.integrations.hermes.scope import in_own_mnemos, profile_agent_id, profile_store
 
 PLUGIN = Path(__file__).resolve().parent.parent / "hermes-plugin"
 
@@ -51,7 +51,7 @@ def test_a_home_mnemos_was_never_connected_to_gets_one_memory(tmp_path):
         assert first.scope.person_id == renamed.scope.person_id
         assert first.scope.project_scope == renamed.scope.project_scope
         written = json.loads((home / "mnemos.json").read_text())
-        assert written["db_path"] == profile_store(home) and written["agent_id"] == profile_agent_id(home)
+        assert written["db_path"] == in_own_mnemos(profile_store(home)) and written["agent_id"] == profile_agent_id(home)
     finally:
         first.shutdown()
         renamed.shutdown()
@@ -95,7 +95,7 @@ def test_hermes_memory_setup_makes_mnemos_the_provider_of_one_memory(tmp_path, m
     MnemosMemoryProviderCore().post_setup(str(home), {"memory": {}, "model": {"default": "kept"}})
 
     assert saved == [({"memory": {"provider": "mnemos"}, "model": {"default": "kept"}}, {"merge_existing": True})]
-    assert json.loads((home / "mnemos.json").read_text())["db_path"] == profile_store(home)
+    assert json.loads((home / "mnemos.json").read_text())["db_path"] == in_own_mnemos(profile_store(home))
     said = capsys.readouterr().out
     assert profile_agent_id(home) in said and profile_store(home) in said
 
@@ -228,6 +228,6 @@ def test_connect_keeps_the_catalog_plugin_and_still_connects(tmp_path, monkeypat
     assert not [w for w in result.warnings if "differs" in w], result.warnings
     assert any("plugin catalog" in note for note in result.notes), result.notes
     assert yaml.safe_load((home / "config.yaml").read_text())["memory"]["provider"] == "mnemos"
-    assert json.loads((home / "mnemos.json").read_text())["db_path"] == profile_store(home)
+    assert json.loads((home / "mnemos.json").read_text())["db_path"] == in_own_mnemos(profile_store(home))
     assert installer._holds_mnemos_plugin(folder)
     assert not installer.connect_would_change(home)

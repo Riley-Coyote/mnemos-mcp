@@ -171,6 +171,12 @@ release before it, run both ways, found nothing else.
   kept it twice, and a later remove or replace, finding two, retired neither, so the removed line
   kept coming up. Now the line is kept once, and the same words kept twice by an earlier release
   are one entry: the next remove or replace retires both.
+- **A memory restored under another home folder is still the memory.** The first session wrote
+  `db_path` with the home folder spelled out (`/Users/ann/.mnemos/hermes.db`), so a backup
+  restored on a new Mac or under another username opened a new, empty memory, or couldn't start.
+  A memory in `~/.mnemos/` is now written as `~/.mnemos/<file>`, and a home settled the old way
+  is given that form the next time Mnemos starts there; nothing else in its settings changes,
+  and any other path a person set stays as it is.
 - **A backup names only Mnemos memories.** It named whatever file a profile's `mnemos.json`
   pointed at, a key in `~/.ssh` or another program's database, and folded that database's log
   into it and held it open for the copy. Now each file is first opened read-only and named only

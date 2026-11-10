@@ -59,6 +59,7 @@ from .scope import (
     running_for_home,
     save_hermes_mnemos_config,
     settle_config_home,
+    settle_spelled_out_home,
 )
 from .tools import TOOL_SCHEMAS
 
@@ -719,6 +720,7 @@ class MnemosMemoryProviderCore:
             from .installer import settle_one_memory
 
             settle_one_memory(hermes_home)
+            settle_spelled_out_home(hermes_home or default_hermes_home())
         config = self._config or HermesMnemosConfig.load(hermes_home)
         self._scope = derive_hermes_scope(
             session_id=session_id,
