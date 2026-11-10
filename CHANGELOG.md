@@ -102,9 +102,11 @@ release before it, run both ways, found nothing else.
   the person asks for it; where the hour can't be prepared (Windows) it says so and changes
   nothing, and where it can't be handed (a store locked or damaged) it says why in a sentence of
   its own. A catalog install's first session no longer says quiet hours aren't offered: the agent
-  asks the person once, in that first session only (a no is kept nowhere), what they are, what they cost and where what it reads goes, and with a yes
-  makes three Hermes scheduled jobs with Hermes's own `cronjob_manage` (or gives the person the
-  three `hermes cron create` lines in the README). They run at the usual hours, only while Hermes's
+  asks the person once, in that first session only (a no is kept nowhere), what they are, what
+  they cost and where what it reads goes, and with a yes makes three Hermes scheduled jobs with
+  Hermes's own `cronjob_manage`, which it is told to look for behind Hermes's tool search, where
+  Hermes keeps it by default (or gives the person the three `hermes cron create` lines in the
+  README). They run at the usual hours, only while Hermes's
   gateway runs, and each is saved and sent to nobody. Mnemos makes no job itself. They need macOS
   or Linux: on Windows the first session says they aren't offered.
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's

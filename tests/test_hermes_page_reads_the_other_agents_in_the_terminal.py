@@ -30,6 +30,9 @@ from mnemos.integrations.hermes import HermesMnemosConfig, MnemosMemoryProviderC
 from mnemos.integrations.hermes import provider as provider_module
 
 OWN_ONLY = "From inside Hermes this page writes only in this agent's own memory."
+# Said after it, for the shared memory and for another agent's (the run in a real Hermes, W3).
+SHARED_IS_THEIRS = " An agent changes what it shared itself, with its own tools."
+ONLY_READ = " The other agents are only read here."
 
 
 def _provider(tmp_path, name: str, platform: str = "cli") -> MnemosMemoryProviderCore:
@@ -193,7 +196,8 @@ def test_nothing_the_page_sends_writes_in_another_agents_memory(tmp_path, monkey
             {"command": "shared", "action": "forget", "memory_id": shared_id, "confirmed": True},
         ):
             status, answer = _act(base, "b", request)
-            assert status == 400 and answer["error"].startswith(OWN_ONLY), (request, status, answer)
+            said = OWN_ONLY + (SHARED_IS_THEIRS if request["command"] == "shared" else ONLY_READ)
+            assert status == 400 and answer["error"] == said, (request, status, answer)
         assert (_whole(tmp_path / "b.db"), _whole(tmp_path / "shared.db")) == before, "another agent's memory moved"
         # A search reads it through a read-only connection, which SQLite gives an
         # empty log and its index beside the file, as it does outside Hermes.
@@ -266,3 +270,17 @@ def test_the_agent_is_told_what_its_page_shows_where_it_is(tmp_path):
     finally:
         terminal.shutdown()
         chat.shutdown()
+
+
+def test_where_the_other_agents_arent_shown_the_refusal_says_only_what_is_true(tmp_path, monkeypatch):
+    there = _two_agents(tmp_path, monkeypatch, "telegram")
+    try:
+        llm.take_secrets_from(lambda name, default=None: default)  # inside Hermes
+        base = _base(_call(there, "mnemos_page"))
+        status, answer = _act(base, "b", {"command": "note", "text": "Left through another agent's page."})
+        assert status == 400 and answer["error"] == OWN_ONLY, answer
+        status, answer = _act(base, "a", {"command": "shared", "action": "add", "text": "For everyone."})
+        assert status == 400 and answer["error"] == OWN_ONLY + SHARED_IS_THEIRS, answer
+    finally:
+        there.shutdown()
+        _close_pages()

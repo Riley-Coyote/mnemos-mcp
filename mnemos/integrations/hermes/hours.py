@@ -6,7 +6,7 @@ The hour is the one ``mnemos life --hour <kind> --handoff`` hands over
 material read from this profile's memory without changing it, recorded so what
 waits for the day's work or a dream isn't handed twice (an open question comes
 to the agent's own hour again until it is answered). After its fence come a few sentences true
-only here: which of the memory's tools answer it, where a note waits, and where
+only here: which more of the memory's tools answer it, where a note waits, and where
 the day's conversations are. Nothing here runs a program or calls a model, and
 nothing of Hermes's is imported: the agent schedules the jobs with Hermes's own
 tool, or the person does with ``hermes cron create``.
@@ -56,11 +56,12 @@ HOUR_TOOL: dict[str, Any] = {
     },
 }
 
-# Of the memory's tools, the ones that answer an hour. A dream leaves no note.
-_ANSWER_WITH = {
-    "mine": "mnemos_reflect, mnemos_capture, mnemos_correct, mnemos_journal and mnemos_note",
-    "ours": "mnemos_reflect, mnemos_capture, mnemos_correct, mnemos_journal and mnemos_note",
-    "dream": "mnemos_reflect, mnemos_capture, mnemos_correct and mnemos_journal",
+# Of the memory's tools, the ones Hermes has besides the three the fence names.
+# A dream leaves no note.
+_ALSO_HERE = {
+    "mine": "mnemos_correct, for what turns out wrong, and mnemos_note",
+    "ours": "mnemos_correct, for what turns out wrong, and mnemos_note",
+    "dream": "mnemos_correct, for what turns out wrong",
 }
 _A_NOTE = (
     " A note is how you ask the person something. Nothing sends it: it waits on your page, which "
@@ -78,8 +79,8 @@ _GAP = "\n\n---\n\n"
 def in_hermes(kind: str) -> str:
     """What is true of this hour inside Hermes, and only there."""
     said = (
-        f"Here, in Hermes, you take it with your memory's own tools: {_ANSWER_WITH[kind]}, "
-        "each signed with signed_as, your exact model id."
+        f"Here, in Hermes, besides those, you also have {_ALSO_HERE[kind]}. Sign whatever you "
+        "write with signed_as, your exact model id."
     )
     if kind != "dream":
         said += _A_NOTE
@@ -161,7 +162,9 @@ def offer() -> str:
         "each of these that isn't there yet with cronjob_manage (action create, with its name, "
         "schedule, deliver and prompt):\n"
         + made
-        + "  If you have no cronjob_manage tool, give them these three lines to run in a terminal "
-        "(for a profile other than the default, with -p and its name after hermes):\n"
+        + "  Hermes may keep cronjob_manage behind its tool search rather than in your list of "
+        "tools: look for it there first (tool_search finds it, tool_describe loads it, tool_call "
+        "runs it). If you can't reach cronjob_manage at all, give them these three lines to run in "
+        "a terminal (for a profile other than the default, with -p and its name after hermes):\n"
         + typed
     )

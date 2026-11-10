@@ -261,8 +261,12 @@ class LogServer(ThreadingHTTPServer):
             # the others belong to agents this profile doesn't run (its page in
             # Hermes's terminal shows them, only to read), and the shared memory
             # to all of them. (Until 0.6.7 it wrote in any of them.)
-            return {"error": "From inside Hermes this page writes only in this agent's own memory. "
-                             "An agent changes what it shared itself, with its own tools."}
+            refused = "From inside Hermes this page writes only in this agent's own memory."
+            if request.get("command") == "shared":
+                refused += " An agent changes what it shared itself, with its own tools."
+            elif mind is not None:  # one the page shows, in Hermes's classic terminal
+                refused += " The other agents are only read here."
+            return {"error": refused}
         if mind is None:
             return {"error": "There's no such mind on this machine."}
         if request.get("command") == "shared":

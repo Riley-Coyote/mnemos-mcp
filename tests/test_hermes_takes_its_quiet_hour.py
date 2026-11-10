@@ -164,8 +164,13 @@ def test_it_hands_the_hour_mnemos_hands_with_what_is_true_in_hermes(tmp_path, ki
     here = text[len(fence) + 2:len(text) - len(GAP + prompt)]
     assert here and GAP not in here
     assert fence + GAP + prompt == handed
-    for tool in ("mnemos_reflect", "mnemos_capture", "mnemos_correct", "mnemos_journal"):
-        assert tool in here, here
+    # The fence names three tools; what Hermes adds reads as more of the same
+    # thought, not as a second, whole list (the run in a real Hermes, W2).
+    for tool in ("mnemos_reflect", "mnemos_capture", "mnemos_journal"):
+        assert tool in fence and tool not in here, here
+    assert here.startswith("Here, in Hermes, besides those, you also have mnemos_correct, for what "
+                           "turns out wrong"), here
+    assert "signed_as" in here
     if kind == "dream":
         # A dream leaves no note (HANDOFF_KEPT), and has no conversations to read.
         assert "mnemos_note" not in here and "session_search" not in here

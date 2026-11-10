@@ -87,7 +87,11 @@ def test_with_a_yes_it_makes_the_three_jobs_with_hermes_own_tool(tmp_path, monke
 def test_without_that_tool_the_person_gets_the_three_lines(tmp_path, monkeypatch):
     settle, _ = _setup_part(tmp_path, monkeypatch)
     (offer,) = [item for item in settle if "Quiet hours" in item]
-    assert "If you have no cronjob_manage tool" in offer
+    # Hermes 0.23.0 keeps it behind its tool search by default (the run in a real Hermes, W1).
+    behind = offer.index("Hermes may keep cronjob_manage behind its tool search")
+    assert "tool_search" in offer and "tool_describe" in offer and "tool_call" in offer
+    assert behind < offer.index("If you can't reach cronjob_manage at all")
+    assert "If you have no cronjob_manage tool" not in offer
     for name, (schedule, prompt) in JOBS.items():
         assert f"  hermes cron create --name {name} --deliver local '{schedule}' '{prompt}'" in offer, offer
 
