@@ -636,26 +636,34 @@ def settle_one_memory(hermes_home: str | Path | None = None) -> bool:
     hermes`` would (``_one_memory_scope``): one agent, the profile's own, with one
     memory in every chat. A plugin installed from Hermes's catalog starts this
     way, with no connect run first, and left to itself the provider would name
-    its memory after each chat and person. Nothing changes for a home whose
-    mnemos.json names a memory, one whose provider already keeps one where it
-    looked before, or one the environment names a memory for. Returns whether
-    it wrote."""
+    its memory after each chat and person.
+
+    What mnemos.json already names stays as named, and only what it leaves
+    empty is settled: Hermes's dashboard shows each setting with what it is
+    when left empty, and until 0.6.7 that held only with all of them empty.
+    With just the agent named nothing was settled (a memory inside Hermes's
+    folder, another for each chat and person); with just the person named,
+    their name was replaced.
+
+    Nothing changes for a home that names all of it, one the environment names
+    a memory for, or one that has a memory already where its settings look as
+    they stand: what it kept is under the names it worked out then, and stays
+    in reach. Returns whether it wrote."""
 
     home = Path(hermes_home).expanduser() if hermes_home else default_hermes_home()
     raw = _load_json_config(home)
-    if raw.get("db_path") or raw.get("agent_id"):
+    named = {key: str(raw.get(key) or "").strip() for key in ("db_path", "agent_id", "person_id", "project_scope")}
+    if all(named.values()):
         return False
     if named_in_the_environment("MNEMOS_DB_PATH") or named_in_the_environment("MNEMOS_AGENT_ID"):
         return False
-    if (home / "mnemos" / "mnemos.db").exists():
+    in_use = named["db_path"].replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+    if (Path(in_use).expanduser() if in_use else home / "mnemos" / "mnemos.db").exists():
         return False  # the memory it has kept until now stays its memory
-    db_path, agent_id, person_id, project_scope = _one_memory_scope(home)
+    settled = dict(zip(named, _one_memory_scope(home)))
     try:
         save_hermes_mnemos_config(home, {
-            "db_path": db_path,
-            "agent_id": agent_id,
-            "person_id": person_id,
-            "project_scope": project_scope,
+            **{key: value for key, value in settled.items() if not named[key]},
             "hermes_home": str(home),
         })
     except OSError:

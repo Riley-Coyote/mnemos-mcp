@@ -58,9 +58,14 @@ def test_a_home_mnemos_was_never_connected_to_gets_one_memory(tmp_path):
 
 
 def test_a_home_with_a_memory_keeps_it(tmp_path):
+    # One that names all of its memory, and one that has a memory where the
+    # provider kept it, left to itself. (A home that names part of one:
+    # tests/test_hermes_half_named_memory.py.)
     named = tmp_path / "named"
     named.mkdir()
-    (named / "mnemos.json").write_text(json.dumps({"agent_id": "nova", "db_path": str(tmp_path / "nova.db")}))
+    (named / "mnemos.json").write_text(json.dumps({
+        "agent_id": "nova", "db_path": str(tmp_path / "nova.db"), "person_id": "sam", "project_scope": "the-boat",
+    }))
     kept = tmp_path / "kept"
     (kept / "mnemos").mkdir(parents=True)
     (kept / "mnemos" / "mnemos.db").write_bytes(b"")  # where the provider kept it, left to itself
