@@ -850,3 +850,54 @@ def test_a_tool_answers_in_the_words_that_were_kept(tmp_path):
     assert "The bell is rung at noon" in json.loads(answer)["result"]
     assert provider.prefetch("when is the bell rung \ud83d", session_id="session-1").encode("utf-8")
     provider.shutdown()
+
+
+def test_what_the_page_is_said_to_last_is_what_it_lasts_here(tmp_path):
+    """The page tool's words are the MCP server's, whose page lasts as long as
+    its session. Here it closes once the conversation has ended and nobody is
+    using it, and both the tool and its answer still said "until this session
+    ends"."""
+    provider = _provider(tmp_path)
+    try:
+        told = next(tool["description"] for tool in provider.get_tool_schemas() if tool["name"] == "mnemos_page")
+        answered = _call(provider, "mnemos_page")
+    finally:
+        provider.shutdown()
+        _close_pages()
+    for said in (told, answered):
+        assert "session ends" not in said and "within ten minutes of both ending" in said, said
+    assert "\n\n" in told, "the tool's paragraphs were run together"
+
+
+def test_the_settings_hermes_shows_name_no_place_the_memory_isnt(tmp_path):
+    """Hermes's dashboard fills an empty setting with its default and saves it.
+    The default for where the memory is kept was the place it was kept before
+    it moved to ~/.mnemos, so a setup saved from the dashboard put the memory
+    there, apart from what the README says and from the agent's other homes."""
+    shown = {field["key"]: field for field in _provider(tmp_path).get_config_schema()}
+    assert "default" not in shown["db_path"] and "~/.mnemos/hermes.db" in shown["db_path"]["description"]
+    assert not any("$HERMES_HOME" in json.dumps(field) for field in shown.values())
+    # And what turning the model on sends, and where, is said where it is turned on.
+    assert "anthropic" in shown["deep_maintenance"]["description"]
+    assert "saves or corrects" in shown["deep_maintenance"]["description"]
+
+
+def test_a_mnemos_hermes_installed_names_no_command_to_run(tmp_path, monkeypatch):
+    """Without the local model, the health card says how to add it: with pip.
+    A Mnemos installed from Hermes's catalog is in an environment Hermes builds
+    and rebuilds, and there is nothing for the person to pip install into."""
+    from mnemos.store import embedding_index
+
+    class FromCatalog(MnemosMemoryProviderCore):
+        _from_catalog = True
+
+    said = f"sentence-transformers is not installed ({embedding_index._LOCAL_EXTRA_HINT})"
+    for made, expected in ((FromCatalog, False), (MnemosMemoryProviderCore, True)):
+        provider = made(HermesMnemosConfig(db_path=str(tmp_path / f"{made.__name__}.db"), agent_id="a"))
+        provider.initialize("session-1", hermes_home=str(tmp_path), platform="cli")
+        monkeypatch.setattr(provider._runtime, "health", lambda: {"semantic_reason": said})
+        monkeypatch.setattr(provider_module, "format_health_card", lambda health: f"why: {health['semantic_reason']}")
+        card = _call(provider, "mnemos_health")
+        provider.shutdown()
+        assert ("pip install" in card) is expected, card
+        assert ("the plugin's README" in card) is not expected, card

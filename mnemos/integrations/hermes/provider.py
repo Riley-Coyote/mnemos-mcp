@@ -28,6 +28,7 @@ from typing import Any
 
 from ... import llm
 from ...simple_runtime import RECALL_RESULTS, MnemosRuntime, format_health_card
+from ...store.embedding_index import _LOCAL_EXTRA_HINT as _MEANING_BY_PIP
 from ...simple_tools import (
     MAX_CAPTURE_CHARS,
     MAX_CONTEXT_CHARS,
@@ -64,8 +65,8 @@ except ImportError:  # pragma: no cover - Windows only
 logger = logging.getLogger(__name__)
 
 # One tag of the fence Hermes puts around what a memory provider adds to a
-# message, opening or closing, in Hermes's own bounded shape (its
-# agent/memory_context.py).
+# message, opening or closing. Read a little more loosely than Hermes writes it
+# (its agent/memory_context.py): any case, and spaces inside the brackets.
 _CONTEXT_TAG_RE = re.compile(r"<\s*(/\s*)?memory-context\s*>", re.IGNORECASE)
 # The headings the provider opens what it adds with, alone on a line, and those it used
 # to. Words about recall, the agent's or the person's, are theirs.
@@ -119,6 +120,17 @@ _RULES_UNATTENDED = (
 _READ_NOT_WOKEN = "You woke with a short read of your memory, below, and reading it recorded nothing."
 _NOTHING_TO_READ = "Your memory has nothing to wake with yet."
 _UNATTENDED_RUNS = {"cron": "a scheduled run", "subagent": "a subagent's run", "flush": "a memory flush"}
+# How long the page stays, as it is here. The tool's own words are the MCP
+# server's, whose page lasts as long as its session does.
+_PAGE_LASTS_A_SESSION = re.compile(r"until\s+this\s+session\s+ends")
+_PAGE_LASTS_HERE = (
+    "while this conversation goes on and while they're using it, and closes within ten "
+    "minutes of both ending"
+)
+# How to turn meaning search on, where pip is the way and where it isn't: a
+# Mnemos that Hermes's catalog installed is in an environment Hermes builds
+# and rebuilds, with nothing for the person to pip install into.
+_MEANING_HERE = "inside Hermes, meaning search is a setting: the plugin's README says which"
 _ONE_NOTE_EACH = (
     "\n\nHere each conversation (a chat, or a topic in one) is one session, however many "
     "times it starts over: this replaces only the note this conversation left before, and "
@@ -470,7 +482,9 @@ class MnemosMemoryProviderCore:
         if "No relevant continuity found" in recalled:
             return ""
         rows = recalled.split("\n", 1)[1].lstrip("\n") if recalled.startswith("Mnemos recall for:") else recalled
-        context = _truncate(f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{rows}", self._config.max_context_chars)
+        context = _truncate(
+            f"{_CUE_HEADING}\n{_CUE_NOTE}\n\n{self._said_here(rows)}", self._config.max_context_chars,
+        )
         brought = self._last_recalled = max(1, self._runtime.last_recall_rows)
         after = self._store_revision()
         # Cached only when no other connection committed during the recall:
@@ -536,13 +550,22 @@ class MnemosMemoryProviderCore:
         agent keeps itself, in its own words."""
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
+        def here(tool: dict[str, Any]) -> dict[str, Any]:
+            if tool["name"] == "mnemos_handoff":
+                return {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
+            if tool["name"] == "mnemos_page":
+                return {**tool, "description": _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, tool["description"])}
+            return tool
+
         return [
-            {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
-            if tool["name"] == "mnemos_handoff" else tool
-            for tool in TOOL_SCHEMAS
+            here(tool) for tool in TOOL_SCHEMAS
             # A run nobody is in isn't offered the page: there is no one to open it for.
             if self._writes_enabled or tool["name"] != "mnemos_page"
         ]
+
+    def _said_here(self, text: str) -> str:
+        """What a tool says, where it names a command that isn't one here."""
+        return text.replace(_MEANING_BY_PIP, _MEANING_HERE) if self._from_catalog else text
 
     @_one_at_a_time
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs: Any) -> str:
@@ -557,7 +580,7 @@ class MnemosMemoryProviderCore:
                     "by the time they looked, it would be closed. Open it in a conversation.",
                     tool=tool_name,
                 )
-            return _json_ok(result=limit_output(tool(self, args or {})))
+            return _json_ok(result=limit_output(self._said_here(tool(self, args or {}))))
         except Exception as exc:
             logger.debug("Mnemos tool %s failed", tool_name, exc_info=True)
             return _json_error(str(exc), tool=tool_name)
@@ -669,13 +692,28 @@ class MnemosMemoryProviderCore:
             self._capture(clean, context=context, importance="high" if target == "user" else "auto")
 
     def get_config_schema(self) -> list[dict[str, Any]]:
+        """The settings Hermes's dashboard shows for Mnemos. None is needed:
+        left empty, each is what the first session settles (``settle_one_memory``).
+        No default is given for where the memory is kept: the dashboard fills an
+        empty field with its default and saves it, and the one given until 0.6.7
+        was the place the memory was kept before it moved to ~/.mnemos."""
+        on_or_off = ["true", "false"]
         return [
-            {"key": "db_path", "description": "Mnemos identity-continuity SQLite path", "default": "$HERMES_HOME/mnemos/mnemos.db"},
-            {"key": "agent_id", "description": "Optional fixed Mnemos agent identity scope"},
-            {"key": "person_id", "description": "Optional fixed person/user identity scope"},
-            {"key": "project_scope", "description": "Optional fixed project continuity scope"},
-            {"key": "auto_recall", "description": "Auto-inject scoped identity continuity", "default": "true", "choices": ["true", "false"]},
-            {"key": "deep_maintenance", "description": "Enable optional model-assisted Mnemos maintenance when model keys exist", "default": "false", "choices": ["true", "false"]},
+            {"key": "db_path", "description": (
+                "Where this agent's memory is kept, a file on this machine. Left empty: "
+                "~/.mnemos/hermes.db, or ~/.mnemos/hermes-<profile>.db for another profile.")},
+            {"key": "agent_id", "description": (
+                "The agent's name in its memory. Left empty: hermes, or hermes-<profile>.")},
+            {"key": "person_id", "description": "Who the agent is with, as its memory names them. Left empty: user."},
+            {"key": "project_scope", "description": (
+                "Which part of its memory this is. Left empty: global, one memory for everything.")},
+            {"key": "auto_recall", "default": "true", "choices": on_or_off, "description": (
+                "Bring the few memories that may bear on each message, with the message.")},
+            {"key": "deep_maintenance", "default": "false", "choices": on_or_off, "description": (
+                "Let Mnemos use a model of its own on the memory. Only with a provider chosen for it "
+                "(MNEMOS_LLM_PROVIDER: openrouter, openai or anthropic) and that provider's key. Memory "
+                "text then goes to that provider whenever the agent saves or corrects a memory, and "
+                "during upkeep. Off: nothing leaves this machine.")},
         ]
 
     def backup_paths(self) -> list[str]:
@@ -867,7 +905,7 @@ class MnemosMemoryProviderCore:
                 self._page_key = key
         if page is not None and page is not open_already:
             _watch_page(key, page)
-        return said
+        return _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, said)
 
     def _ensure_runtime(self) -> None:
         """A call after shutdown starts the conversation again, as Hermes
