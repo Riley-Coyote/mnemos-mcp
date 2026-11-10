@@ -29,27 +29,52 @@ def _nothing_leaves_this_machine(monkeypatch):
     to the real provider, with the made-up key. A name looked up or a
     connection opened anywhere but here is refused in the test's own process,
     before anything leaves. A process a test starts is its own to keep here.
+
+    And the test fails for it, whatever became of the refusal: code that
+    reaches out is often code that carries on when it can't (a provider's
+    client behind ``except Exception``), so a refusal alone was swallowed and
+    the test passed, having tried.
     """
     import socket
 
-    connect, look_up = socket.socket.connect, socket.getaddrinfo
+    connect, connect_ex = socket.socket.connect, socket.socket.connect_ex
+    look_up, by_name = socket.getaddrinfo, socket.gethostbyname
+    reached: list[str] = []
 
     def here(host) -> bool:
         host = host.decode() if isinstance(host, bytes) else host
         return host in _THIS_MACHINE or (isinstance(host, str) and host.startswith("127."))
 
+    def refuse(what: str, host, error=OSError):
+        reached.append(f"{what} {host}")
+        raise error(f"a test {what} {host}: tests stay on this machine")
+
     def connect_here(self, address):
         if isinstance(address, tuple) and not here(address[0]):
-            raise OSError(f"a test reached for {address[0]}: tests stay on this machine")
+            refuse("reached for", address[0])
         return connect(self, address)
+
+    def connect_ex_here(self, address):
+        if isinstance(address, tuple) and not here(address[0]):
+            refuse("reached for", address[0])
+        return connect_ex(self, address)
 
     def look_up_here(host, *args, **kwargs):
         if not here(host):
-            raise socket.gaierror(f"a test looked up {host}: tests stay on this machine")
+            refuse("looked up", host, socket.gaierror)
         return look_up(host, *args, **kwargs)
 
+    def by_name_here(host):
+        if not here(host):
+            refuse("looked up", host, socket.gaierror)
+        return by_name(host)
+
     monkeypatch.setattr(socket.socket, "connect", connect_here)
+    monkeypatch.setattr(socket.socket, "connect_ex", connect_ex_here)
     monkeypatch.setattr(socket, "getaddrinfo", look_up_here)
+    monkeypatch.setattr(socket, "gethostbyname", by_name_here)
+    yield
+    assert not reached, f"reached past this machine, whatever became of the refusal: {reached}"
 
 
 @pytest.fixture(autouse=True)
