@@ -177,6 +177,8 @@ gateway, or the `hermes` you're in).
   closes about ten minutes after both end. It shows this agent's memory and writes only
   there: not the other agents Mnemos keeps a memory for on this machine, and not what
   they share. It looks at nothing else on the machine, and a scheduled job can't open it.
+  Outside Hermes's terminal (in Telegram, say), the first session tells the agent the page
+  opens on the computer Hermes runs on, and not to offer it unless you ask.
 - **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
   `hermes backup`, which takes them along: this profile's and each other profile's, since
   a backup is of every profile (to find them it reads each profile's `mnemos.json`).

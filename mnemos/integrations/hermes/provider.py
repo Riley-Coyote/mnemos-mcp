@@ -128,6 +128,22 @@ _PAGE_LASTS_HERE = (
     "while this conversation goes on and while they're using it, and closes about ten "
     "minutes after both end"
 )
+# Where a first session tells the agent to offer the page. The page is served on
+# 127.0.0.1 of the computer Hermes runs on: right in Hermes's terminal, and no
+# use to someone in a chat on their phone. Anywhere but the terminal the agent
+# is told where it opens instead, and to offer it only when asked.
+_PAGE_OFFERED = re.compile(
+    r", and that they can see all of it(?P<notes>, and answer your notes,)? on a page you'll open for "
+    r"them whenever they ask\."
+)
+
+
+def _page_where_it_opens(found: re.Match[str]) -> str:
+    notes = " and answer your notes" if found.group("notes") else ""
+    return (
+        f". The page where they can see all of it{notes} opens in a browser on the computer Hermes "
+        "runs on. Don't offer it unless they ask, and if they ask, tell them it opens there."
+    )
 # How to turn meaning search on, where pip is the way and where it isn't: a
 # Mnemos that Hermes's catalog installed is in an environment Hermes builds
 # and rebuilds, with nothing for the person to pip install into.
@@ -632,6 +648,9 @@ class MnemosMemoryProviderCore:
                 packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
             except sqlite3.OperationalError:
                 packet = self._read_without_waking()
+            assert self._scope is not None
+            if self._scope.platform != "cli":
+                packet = _PAGE_OFFERED.sub(_page_where_it_opens, packet)
             body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
         else:
             # Read, not woken: a wake counts a session and spends what shows
