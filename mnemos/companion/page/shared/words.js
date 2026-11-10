@@ -167,6 +167,8 @@ export function sinceThen(life, mems, since) {
   ].filter(Boolean);
 }
 
+/* another agent's memory, on a page opened in Hermes's terminal: shown there only to read */
+export const onlyRead = (who) => `This is ${who.onlyReadIn}’s notebook. ${who.name}’s memory is only read here.`;
 
 export const SHARED = {
   title: 'Shared', you: 'You', all: 'Everyone', author: 'Who wrote it', search: 'Filter by words',

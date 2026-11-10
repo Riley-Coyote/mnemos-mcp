@@ -109,8 +109,10 @@ def _inside_hermes() -> bool:
     key of its own outside Hermes, so from there the page changes neither the
     quiet hours (``claude -p``, on the person's own account, in the system's
     scheduler) nor Jev (a key in a file): both are Claude Code's, and set there.
-    And a plugin keeps to its own data: from there the page is of its own
-    agent's memory, and shows no other agent's, nor the shared one."""
+    And a plugin keeps to its own data: from there the page writes only in its
+    own agent's memory, and shows no other agent's, nor the shared one, but in
+    Hermes's terminal, where it shows the other agents only to read
+    (``LogServer.reads_others``)."""
     from ..llm import host_secrets_active
 
     return host_secrets_active()
@@ -201,8 +203,12 @@ class LogServer(ThreadingHTTPServer):
     # modules); Python's default backlog of 5 turns the rest away, and the browser reports ERR_SOCKET_NOT_CONNECTED.
     request_queue_size = 128
 
-    def __init__(self, exporter: Exporter, *, port: int = 0, token: str | None = None) -> None:
+    def __init__(self, exporter: Exporter, *, port: int = 0, token: str | None = None,
+                 reads_others: bool = False) -> None:
         self.exporter = exporter
+        # Inside Hermes, whether the minds beside this one are shown, only to read: a page
+        # opened in Hermes's terminal. Outside Hermes they always are, and are the person's.
+        self.reads_others = reads_others
         self.token = token or secrets.token_urlsafe(16)
         self.files = page_files()
         self._lock = threading.Lock()
@@ -251,11 +257,11 @@ class LogServer(ThreadingHTTPServer):
 
         mind = self.mind(agent)
         if _inside_hermes() and (mind is not self._home or request.get("command") == "shared"):
-            # A Hermes agent's page is of that agent's memory and no other's:
-            # the others belong to agents this profile doesn't run, and the
-            # shared memory to all of them. (Until 0.6.7 it showed them all,
-            # and wrote in any of them.)
-            return {"error": "From inside Hermes this page is of only this agent's own memory. "
+            # A Hermes agent's page writes in that agent's memory and no other's:
+            # the others belong to agents this profile doesn't run (its page in
+            # Hermes's terminal shows them, only to read), and the shared memory
+            # to all of them. (Until 0.6.7 it wrote in any of them.)
+            return {"error": "From inside Hermes this page writes only in this agent's own memory. "
                              "An agent changes what it shared itself, with its own tools."}
         if mind is None:
             return {"error": "There's no such mind on this machine."}
@@ -416,10 +422,11 @@ class LogServer(ThreadingHTTPServer):
 
     def others(self) -> dict[str, _Mind]:
         """The other minds beside this one, looked for again at most once a minute.
-        None inside Hermes: the address of a Hermes agent's page is the agent's
-        to hold, and every other profile's memory, and any other agent's on
-        the machine, was to be read at it."""
-        if _inside_hermes():
+        None inside Hermes but on a page opened in its terminal: anywhere else
+        the address of a Hermes agent's page is the agent's to hold (a bot's,
+        handed to whoever it talks to), and every other profile's memory, and
+        any other agent's on the machine, was to be read at it."""
+        if _inside_hermes() and not self.reads_others:
             return {}
         with self._lock:
             now = time.monotonic()
@@ -490,12 +497,21 @@ class LogServer(ThreadingHTTPServer):
                     for item in life.get("studio") or []:   # its pictures are its own studio's
                         if item.get("picture"):
                             item["picture"] += f"?agent={quote(mind.exporter.scope.agent_id)}"
+                    if _inside_hermes():  # only read here: the page says whose notebook this is
+                        who["onlyReadIn"] = self._home_name()
                 version = memories.get("version")
                 if mind.memories is None or mind.memories[0] != version or version is None:
                     mind.memories = (version, _dumps(memories))
                 mind.documents = (now, _dumps(life))
             assert mind.memories is not None
             return mind.documents[1], mind.memories[1]
+
+    def _home_name(self) -> str:
+        """What the page calls this server's own mind."""
+        try:
+            return json.loads(self.documents()[0])["identity"]["name"] or self.exporter.scope.agent_id
+        except Exception:
+            return self.exporter.scope.agent_id
 
 
 def _agent(path: str) -> str | None:
@@ -669,14 +685,17 @@ class _Handler(BaseHTTPRequestHandler):
             self.close_connection = True
 
 
-def open_page(scope: dict[str, str | None], page: LogServer | None = None) -> tuple[str, LogServer | None]:
+def open_page(scope: dict[str, str | None], page: LogServer | None = None, *,
+              reads_others: bool = False) -> tuple[str, LogServer | None]:
     """What ``mnemos_page`` answers, and the page now open: ``page`` when one is, or
     a new one for ``scope``, started in a thread of its own on 127.0.0.1. One that
-    can't start, or can't read the memory, isn't opened: it says why in a sentence."""
+    can't start, or can't read the memory, isn't opened: it says why in a sentence.
+    ``reads_others``: inside Hermes, a new page shows the minds beside this one,
+    only to read (``LogServer.reads_others``)."""
     opened = page
     if opened is None:
         try:
-            opened = LogServer(Exporter.for_scope(**scope))
+            opened = LogServer(Exporter.for_scope(**scope), reads_others=reads_others)
         except OSError as exc:
             return f"The page couldn't start: {exc}", None
     try:

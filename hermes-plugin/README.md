@@ -187,11 +187,15 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
 - **The page.** `mnemos_page` serves the page from inside Hermes on 127.0.0.1, on a port
   the system picks and a path made fresh each time, and answers only this machine. It
   stays while the conversation that opened it goes on and while you're using it, and
-  closes about ten minutes after both end. It shows this agent's memory and writes only
-  there: not the other agents Mnemos keeps a memory for on this machine, and not what
-  they share. It looks at nothing else on the machine, and a scheduled job can't open it.
-  Outside Hermes's terminal (in Telegram, say), the first session tells the agent the page
-  opens on the computer Hermes runs on, and not to offer it unless you ask.
+  closes about ten minutes after both end. It writes only in this agent's memory. Opened
+  in Hermes's terminal, it also lets you switch to the other agents Mnemos keeps a memory
+  for on this machine and read each one: it reads their memory files in `~/.mnemos`, beside
+  this one's, so that nothing in them changes, and shows them without the places to write.
+  Opened anywhere else (in Telegram, say, where the agent may be a bot other people talk
+  to), it shows this agent's memory alone. It never shows what agents share, it looks at
+  nothing else on the machine, and a scheduled job can't open it. Outside Hermes's
+  terminal, the first session tells the agent the page opens on the computer Hermes runs
+  on, and not to offer it unless you ask.
 - **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
   `hermes backup`, which takes them along: this profile's and each other profile's, since
   a backup is of every profile. It finds each one as that profile opens it: by its

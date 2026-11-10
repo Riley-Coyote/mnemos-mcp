@@ -5,8 +5,9 @@ of it "on a page you'll open for them whenever they ask". The page is served
 on 127.0.0.1 of the computer Hermes runs on. That is right in Hermes's
 terminal, and no use to someone talking to the agent in Telegram on a phone.
 
-In the terminal (``platform`` "cli") the first session's words stay exactly as
-they were. On any other platform the agent is told the page opens in a browser
+In the terminal (``platform`` "cli") the first session's words stay as they
+were, with one sentence after them: there the page also lets the person read
+the other agents' memory. On any other platform the agent is told the page opens in a browser
 on the computer Hermes runs on, not to offer it unless the person asks, and if
 they ask, to say where it opens.
 """

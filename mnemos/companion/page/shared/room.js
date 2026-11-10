@@ -7,7 +7,7 @@
  *     hooks   → { hover(id|null), open(id|null), route(hash), mindLink?(id), picture?(src, caption), hour?(id), top?(), scroller?(), pane?, leave?() }
  */
 
-import { SHARED, esc, at, clock, dayKey, dayName, longDay, shortDay, plural, putTo, question, firstLine, opening, titleOf, signedBy, person,
+import { SHARED, onlyRead, esc, at, clock, dayKey, dayName, longDay, shortDay, plural, putTo, question, firstLine, opening, titleOf, signedBy, person,
   forPerson, temperature, tempWord, KIND, ASK, ASK_ORDER, RELATION, trailSentence, modelName, sameModel } from './words.js';
 
 import { telling, setTelling, canTell, refused } from './tell.js';
@@ -417,6 +417,7 @@ export class Room {
     const { who } = this.ctx(), threads = this.threads();
     // a mind whose memory is from before notes (an older store, found beside this one) is only read here
     const composer = who.unfiled ? `<p class="set-d">${esc(who.name)}’s memory is from before notes, so this page only reads it.</p>`
+      : who.onlyReadIn ? `<p class="set-d">${esc(onlyRead(who))}</p>`
       : this.box('new', `Leave ${who.name} a note`, 'It wakes with it, once, in its next session.');
     if (!threads.length) return composer + `<p class="empty">No notes yet. It leaves one only when it passes the room test: something it would say if ${esc(person(who) === 'you' ? 'you' : person(who))} walked in right now.</p>`;
     const open = threads.filter((t) => this.asks(t)), rest = threads.filter((t) => !this.asks(t));
@@ -438,7 +439,7 @@ export class Room {
     const asked = this.asks(list);
     // a question it asked you comes with its answer box already open
     if (asked && !this.closed.has(asked.id)) this.opened.add(asked.id);
-    return `<article class="jentry thread">${list.map(turn).join('')}${answer && !who.unfiled ? this.box(answer.id, asked ? 'Answer' : 'Reply', '') : ''}</article>`;
+    return `<article class="jentry thread">${list.map(turn).join('')}${answer && !who.unfiled && !who.onlyReadIn ? this.box(answer.id, asked ? 'Answer' : 'Reply', '') : ''}</article>`;
   }
 
   /* a place to write: closed, one quiet word; open, a field and Send. What you type stays while the page refreshes
@@ -472,7 +473,7 @@ export class Room {
     this.reading?.disconnect();
     for (const t of this.readTimers.values()) clearTimeout(t);
     this.readTimers.clear();
-    if (!this.hooks.read || !this.present || document.visibilityState !== 'visible') return;
+    if (!this.hooks.read || this.ctx().who.onlyReadIn || !this.present || document.visibilityState !== 'visible') return;
     const notes = this.bodyEl.querySelectorAll('[data-unread]');
     if (!notes.length) return;
     const root = this.viewRoot();
@@ -513,7 +514,7 @@ export class Room {
    * only reads. */
   memActs(m, shared = false) {
     const { who } = this.ctx();
-    if ((!shared && who.unfiled) || !this.hooks.send) return '';
+    if ((!shared && (who.unfiled || who.onlyReadIn)) || !this.hooks.send) return '';
     const key = `fix:${m.id}`, mode = this.editing?.id === m.id ? this.editing.mode : null, notice = this.notices.get(key);
     if (mode === 'correct') {
       const draft = this.drafts.has(key) ? this.drafts.get(key) : m.content;
@@ -568,7 +569,8 @@ export class Room {
     const row = (k, label, what) => `<label class="set-row"><span><span class="set-k">${label}</span><span class="set-d">${what}</span></span>
       <input class="set-time" type="time" data-hours-time="${k}" value="${esc(h[k])}"${h.on ? '' : ' disabled'} aria-label="${label}, starts at"></label>`;
     const hoursPanel = who.unfiled ? `<div class="belief set"><div class="set-title">Quiet hours</div>
-        <p class="set-d">${esc(who.name)}’s memory is from before quiet hours, so there’s nothing here to set. This page only reads it.</p></div>` : null;
+        <p class="set-d">${esc(who.name)}’s memory is from before quiet hours, so there’s nothing here to set. This page only reads it.</p></div>`
+      : who.onlyReadIn ? `<div class="belief set"><p class="set-d">${esc(onlyRead(who))}</p></div>` : null;
     return `<section class="settings">
       ${hoursPanel || `<div class="belief set">
         <div class="set-head"><div><div class="set-title">Quiet hours</div>
@@ -580,7 +582,7 @@ export class Room {
           ${changed ? '<button class="cancel" type="button" data-hours-reset="1">Undo</button>' : ''}
           <button class="send" type="button" data-hours-save="1"${changed && this.sending !== 'hours' ? '' : ' disabled'}>${this.sending === 'hours' ? 'Saving…' : 'Save'}</button></div>
       </div>`}
-      ${this.jevPanel()}
+      ${who.onlyReadIn ? '' : this.jevPanel()}
       ${this.tellPanel()}
       <div class="belief set">
         <div class="set-title">Where it lives</div>
@@ -628,7 +630,7 @@ export class Room {
   /* a quiet notification when it asks you something, only if you want one */
   tellPanel() {
     const { who } = this.ctx();
-    if (who.unfiled || !canTell()) return '';
+    if (who.unfiled || who.onlyReadIn || !canTell()) return '';
     const on = telling(who.agentId), denied = refused();
     return `<div class="belief set"><div class="set-head"><div><div class="set-title">Tell me when it asks me something</div>
       <p class="set-d">${denied ? 'Your browser is set not to allow notifications from this page. Allow them for this address in the browser’s site settings, then turn this on.'

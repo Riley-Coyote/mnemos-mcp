@@ -58,9 +58,19 @@ release before it, run both ways, found nothing else.
   though the README said Mnemos starts no other program; and its own threads, which serve whoever
   asks, could read keys outside any profile. And reading the others was itself too much: on a
   gateway that serves several profiles, the page one profile's agent opened served every other
-  profile's memory, whole. Inside Hermes the page now shows and writes its own agent's memory
-  and nothing else: no other agent's, not what they share, no program run, no key read. Anywhere
-  else the page is yours over all of them, as before.
+  profile's memory, whole. Inside Hermes the page now writes in its own agent's memory and
+  nothing else, and shows no other agent's but in Hermes's terminal (below): not what they
+  share, no program run, no key read. Anywhere else the page is yours over all of them, as
+  before.
+- **In Hermes's terminal the page shows the other agents again, only to read.** Narrowed to its
+  own agent everywhere, the page also took from you, at Hermes's own terminal, the switch
+  between the agents Mnemos keeps a memory for that it gives you anywhere else. Opened there, it
+  lists them again and shows each whole, reading their memory files in `~/.mnemos`, beside this
+  one's, so that nothing in them changes. It writes in none of them: Mnemos refuses every
+  request to write in another agent's memory, whatever the page sends, and the page shows them
+  without the places to write, with a line that says whose notebook it is. Opened anywhere
+  else (a chat, where the agent may be a bot other people talk to, handed the page's link), the
+  page is still this agent's alone. Outside Hermes nothing changes.
 - **A scheduled run writes nothing by itself.** Hermes gives its cron jobs the memory too, and its
   provider guide asks that automatic writes be skipped there. Mnemos skipped its upkeep and the
   copy of MEMORY.md, and the rest ran as in a conversation: the job was woken (a session counted,

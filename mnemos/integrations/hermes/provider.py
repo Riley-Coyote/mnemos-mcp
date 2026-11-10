@@ -142,6 +142,19 @@ _PAGE_OFFERED = re.compile(
 )
 
 
+# What the page shows in Hermes's terminal besides this agent's memory: the
+# other agents' kept beside it, only to read. Said there, and only there.
+_ONLY_THEY_WRITE = "Only they write there."
+_PAGE_READS_OTHERS = (
+    "\nIn Hermes's terminal it also shows them the memory of the other\n"
+    "agents kept beside yours in ~/.mnemos, only to read."
+)
+_PAGE_ALSO_THE_OTHERS = (
+    " In this terminal the page also lets them read the memory of the other agents Mnemos "
+    "keeps on this computer, without changing it."
+)
+
+
 def _page_where_it_opens(found: re.Match[str]) -> str:
     notes = " and answer your notes" if found.group("notes") else ""
     return (
@@ -780,6 +793,8 @@ class MnemosMemoryProviderCore:
             assert self._scope is not None
             if self._scope.platform != "cli":
                 packet = _PAGE_OFFERED.sub(_page_where_it_opens, packet)
+            else:
+                packet = _PAGE_OFFERED.sub(lambda found: found.group(0) + _PAGE_ALSO_THE_OTHERS, packet)
             body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
         else:
             # Read, not woken: a wake counts a session and spends what shows
@@ -932,7 +947,10 @@ class MnemosMemoryProviderCore:
             if tool["name"] == "mnemos_handoff":
                 return {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
             if tool["name"] == "mnemos_page":
-                return {**tool, "description": _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, tool["description"])}
+                said = _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, tool["description"])
+                if self._scope is not None and self._scope.platform == "cli":
+                    said = said.replace(_ONLY_THEY_WRITE, _ONLY_THEY_WRITE + _PAGE_READS_OTHERS)
+                return {**tool, "description": said}
             return tool
 
         return [
@@ -1349,10 +1367,13 @@ class MnemosMemoryProviderCore:
             "person_id": scope.person_id,
             "project_scope": scope.project_scope,
         }
-        key = tuple(kwargs.values())
+        # In Hermes's terminal the page also shows the other agents, only to read.
+        # Anywhere else the agent may be a bot handed the link: one page of its own.
+        in_terminal = scope.platform == "cli"
+        key = (*kwargs.values(), in_terminal)
         with _pages_lock:
             open_already = _pages.get(key)
-            said, page = open_page(kwargs, open_already)
+            said, page = open_page(kwargs, open_already, reads_others=in_terminal)
             if page is not None:
                 _pages[key] = page
                 _page_holders.setdefault(key, weakref.WeakSet()).add(self)

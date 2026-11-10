@@ -42,7 +42,7 @@ def _provider(tmp_path, name: str = "a", **init) -> MnemosMemoryProviderCore:
             deep_maintenance=False,
         )
     )
-    provider.initialize("session-1", hermes_home=str(tmp_path), platform="cli", **init)
+    provider.initialize("session-1", hermes_home=str(tmp_path), **{"platform": "cli", **init})
     return provider
 
 
@@ -286,13 +286,15 @@ def test_a_hermes_agents_page_is_of_its_own_memory_and_no_other(tmp_path, monkey
     any other agent's on the machine, was at the address the agent holds.
 
     Inside Hermes the page is of its own agent's memory: it shows no other,
-    not the shared one either, and writes in none."""
+    not the shared one either, and writes in none. (In Hermes's terminal it
+    shows the others again, only to read:
+    test_hermes_page_reads_the_other_agents_in_the_terminal.py.)"""
     from mnemos import llm
 
     shared = tmp_path / "shared.db"
     monkeypatch.setenv("MNEMOS_SHARED_MEMORY_DB", str(shared))
     monkeypatch.delenv("MNEMOS_SHARED_MEMORY", raising=False)
-    mine, other = _provider(tmp_path, "a"), _provider(tmp_path, "b")
+    mine, other = _provider(tmp_path, "a", platform="telegram"), _provider(tmp_path, "b")
     try:
         _call(mine, "mnemos_capture", content="The kiln at the studio fires on Tuesdays.")
         _call(other, "mnemos_capture", content="The glaze room is locked after six.")
@@ -327,7 +329,7 @@ def test_a_hermes_agents_page_is_of_its_own_memory_and_no_other(tmp_path, monkey
             {"command": "read", "note_ids": ["any"]},
         ):
             refused = _page_act(url, "b", **asked)
-            assert "only this agent's own memory" in refused.get("error", ""), (asked, refused)
+            assert "writes only in this agent's own memory" in refused.get("error", ""), (asked, refused)
         for asked in (
             {"action": "add", "text": "Written into the shared memory from a Hermes page."},
             {"action": "correct", "memory_id": shared_id, "text": "The studio never closes."},
@@ -335,7 +337,7 @@ def test_a_hermes_agents_page_is_of_its_own_memory_and_no_other(tmp_path, monkey
         ):
             for agent in ("a", "b"):  # whichever mind the page is asked for
                 refused = _page_act(url, agent, command="shared", **asked)
-                assert "only this agent's own memory" in refused.get("error", ""), (asked, refused)
+                assert "writes only in this agent's own memory" in refused.get("error", ""), (asked, refused)
         assert (_held(tmp_path / "b.db"), _held(shared)) == before, "the page wrote outside its own agent's memory"
 
         own = _page_act(url, "a", command="note", text="Left on my own agent's page.")
@@ -453,7 +455,7 @@ def test_the_pages_own_threads_read_none_of_hermes_keys(tmp_path):
         noted = _page_act(url, "a", command="note", text="Left on my own agent's page.")
         assert "result" in noted, noted
         (page,) = provider_module._pages.values()
-        for mind in (page._home, *page.others().values()):
+        for mind in (page._home, *(page._others[1].values() if page._others else ())):
             if mind.interface is not None:
                 mind.interface._loaded()  # the search's own thread, if it started one
         assert read == [], f"the page's threads read {sorted(set(read))}"
