@@ -21,6 +21,7 @@ Times are ISO 8601 in UTC (``utc_iso``).
 
 from __future__ import annotations
 
+import contextvars
 import json
 import sqlite3
 import sys
@@ -275,7 +276,12 @@ class Interface:
     def warm(self) -> None:
         """Start loading the meaning model in the background, once."""
         if self._loading is None:
-            self._loading = threading.Thread(target=self._load, name="mnemos-meaning", daemon=True)
+            # As the thread that asks would load it: a page's request inside a
+            # host reads none of the host's keys (llm.outside_any_profile), and
+            # neither does the thread it starts.
+            self._loading = threading.Thread(
+                target=contextvars.copy_context().run, args=(self._load,), name="mnemos-meaning", daemon=True,
+            )
             self._loading.start()
 
     def _load(self) -> None:

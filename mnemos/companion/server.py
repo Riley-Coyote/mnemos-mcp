@@ -212,6 +212,15 @@ class LogServer(ThreadingHTTPServer):
         self.last_asked = time.monotonic()
         super().__init__(("127.0.0.1", port), _Handler)
 
+    def process_request_thread(self, request, client_address) -> None:  # type: ignore[no-untyped-def]
+        # Each request is answered on a thread of the page's own, which no
+        # profile's keys are bound to inside a host: it reads none of them
+        # (llm.outside_any_profile). The page searches and writes without one.
+        from ..llm import outside_any_profile
+
+        with outside_any_profile():
+            super().process_request_thread(request, client_address)
+
     def server_bind(self) -> None:
         # HTTPServer.server_bind looks up this host's name, which can stall
         # for seconds on some networks and isn't needed: the name is known.

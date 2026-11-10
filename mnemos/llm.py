@@ -19,6 +19,9 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Callable, Protocol, runtime_checkable
 
 logger = logging.getLogger("mnemos.llm")
@@ -344,6 +347,26 @@ def host_secrets_active() -> bool:
     return _host_secrets is not None
 
 
+# A thread of Mnemos's own inside a host belongs to no profile. Hermes binds a
+# profile's keys to the task it runs for that profile. A thread Mnemos starts
+# itself (its page's server, answering a browser) is outside every one, and a
+# read from there falls back to the process's own environment, which in a
+# process that serves several profiles is another profile's.
+_outside_any_profile: ContextVar[bool] = ContextVar("mnemos_outside_any_profile", default=False)
+
+
+@contextmanager
+def outside_any_profile() -> Iterator[None]:
+    """What a thread of Mnemos's own does inside a host: every setting and key
+    the host hands out reads as unset there, so nothing it does reaches a
+    provider, on anyone's key. Outside a host this changes nothing."""
+    token = _outside_any_profile.set(True)
+    try:
+        yield
+    finally:
+        _outside_any_profile.reset(token)
+
+
 def _dotenv_disabled() -> bool:
     if _host_secrets is not None:
         return True
@@ -381,6 +404,8 @@ def _find_env_key(key_name: str) -> tuple[str, str]:
     them out. ("", "") when it is nowhere Mnemos looks. `mnemos doctor` says
     where."""
     if _host_secrets is not None:
+        if _outside_any_profile.get():
+            return "", ""
         try:
             val = str(_host_secrets(key_name) or "").strip()
         except Exception:  # Hermes refuses a read outside a profile's scope

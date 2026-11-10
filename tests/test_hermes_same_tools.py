@@ -395,6 +395,55 @@ def test_a_hermes_agents_page_looks_at_nothing_else_on_the_machine(tmp_path, mon
         _close_pages()
 
 
+def test_the_pages_own_threads_read_none_of_hermes_keys(tmp_path):
+    """Hermes binds a profile's keys to the task it runs for that profile. The
+    page answers a browser on threads of its own, outside every one, where a
+    read falls back to the process's own environment: on a process serving
+    several profiles, the keys and the choice of provider of the profile it
+    was started for. A search or a correction on the page read them there, and
+    would have sent one profile's words out on another's key. The page's
+    threads read none."""
+    import threading
+
+    from mnemos import llm
+
+    read: list[tuple[str, str]] = []
+
+    def hermes_says(name, default=None):
+        read.append((name, threading.current_thread().name))
+        return {"MNEMOS_EMBEDDING_PROVIDER": "gemini", "GEMINI_API_KEY": "the-launch-profiles",
+                "MNEMOS_LLM_PROVIDER": "openrouter", "OPENROUTER_API_KEY": "the-launch-profiles"}.get(name, default)
+
+    provider = _provider(tmp_path)
+    try:
+        _call(provider, "mnemos_capture", content="The kiln at the studio fires on Tuesdays.")
+        mine = _row(tmp_path, "The kiln at the studio fires on Tuesdays.")["id"]
+        llm.take_secrets_from(hermes_says)
+        url = _page_address(_call(provider, "mnemos_page"))
+        base = url.rsplit("/log/", 1)[0]
+        read.clear()
+
+        with urllib.request.urlopen(f"{base}/data/search.json?q=kiln", timeout=30) as found:
+            assert found.status == 200
+        corrected = _page_act(url, "a", command="correct", memory_id=mine, text="The kiln fires on Wednesdays.")
+        assert "result" in corrected, corrected
+        noted = _page_act(url, "a", command="note", text="Left on my own agent's page.")
+        assert "result" in noted, noted
+        (page,) = provider_module._pages.values()
+        for mind in (page._home, *page.others().values()):
+            if mind.interface is not None:
+                mind.interface._loaded()  # the search's own thread, if it started one
+        assert read == [], f"the page's threads read {sorted(set(read))}"
+
+        # The conversation's own calls still read them, for the profile Hermes runs them for.
+        _call(provider, "mnemos_health")
+        llm.chosen_provider()
+        assert ("MNEMOS_LLM_PROVIDER", threading.current_thread().name) in read
+    finally:
+        provider.shutdown()
+        _close_pages()
+
+
 def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(tmp_path, monkeypatch):
     """A page an agent opened was served for as long as Hermes ran: on a gateway,
     for days after the conversation that opened it had ended (Nous's review of
