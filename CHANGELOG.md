@@ -105,8 +105,9 @@ release before it, run both ways, found nothing else.
   message whatever it takes for a block it fenced already, from `<memory-context>` to the next
   `</memory-context>`. A memory holding the opening tag and another holding the closing one, as
   words about Hermes, made it cut out every memory between them, and leave one memory's words
-  under another's id. A tag a memory holds without its other half is now taken out of it before
-  the memories go to Hermes.
+  under another's id. Every such tag is now taken out of every memory that comes with a message,
+  the tag and never the words around it, before the memories go to Hermes; a tag is whatever
+  Hermes reads as one, however it is spaced or cased.
 - **A long message is looked up by its start and its end.** Hermes hands over the whole message,
   however much was pasted into it, and every word of it was searched before the turn began: on
   1,500 memories, 18 ms for a question, 1.3 seconds with 50,000 characters pasted in, 2.4 with
