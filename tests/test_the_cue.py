@@ -659,10 +659,13 @@ def test_a_first_message_asks_another_sessions_answerer_while_its_own_loads(tmp_
     other = _answerer(db, claude_pid=4242)
     try:
         block = _hook(db, MESSAGE, CLAUDE_PID="999999")
-        assert other.answered == 1
     finally:
         other.stop()
+        # The hook can receive the reply before the serving thread counts it.
+        other.thread.join(5)
 
+    assert not other.thread.is_alive()
+    assert other.answered == 1
     assert found["near"].id in block, "meaning found it"
     assert found["worded"].id not in block, "what this session's briefing showed stays out"
     offer = _seen("session-one", db)["offers"][0]

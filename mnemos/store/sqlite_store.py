@@ -1857,8 +1857,10 @@ class EngramStore:
         thread = origin.get("thread_id")
         if not thread:
             return {}
-        registered = _decode_json(self.get_meta(origin_key(thread, agent_id, person_id, project_scope)), {})
-        return {**clean_origin(registered), **origin}
+        registered = clean_origin(_decode_json(self.get_meta(origin_key(thread, agent_id, person_id, project_scope)), {}))
+        if "project_id" in origin and origin["project_id"] != registered.get("project_id"):
+            registered.pop("project_name", None)
+        return {**registered, **origin}
 
     def save_engram(self, engram: Engram) -> None:
         """Insert or update an engram.

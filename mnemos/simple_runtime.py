@@ -21,7 +21,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable, Collection, Iterator, Mapping, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -5449,10 +5449,21 @@ class MnemosRuntime:
             from . import shared_memory
             if self._trace is not None:
                 self._trace["shared"] = True
-            return shared_memory.capture(
-                content, context=context, agent_id=self.scope.agent_id,
-                model=shared_memory.author_model(self, signed_as), standing=standing,
-            )
+            origin = current_origin()
+            if origin.get("thread_id"):
+                if self._store is not None:
+                    origin = self._store.entry_origin(**self._scope_args())
+                else:
+                    try:
+                        with closing(ReadOnlyEngramStore(self.db_path)) as source:
+                            origin = source.entry_origin(**self._scope_args())
+                    except (OSError, sqlite3.Error):
+                        pass
+            with bind_origin(origin):
+                return shared_memory.capture(
+                    content, context=context, agent_id=self.scope.agent_id,
+                    model=shared_memory.author_model(self, signed_as), standing=standing,
+                )
 
         if author_kind not in ("agent", "person"):
             raise ValueError(f"author_kind must be 'agent' or 'person', not {author_kind!r}")

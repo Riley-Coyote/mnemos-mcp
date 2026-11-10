@@ -76,6 +76,51 @@ def test_origin_is_snapshotted_for_captures_handoffs_journals_and_notes(tmp_path
         runtime.close()
 
 
+@pytest.mark.parametrize("replacement", [{}, {"project_name": "Beta"}])
+def test_project_change_does_not_reuse_the_registered_name(tmp_path, replacement):
+    with closing(EngramStore(tmp_path / "memory.db")) as store:
+        from mnemos.simple_scope import resolve_scope
+
+        scope = resolve_scope(db_path=str(store.db_path))
+        register_hook_origin(store, {"session_id": FIRST, "mnemos_origin": ORIGIN}, scope)
+        with bind_origin({"thread_id": FIRST, "project_id": "project-two", **replacement}):
+            memory = Engram(content="The project moved.", owner_agent_id=scope.agent_id,
+                            person_id=scope.person_id, project_scope=scope.project_scope)
+            store.save_engram(memory)
+        origin = store.get_engram(memory.id).origin
+        assert origin["project_id"] == "project-two"
+        assert origin.get("project_name") == replacement.get("project_name")
+
+
+@pytest.mark.parametrize("cold", [False, True])
+def test_shared_capture_keeps_hook_registered_source_labels(tmp_path, monkeypatch, cold):
+    import re
+
+    target = tmp_path / "shared.db"
+    monkeypatch.setenv("MNEMOS_SHARED_MEMORY_DB", str(target))
+    monkeypatch.setenv("MNEMOS_SHARED_MEMORY", "on")
+    runtime = MnemosRuntime(db_path=str(tmp_path / "private.db"), use_dedicated_model=False)
+    try:
+        runtime._ensure_init()
+        register_hook_origin(runtime._store, {"session_id": FIRST, "mnemos_origin": ORIGIN}, runtime.scope)
+        if cold:
+            runtime.close()
+            runtime = MnemosRuntime(db_path=str(tmp_path / "private.db"), use_dedicated_model=False)
+        with bind_origin({"thread_id": FIRST, "session_id": FIRST}):
+            result = runtime.capture("The copper lantern source stays attached.", shared=True, signed_as="gpt-6.1-sol")
+        memory_id = re.search(r"shared_engram_\w+", result)[0]
+        with closing(EngramStore(target)) as store:
+            assert store.get_engram(memory_id).origin == ORIGIN
+        recalled = subprocess.check_output(
+            [sys.executable, "-c", "import sys; from mnemos.shared_memory import recall; "
+             "print(recall(sys.argv[1], agent_id='another-agent'))", memory_id],
+            text=True,
+        )
+        assert "The copper lantern source stays attached." in recalled
+    finally:
+        runtime.close()
+
+
 def test_request_origin_is_restored_and_does_not_leak_between_workers():
     barrier = Barrier(2)
 
