@@ -52,7 +52,7 @@ def test_a_line_added_twice_is_kept_once(tmp_path):
     provider = _provider(tmp_path)
     try:
         provider.on_memory_write("add", "memory", LINE, metadata={"write_origin": "assistant_tool"})
-        provider.on_memory_write("add", "memory", "  the landlord's new  number is 555-0142. ", metadata={})
+        provider.on_memory_write("add", "memory", f"  {LINE} ", metadata={})  # Hermes trims the ends
     finally:
         provider.shutdown()
 
@@ -108,3 +108,34 @@ def test_a_memory_already_doubled_is_healed_by_its_replacement(tmp_path):
         provider.shutdown()
 
     assert _in_use(tmp_path) == ["The landlord's number is 555-0100."]
+
+
+def test_lines_hermes_holds_apart_are_kept_apart(tmp_path):
+    """Hermes's "already exists" is exact: "Ann takes…" and "ann takes…" are two
+    entries there. Mnemos took them for one, and removing one removed both."""
+    provider = _provider(tmp_path)
+    try:
+        provider.on_memory_write("add", "user", "Ann takes her tea black", metadata={})
+        provider.on_memory_write("add", "user", "ann takes her tea black", metadata={})
+        provider.on_memory_write("add", "user", "Bo  parks on level 3", metadata={})
+        provider.on_memory_write("add", "user", "Bo parks on level 3", metadata={})
+        assert _in_use(tmp_path) == [
+            "Ann takes her tea black", "Bo  parks on level 3", "Bo parks on level 3", "ann takes her tea black",
+        ]
+        provider.on_memory_write("remove", "user", "", metadata={"old_text": "ann takes her tea black"})
+        provider.on_memory_write("remove", "user", "", metadata={"old_text": "Bo parks on level 3"})
+    finally:
+        provider.shutdown()
+
+    assert _in_use(tmp_path) == ["Ann takes her tea black", "Bo  parks on level 3"]
+
+
+def test_the_entry_hermes_names_is_still_found_whatever_its_case_and_spacing(tmp_path):
+    provider = _provider(tmp_path)
+    try:
+        provider.on_memory_write("add", "memory", LINE, metadata={})
+        provider.on_memory_write("remove", "memory", "", metadata={"old_text": "LANDLORD'S  new number"})
+    finally:
+        provider.shutdown()
+
+    assert _in_use(tmp_path) == []

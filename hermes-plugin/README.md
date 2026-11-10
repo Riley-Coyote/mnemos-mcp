@@ -43,7 +43,7 @@ agent keeps its memory and its settings.
   `mnemos_introduce`, `mnemos_maintain`, `mnemos_health` and `mnemos_page`.
 - **Hermes's own memory, kept too.** MEMORY.md and USER.md stay on. What the agent
   writes there is kept in Mnemos as well, and changed or removed with it. A line added
-  there twice is kept once, as Hermes keeps it.
+  there twice, word for word, is kept once, as Hermes keeps it.
 - **Upkeep.** Memories fade unless they're used, and when one has nearly gone the agent
   is asked what it taught, so the lesson outlasts the details.
 - **A page.** Ask the agent to show you its memory and it opens a page on this machine,

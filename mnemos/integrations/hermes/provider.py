@@ -1069,9 +1069,9 @@ class MnemosMemoryProviderCore:
                     self._runtime.correct("", target_id=predecessor, action="forget")
                 self._runtime.correct(f"{clean}\n\nContext: {context}", target_id=first, action="update")
                 return
-        if action == "add" and clean and self._mirrored_entries(target, whole=clean):
-            # Hermes answers an add of a line it already holds with success,
-            # and keeps the line once: so does Mnemos.
+        if action == "add" and clean and self._mirrored_entries(target, whole=clean, exact=True):
+            # Hermes answers an add of a line it already holds, word for word,
+            # with success, and keeps the line once: so does Mnemos.
             return
         if action in {"add", "replace"} and clean:
             self._capture(clean, context=context, importance="high" if target == "user" else "auto")
@@ -1369,15 +1369,18 @@ class MnemosMemoryProviderCore:
             started["model"] = self._named_model  # the one a turn named since, if one did
         self.initialize(self._session_id or "mnemos-hermes", **started)
 
-    def _mirrored_entries(self, target: str, *, whole: str = "", piece: str = "") -> list[str]:
+    def _mirrored_entries(self, target: str, *, whole: str = "", piece: str = "", exact: bool = False) -> list[str]:
         """The memories in use here mirrored from this Hermes ``target``
         ("memory" or "user") that are the entry Hermes names: their own words
         (before the mirror's context) equal to ``whole``, or else containing
-        ``piece``, ignoring case. Several with the same words are one entry
-        kept more than once, as Hermes reads it; several with different words
-        are none: a replace or remove then retires nothing on a guess. A
-        memory mirrored from the other target, or one the agent wrote
-        itself, is never it."""
+        ``piece``. Found ignoring case and spacing, as Hermes's own words for
+        an entry can differ from what was kept; but several are one entry kept
+        more than once only when their words are the same exactly, ends
+        trimmed, as Hermes holds them apart otherwise. Among several entries
+        the one whose words match exactly is it; failing one, none is: a
+        replace or remove then retires nothing on a guess. ``exact``: only
+        words the same exactly count at all. A memory mirrored from the other
+        target, or one the agent wrote itself, is never it."""
         if not whole and not piece:
             return []
         self._runtime._ensure_init()
@@ -1389,19 +1392,28 @@ class MnemosMemoryProviderCore:
             (scope.agent_id, scope.person_id, scope.project_scope, marker),
         ).fetchall()
 
-        def own(content: str) -> str:
-            return " ".join(content.split(marker)[0].split()).casefold()
+        def words(content: str) -> str:
+            return content.split(marker)[0].strip()
+
+        def blind(text: str) -> str:
+            return " ".join(text.split()).casefold()
 
         # Spacing and case are read the same way on both sides: Hermes keeps
         # the entry's own spacing in old_text, and a double space or a line
-        # break in it is still the same entry.
+        # break in it still finds the entry.
         if whole:
-            matches = [r for r in rows if own(r[1]) == " ".join(whole.split()).casefold()]
+            exactly = [r for r in rows if words(r[1]) == whole.strip()]
+            found = exactly if exact else [r for r in rows if blind(words(r[1])) == blind(whole)]
         else:
-            matches = [r for r in rows if " ".join(piece.split()).casefold() in own(r[1])]
-        if len({own(r[1]) for r in matches}) != 1:
+            exactly = [r for r in rows if piece.strip() in words(r[1])]
+            found = exactly if exact else [r for r in rows if blind(piece) in blind(words(r[1]))]
+        entries = {words(r[1]) for r in found}
+        if len(entries) > 1:
+            found = exactly
+            entries = {words(r[1]) for r in found}
+        if len(entries) != 1:
             return []
-        return [r[0] for r in matches]
+        return [r[0] for r in found]
 
     def _capture(self, content: str, context: str = "", importance: str | float = "auto", **options: Any) -> str:
         self._ensure_runtime()

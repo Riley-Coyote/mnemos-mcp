@@ -170,7 +170,9 @@ release before it, run both ways, found nothing else.
   answers an add of a line MEMORY.md already holds with success and keeps the line once; Mnemos
   kept it twice, and a later remove or replace, finding two, retired neither, so the removed line
   kept coming up. Now the line is kept once, and the same words kept twice by an earlier release
-  are one entry: the next remove or replace retires both.
+  are one entry: the next remove or replace retires both. The same means word for word, as
+  Hermes reads it: two lines that differ only in case or spacing are two entries there, and in
+  Mnemos too, and removing one leaves the other.
 - **A memory restored under another home folder is still the memory.** The first session wrote
   `db_path` with the home folder spelled out (`/Users/ann/.mnemos/hermes.db`), so a backup
   restored on a new Mac or under another username opened a new, empty memory, or couldn't start.
