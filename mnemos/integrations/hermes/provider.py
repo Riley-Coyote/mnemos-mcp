@@ -99,6 +99,24 @@ _THIS_AGENT = (
     "wakes to it first. Hermes' own memory (MEMORY.md, USER.md) stays on beside this one, "
     "and what you write there is kept here too."
 )
+# What a run nobody is in is told, in place of the rules for a conversation:
+# Hermes's scheduled jobs (cron), and any other run it says isn't the primary
+# one. Hermes asks a memory provider to write nothing by itself there. The
+# agent's own tools still work: a job can be the agent's quiet hour, where
+# what it keeps is the point.
+_RULES_UNATTENDED = (
+    "Mnemos is your long-term memory. This is {run}, with nobody in it, so it isn't a "
+    "conversation. {read} What may bear on the task comes with it, and mnemos_recall searches "
+    "for more. "
+    "Leave no handoff or note for this run by habit: a handoff says where a conversation left "
+    "off, and this isn't one. Your memory's tools work here as anywhere, for what the task "
+    "itself asks you to keep: sign what you write with signed_as, your exact model id.\n\n"
+    "Never narrate the machinery: don't mention tools, databases, scopes, engrams or memory "
+    "ids in what you report."
+)
+_READ_NOT_WOKEN = "You woke with a short read of your memory, below, and reading it recorded nothing."
+_NOTHING_TO_READ = "Your memory has nothing to wake with yet."
+_UNATTENDED_RUNS = {"cron": "a scheduled run", "subagent": "a subagent's run", "flush": "a memory flush"}
 _ONE_NOTE_EACH = (
     "\n\nHere each conversation (a chat, or a topic in one) is one session, however many "
     "times it starts over: this replaces only the note this conversation left before, and "
@@ -378,8 +396,17 @@ class MnemosMemoryProviderCore:
         self._ensure_runtime()
         assert self._runtime is not None
         assert self._config is not None
-        packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
-        body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
+        if self._writes_enabled:
+            packet = self._runtime.context(max_results=min(4, self._config.max_recall_results))
+            body = f"# Mnemos Identity Continuity\n{_RULES_HERE}\n\n{_THIS_AGENT}\n\n{packet}"
+        else:
+            # Read, not woken: a wake counts a session and spends what shows
+            # once (a question, the person's note) on a run nobody is in.
+            assert self._scope is not None
+            run = _UNATTENDED_RUNS.get(self._scope.agent_context, "a background run")
+            packet = self._runtime.glance()
+            rules = _RULES_UNATTENDED.format(run=run, read=_READ_NOT_WOKEN if packet else _NOTHING_TO_READ)
+            body = f"# Mnemos Identity Continuity\n{rules}" + (f"\n\n{packet}" if packet else "")
         wake_limit = self._config.max_wake_chars
         return _truncate(body, wake_limit) if wake_limit else body
 
@@ -398,7 +425,11 @@ class MnemosMemoryProviderCore:
         revision = self._store_revision()
         if cached and cached[0] == clean and revision is not None and cached[1] == revision:
             return cached[2]
-        recalled = self._runtime._recall_own(clean, max_results=self._config.max_recall_results)
+        # What comes up by itself is a use of it, in a conversation. In a run
+        # nobody is in it is only read: nothing strengthened, linked or woken.
+        recalled = self._runtime._recall_own(
+            clean, max_results=self._config.max_recall_results, reinforce=self._writes_enabled,
+        )
         if "No relevant continuity found" in recalled:
             return ""
         rows = recalled.split("\n", 1)[1].lstrip("\n") if recalled.startswith("Mnemos recall for:") else recalled
@@ -451,6 +482,8 @@ class MnemosMemoryProviderCore:
             {**tool, "description": tool["description"] + _ONE_NOTE_EACH}
             if tool["name"] == "mnemos_handoff" else tool
             for tool in TOOL_SCHEMAS
+            # A run nobody is in isn't offered the page: there is no one to open it for.
+            if self._writes_enabled or tool["name"] != "mnemos_page"
         ]
 
     @_one_at_a_time
@@ -460,6 +493,12 @@ class MnemosMemoryProviderCore:
             return _json_error(f"Unknown Mnemos tool: {tool_name}")
         try:
             self._ensure_runtime()
+            if tool_name == "mnemos_page" and not self._writes_enabled:
+                return _json_error(
+                    "The page is for the person to read while you talk, and nobody is in this run: "
+                    "by the time they looked, it would be closed. Open it in a conversation.",
+                    tool=tool_name,
+                )
             return _json_ok(result=limit_output(tool(self, args or {})))
         except Exception as exc:
             logger.debug("Mnemos tool %s failed", tool_name, exc_info=True)

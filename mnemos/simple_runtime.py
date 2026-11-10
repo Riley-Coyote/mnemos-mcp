@@ -4773,6 +4773,35 @@ class MnemosRuntime:
         """
         return self.conversation or harness_session()
 
+    def glance(self) -> str:
+        """Where things stand, read without waking: who the agent is with, how
+        they work and where it left off (a light wake), and nothing recorded.
+        No session is counted, no showing spent, no day marked as lived, and it
+        carries no question, note or reply, which ask for an answer.
+
+        For a run nobody is in (a host's scheduled job), which reads a memory
+        and leaves it as it found it. ``""`` when the memory has nothing to say.
+        """
+        self._ensure_init()
+        assert self._store is not None
+        packet = build_context_packet(
+            self._store,
+            "",
+            agent_id=self.scope.agent_id,
+            person_id=self.scope.person_id,
+            project_scope=self.scope.project_scope,
+            include_engrams=False,
+            include_reflections=False,
+            mark_surfaced=False,
+            wake="light",
+            reader_model=self.author_model(),
+            reader_session=self._note_session(),
+            workdir=self._workdir(),
+            older_than_store=self._older_than_store() is not None,
+            person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
+        )
+        return (packet.get("prompt") or "").strip()
+
     def _briefing_packet(
         self,
         *,
@@ -5690,6 +5719,7 @@ class MnemosRuntime:
         max_results: int = RECALL_RESULTS,
         include_archived: bool = False,
         standing: bool = False,
+        reinforce: bool = True,
     ) -> str:
         """Recall what memory holds for ``query``: the memories, lessons,
         handoffs and journal entries it finds, by their words and by their
@@ -5724,6 +5754,10 @@ class MnemosRuntime:
 
         With ``standing``, every memory marked standing in this scope comes
         back instead, however many: see ``_recall_standing``.
+
+        ``reinforce=False`` is a look that changes nothing: what comes back is
+        not strengthened, linked or woken (what a host brings by itself to a
+        run nobody is in). The agent's own recall is a use, and reinforces.
         """
 
         if standing:
@@ -5736,8 +5770,9 @@ class MnemosRuntime:
         assert self._store is not None
 
         # The packet cuts long notes and shows each one's id. Recalling that
-        # id returns the note whole.
-        whole = self._recall_by_id(query.strip())
+        # id returns the note whole (and reinforces it: a look that changes
+        # nothing searches for the words instead).
+        whole = self._recall_by_id(query.strip()) if reinforce else ""
         if whole:
             self._traced_read(query.strip())
             return whole
@@ -5817,7 +5852,8 @@ class MnemosRuntime:
         # LINKED_TOGETHER memories are linked to each other. What came back
         # from the archive comes last, so it is linked with what recall found
         # beside it while it is among those.
-        self._reinforce_returned(query, returned)
+        if reinforce:
+            self._reinforce_returned(query, returned)
         return "\n".join(lines)
 
     def _recall_rows(self, query: str, max_results: int) -> list[RetrievalResult]:
