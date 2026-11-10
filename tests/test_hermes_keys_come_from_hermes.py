@@ -288,3 +288,26 @@ def test_geminis_key_goes_only_when_meaning_search_is_set_to_it(monkeypatch):
     env = simple_runtime._hosted_upkeep_env(False)
     assert (env["MNEMOS_EMBEDDING_PROVIDER"], env["GEMINI_API_KEY"]) == ("gemini", "the-profile's-gemini-key")
     assert "HTTPS_PROXY" in env
+
+
+def test_a_profile_never_searches_by_meaning_on_the_gateways_choice(monkeypatch):
+    """The same for meaning search. MNEMOS_EMBEDDINGS_PROVIDER in the gateway's
+    environment reads as ``embeddings.provider`` in Mnemos's config, for every
+    profile the gateway serves: one that chose nothing, holding a Gemini key
+    for something else, had its memory's words sent to Google."""
+    from mnemos.store.embedding_index import embedding_choice
+
+    monkeypatch.setenv("MNEMOS_EMBEDDINGS_PROVIDER", "gemini")
+    monkeypatch.setenv("MNEMOS_EMBEDDING_MODEL", "the-gateway's-embedding-model")
+    _hermes_says(monkeypatch, GEMINI_API_KEY="the-profile's-gemini-key")
+    assert embedding_choice()["provider"] == "local", "the gateway's own choice of provider was this profile's"
+    env = simple_runtime._hosted_upkeep_env(False)
+    assert "GEMINI_API_KEY" not in env and "MNEMOS_EMBEDDING_PROVIDER" not in env
+
+    # One that chose Gemini itself gets it, with the model it named and not the gateway's.
+    _hermes_says(monkeypatch, MNEMOS_EMBEDDING_PROVIDER="gemini", GEMINI_API_KEY="the-profile's-gemini-key",
+                 MNEMOS_EMBEDDING_MODEL="the-profile's-embedding-model")
+    assert embedding_choice()["model"] == "the-profile's-embedding-model"
+    _hermes_says(monkeypatch, MNEMOS_EMBEDDING_PROVIDER="gemini", GEMINI_API_KEY="the-profile's-gemini-key")
+    assert embedding_choice()["model"] != "the-gateway's-embedding-model"
+

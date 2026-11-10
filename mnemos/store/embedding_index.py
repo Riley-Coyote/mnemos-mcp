@@ -406,7 +406,8 @@ def embedding_choice(
         )
     key_in = "code" if gemini_api_key else _find_env_key("GEMINI_API_KEY")[1]
     if chosen == GEMINI and key_in:
-        used, model = GEMINI, os.environ.get("MNEMOS_EMBEDDING_MODEL", GEMINI_MODEL)
+        # Read as the choice is: inside a host, from the host, for the profile speaking.
+        used, model = GEMINI, _find_env_key("MNEMOS_EMBEDDING_MODEL")[0] or GEMINI_MODEL
     else:
         used, model = LOCAL, LOCAL_MODEL
     return {
@@ -419,11 +420,19 @@ def embedding_choice(
 
 
 def _configured_provider() -> str:
-    """``embeddings.provider`` in Mnemos's config, or "" when it has none."""
+    """``embeddings.provider`` in Mnemos's config, or "" when it has none.
+
+    Inside a host (Hermes), the file's choice alone, as for the model
+    (``llm.chosen_provider``). The environment there is the gateway's, set for
+    the profile it was started for, and it overrides the file
+    (MNEMOS_EMBEDDINGS_PROVIDER reads as this setting): a profile that chose
+    nothing, with a Gemini key of its own for something else, had its memory's
+    words sent to Google on that other profile's choice."""
     try:
         from ..config.loader import load_config
+        from ..llm import host_secrets_active
 
-        embeddings = load_config().get("embeddings")
+        embeddings = load_config(env_prefix=None if host_secrets_active() else "MNEMOS_").get("embeddings")
     except Exception:
         return ""
     if isinstance(embeddings, dict):
