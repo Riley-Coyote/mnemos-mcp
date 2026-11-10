@@ -215,6 +215,28 @@ _backup_holds_lock = threading.Lock()
 _backup_exit_seen = False
 
 
+# Tables every Mnemos memory has had since its first release: a file without
+# them is some other program's, whatever it is called.
+_A_MEMORYS_TABLES = frozenset({"engrams", "connections", "versions", "meta"})
+
+
+def _why_not_a_memory(store: Path) -> str:
+    """"" for a Mnemos memory; otherwise why the file isn't one. It is opened
+    read-only and only its list of tables is read: nothing in it changes."""
+    try:
+        conn = sqlite3.connect(f"{store.as_uri()}?mode=ro", uri=True, timeout=2.0)
+    except sqlite3.Error as exc:
+        return f"it can't be opened as a database ({exc})"
+    try:
+        tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    except sqlite3.Error as exc:
+        return f"it isn't a database Mnemos can read ({exc})"
+    finally:
+        conn.close()
+    missing = sorted(_A_MEMORYS_TABLES - tables)
+    return f"it hasn't Mnemos's own tables ({', '.join(missing)} missing)" if missing else ""
+
+
 def _hold_still_for_a_backup(store: Path) -> None:
     """Fold a memory's log into its file, and keep the file as it then is while
     a backup copies it.
@@ -1045,6 +1067,11 @@ class MnemosMemoryProviderCore:
                 if store in seen or not store.is_file() or store.is_relative_to(root):
                     continue
                 seen.add(store)
+                why = _why_not_a_memory(store)
+                if why:
+                    # Never named, held or folded in: another program's file.
+                    logger.warning("Mnemos left %s out of the backup: %s.", store, why)
+                    continue
                 try:
                     _hold_still_for_a_backup(store)
                 except sqlite3.Error:
