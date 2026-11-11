@@ -1491,6 +1491,7 @@ def prompt_hook(
     ``StoreBusy``.
     """
     from .authorship import clean_session_id
+    from .attribution import hook_origin
     from .code_version import MAINTENANCE_CODE_VERSION
     from .store.fts import meaningful_words
 
@@ -1509,7 +1510,7 @@ def prompt_hook(
     if not db.is_file():
         return ""
     key = scope_key(str(db), agent_id, person_id, project_scope)
-    session = clean_session_id(payload.get("session_id")) or clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
+    session = hook_origin(payload).get("thread_id") or clean_session_id(env.get("CLAUDE_CODE_SESSION_ID"))
     seen_file = SeenFile(session, key)
     if len(meaningful_words(text)) < CUE_MIN_WORDS:
         # Too short to look at ("yes", "go ahead"): counted, so the card can
@@ -1756,7 +1757,14 @@ def stdin_ready(fd: int, timeout: float) -> bool:
     if sys.platform != "win32":
         import select
 
-        return bool(select.select([fd], [], [], max(timeout, 0.0))[0])
+        # poll handles descriptors above select's fixed FD_SETSIZE limit and
+        # supports redirected files as well as pipes, including pipe EOF.
+        poller = select.poll()
+        poller.register(fd, select.POLLIN)
+        events = poller.poll(math.ceil(max(timeout, 0.0) * 1000))
+        if events and events[0][1] & select.POLLNVAL:
+            raise OSError(errno.EBADF, os.strerror(errno.EBADF))
+        return bool(events)
 
     until = time.monotonic() + max(timeout, 0.0)
     while True:

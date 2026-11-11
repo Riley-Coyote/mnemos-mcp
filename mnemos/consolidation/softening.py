@@ -22,11 +22,13 @@ The original content is always preserved in content_at_encoding (immutable).
 from __future__ import annotations
 
 import re
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 import ulid as _ulid_mod
 
+from ..attribution import bind_origin
 from ..core.placeholders import is_templated
 from ..core.types import ConnectionRelation, EngramKind, SourceType
 from ..store.fts import distinctive_terms, fts_words, or_query, overlap
@@ -94,7 +96,7 @@ def _teach(
             # tool's memory taught leads nowhere.
             stats.setdefault("awaiting_impact", []).append(engram.id)
     if engram.impact:
-        lesson_id = _create_or_reinforce_lesson(engram, store, stats)
+        lesson_id = _create_or_reinforce_lesson(engram, store, stats, origin=engram.origin)
         linked = any(
             conn.relation == ConnectionRelation.DISTILLED_INTO and conn.target_id == lesson_id
             for conn in engram.connections
@@ -494,6 +496,7 @@ def _create_or_reinforce_lesson(
     *,
     author_model: str = "",
     author_session: str = "",
+    origin: dict[str, str] | None = None,
 ) -> str | None:
     """Create or reinforce a lesson engram from the impact of a softened memory.
 
@@ -509,6 +512,9 @@ def _create_or_reinforce_lesson(
     ``author_session`` sign a new lesson when the caller knows who wrote the
     impact (an answer just given through mnemos_reflect); softening, which
     finds the impact later, leaves the model unsigned.
+
+    An explicit ``origin`` preserves a historical snapshot, including gaps.
+    With no snapshot, a fresh answer uses the current request.
 
     Returns the lesson engram ID, or None if no lesson was created.
     """
@@ -596,6 +602,7 @@ def _create_or_reinforce_lesson(
         author_kind="agent",
         author_model=(author_model or "").strip(),
         author_session=(author_session or "").strip(),
+        origin=dict(origin or {}),
         kind=EngramKind.PROCEDURAL,
         tags=list(set(engram.tags + ["lesson", "distilled"])),
         strength=0.8,
@@ -610,7 +617,8 @@ def _create_or_reinforce_lesson(
         project_scope=engram.project_scope,
     )
 
-    store.save_engram(lesson)
+    with bind_origin({}) if origin is not None else nullcontext():
+        store.save_engram(lesson)
 
     # Shift 2 is not the lesson existing, it is the lesson being *reachable
     # from* the experience it came from. Without this edge the distillate is

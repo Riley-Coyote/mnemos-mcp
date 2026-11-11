@@ -387,7 +387,14 @@ def test_never_twice_in_a_session(tmp_path, meaning, home):
     assert _seen("session-one", db)["shown"] == [found["worded"].id]
 
 
-def test_what_the_briefing_showed_is_never_offered_in_that_session(tmp_path, home, monkeypatch):
+@pytest.mark.parametrize("agent_id, reader_session", [
+    (None, "briefed-session"),
+    ("child-thread-1234", "child-thread-1234"),
+    ("../invalid", "briefed-session"),
+])
+def test_what_the_briefing_showed_is_never_offered_in_that_session(
+    tmp_path, home, agent_id, reader_session,
+):
     """The session-start hook records what its briefing showed: a capture's
     note, and the memory it is one object with. The cue then leaves that
     memory out of the session; another session is offered it."""
@@ -397,16 +404,22 @@ def test_what_the_briefing_showed_is_never_offered_in_that_session(tmp_path, hom
                       signed_as=MODEL)
     rt.close()
     memory_id = re.search(r"(engram_[A-Za-z0-9]+)", said).group(1)
-    payload = json.dumps({"session_id": "briefed-session", "hook_event_name": "SessionStart",
+    identity = {"session_id": "briefed-session"}
+    if agent_id is not None:
+        identity["agent_id"] = agent_id
+    payload = json.dumps({**identity, "hook_event_name": "SessionStart",
                           "source": "startup", "model": MODEL, "cwd": str(tmp_path)})
 
     started = _run_hook(db, "session-start", payload)
     assert started.returncode == 0 and b"lighthouse keeper closes" in started.stdout
 
-    seen = _seen("briefed-session", db)
+    seen = _seen(reader_session, db)
     assert memory_id in seen["shown"], seen
     assert seen["offered"] == 0, "the briefing showing something is not an offer"
-    assert _hook(db, MESSAGE, session="briefed-session") == ""
+    prompted = _run_hook(db, "prompt", _prompt_payload(**identity))
+    assert (prompted.returncode, prompted.stdout) == (0, b"")
+    if reader_session != identity["session_id"]:
+        assert memory_id in _hook(db, MESSAGE, session=identity["session_id"])
     assert memory_id in _hook(db, MESSAGE, session="another-session")
 
 
@@ -646,10 +659,13 @@ def test_a_first_message_asks_another_sessions_answerer_while_its_own_loads(tmp_
     other = _answerer(db, claude_pid=4242)
     try:
         block = _hook(db, MESSAGE, CLAUDE_PID="999999")
-        assert other.answered == 1
     finally:
         other.stop()
+        # The hook can receive the reply before the serving thread counts it.
+        other.thread.join(5)
 
+    assert not other.thread.is_alive()
+    assert other.answered == 1
     assert found["near"].id in block, "meaning found it"
     assert found["worded"].id not in block, "what this session's briefing showed stays out"
     offer = _seen("session-one", db)["offers"][0]

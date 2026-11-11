@@ -79,9 +79,9 @@ class Hours:
 
     Every agent can have an hour handed to it (``life --handoff``, which
     needs no command of Mnemos's and no particular model). Two can schedule
-    it with their own scheduler. Claude Code alone has Mnemos run the hour,
-    walled in (``life.py``). ``vendor`` is who sees what the agent thinks
-    over in an hour; ``cost`` is what an hour spends, in the words the first
+    it with their own scheduler. Mnemos runs all three hours with Claude Code
+    and memory-only dreams with Codex, walled in (``life.py``). ``vendor`` is
+    who sees what the agent thinks over in an hour; ``cost`` is what an hour spends, in the words the first
     session says. Off unless the person says yes."""
 
     vendor: str
@@ -163,7 +163,7 @@ CLAUDE_CODE = Harness(
     markers=("CLAUDECODE",),
     wake_event="SessionStart",
     cue_event="UserPromptSubmit",
-    notes=("The only agent whose quiet hours run (they run Claude Code itself).",),
+    notes=("All three quiet hours run through Claude Code itself.",),
 )
 
 CODEX = Harness(
@@ -171,7 +171,7 @@ CODEX = Harness(
     label="Codex",
     command="codex",
     level=INSTALLS,
-    version="0.166",
+    version="0.167",
     mcp=Ability(True, "codex mcp add (writes ~/.codex/config.toml)", SAW),
     wake=Ability(
         True,
@@ -188,21 +188,17 @@ CODEX = Harness(
     hours=Hours(
         vendor="OpenAI",
         cost=(
-            "no hour runs by itself in Codex: it has no scheduler Mnemos uses, and Mnemos "
-            "can't wall a Codex run in. If they ask you to take one, you take it inside the "
-            "session, on that session's model, so it spends what the session spends and what "
-            "you think over in it goes to OpenAI, as your sessions do"
+            "Codex runs the nightly dream on your Codex account; what it thinks over goes "
+            "to OpenAI. Choose it with mnemos daemon install --hours --runner codex --write. "
+            "Its own hour and the day’s work can still be handed to a session"
         ),
         runner=Runner(
             command="codex exec",
-            flags="--sandbox read-only --ignore-user-config --ephemeral",
-            mcp="-c mcp_servers.mnemos.command=... (from its help; not run)",
-            walled=None,
-            proof=UNTESTED,
-            why=(
-                "its help says --sandbox sets the policy for shell commands it runs, so the "
-                "shell stays; no flag removes it, or the file and web tools"
-            ),
+            flags="--sandbox read-only --ignore-user-config --ephemeral, a memory-only model catalog and disabled host tools",
+            mcp="a required scoped mcp_servers.mnemos with an explicit memory-tool allowlist",
+            walled=True,
+            proof=SAW,
+            why="Codex supports memory-only dreams; broader hours remain handoffs.",
         ),
     ),
     then=("In Codex, open /hooks and approve the Mnemos hooks: Codex skips hooks nobody reviewed.",),
@@ -210,7 +206,7 @@ CODEX = Harness(
     markers=(),
     wake_event="SessionStart",
     cue_event="UserPromptSubmit",
-    notes=("Not run with a model here: its login was not safe to use unattended.",),
+    notes=("Dreams use a local catalog preserving model instructions while removing shell and patch tools.",),
 )
 
 GROK = Harness(

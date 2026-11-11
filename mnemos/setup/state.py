@@ -164,12 +164,29 @@ def hours_choice(agent_id: str) -> str | None:
     return choice if choice in ("yes", "no") else None
 
 
-def record_hours_choice(agent_id: str, choice: str) -> None:
+def hour_settings(agent_id: str) -> dict:
+    """The saved quiet-hour runner and optional model for this agent."""
+    try:
+        kept = json.loads((hours_dir(agent_id) / CHOICE_FILE).read_text())
+    except (OSError, ValueError):
+        kept = {}
+    if not isinstance(kept, dict):
+        kept = {}
+    runner = kept.get("runner", "claude-code")
+    model = kept.get("model", "")
+    return {"runner": runner if runner in ("claude-code", "codex") else "claude-code",
+            "model": model if isinstance(model, str) else ""}
+
+
+def record_hours_choice(agent_id: str, choice: str, *, runner: str | None = None, model: str | None = None) -> None:
     """Keep what the person chose about the quiet hours. A setup that did
     what they asked never fails over this."""
     from ..file_security import atomic_write_text
 
-    kept = {"choice": choice, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    kept = {**hour_settings(agent_id), "choice": choice,
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    if runner is not None:
+        kept.update(runner=runner, model=model or "")
     try:
         folder = hours_dir(agent_id)
         folder.mkdir(parents=True, exist_ok=True)

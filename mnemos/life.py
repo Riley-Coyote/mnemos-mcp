@@ -1,6 +1,6 @@
 """Quiet hours: time between sessions that belongs to the agent.
 
-Three kinds, one runner. "mine" is the agent's own hour: it runs every day, and
+Three kinds of quiet hour. "mine" is the agent's own hour: it runs every day, and
 nothing is asked of it. "ours" is for the day's work, and runs only when there
 was work since the last one. "dream" is a short time each night, after the
 deep upkeep, for the part of consolidation only a mind can do: what a fading
@@ -9,12 +9,12 @@ belief still holds, what a new memory changed, and what two memories make side
 by side. It runs only when something waits, and reaches nothing but its
 memory. The runner gathers what is waiting from memory (read only), puts it
 after the agent's own words for the hour, and wakes the agent with
-`claude -p`, fenced, as the one model allowed to write as it.
+the selected CLI, fenced, as the one model allowed to write as it.
 
 The engine prepares; the agent lives. Nothing here writes words into memory.
 
-Claude Code is the one agent whose hour Mnemos runs, walled in. Every other
-agent can have an hour handed to it (``--handoff``): the same prompt, from the
+Mnemos runs all three hours through Claude Code and memory-only dreams through
+Codex. Every agent can also have an hour handed to it (``--handoff``): the same prompt, from the
 same words and the same material, printed for the agent to take in its own
 session with its own tools, and recorded like any hour so tomorrow's material
 moves on. That is not walled in, and the prompt says so (``HANDOFF_FENCE``).
@@ -32,6 +32,7 @@ import fcntl
 import json
 import math
 import os
+import signal
 from pathlib import Path
 import re
 import shlex
@@ -150,7 +151,7 @@ HANDOFF_FENCE = (
     "into your memory for you. Answer with your memory's own tools (mnemos_reflect, "
     "mnemos_capture, mnemos_journal), signed as yourself, or answer nothing, and nothing "
     "is written.\n\n"
-    "It is not walled in the way Claude Code's quiet hours are: you have your usual tools "
+    "It is not walled in the way built-in quiet hours are: you have your usual tools "
     "here. {kept} Where the text below says this folder, it means {studio}."
 )
 HANDOFF_KEPT = {
@@ -163,12 +164,12 @@ HANDOFF_KEPT = {
 }
 
 
-def hand_off_model(path, scope) -> str:
+def hand_off_model(path, scope, model=None) -> str:
     """The model whose memory this is, for a hand-off: the person's own choice
     (MNEMOS_HOUR_MODEL), else the memory's resident, else ``""``. Unlike
     ``hour_model`` it never refuses: any model can take an hour handed to it.
     The questions an hour gives are the ones asked of that model line."""
-    chosen = os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
+    chosen = model or os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
     if chosen:
         return chosen
     from .interface.context_packet import resident_model
@@ -194,8 +195,10 @@ def builtin_refusal(runner: str, kind: str) -> str:
     hand = f" Hand the hour to it instead: mnemos life --hour {kind} --handoff"
     if harness is None:
         return f"Mnemos doesn't know an agent called {runner}." + hand
-    if harness.key == "claude-code":
+    if harness.key == "claude-code" or (harness.key == "codex" and kind == "dream"):
         return ""
+    if harness.key == "codex":
+        return "Codex currently runs only dreams; use --hour dream or --handoff."
     built = harness.hours.runner if harness.hours else None
     if built is None:
         return f"Mnemos has no built-in run for {harness.label}." + hand
@@ -242,16 +245,14 @@ def _records(path):
     return records
 
 
-def hour_model(path, scope) -> tuple[str, str]:
+def hour_model(path, scope, runner="claude-code", model=None) -> tuple[str, str]:
     """The model whose hour this is, or "" and why no hour can run.
 
-    An hour is the agent living, so it is the memory's own mind: its resident,
-    the model line that signed most of it, by its newest id. Until 2026-10-16
-    every hour ran Opus 5.5, so a memory that was Sonnet's had another model
-    waking in it, on its person's plan. A memory that is another kind of
-    model's (the hours run Claude Code) has no hour; one with nothing signed
-    yet has HOUR_MODEL's. MNEMOS_HOUR_MODEL is the person's own choice."""
-    chosen = os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
+    Explicit selection or MNEMOS_HOUR_MODEL wins; otherwise use the resident
+    model. An empty Claude memory uses HOUR_MODEL. Codex requires a selection
+    when the resident is absent or belongs to Claude.
+    """
+    chosen = model or os.environ.get("MNEMOS_HOUR_MODEL", "").strip()
     if chosen:
         return chosen, ""
     from .interface.context_packet import resident_model
@@ -261,6 +262,12 @@ def hour_model(path, scope) -> tuple[str, str]:
         resident = resident_model(store, scope)
     finally:
         store.close()
+    if runner == "codex":
+        if resident.startswith("claude-"):
+            return "", f"This memory is mostly {resident}’s; choose a Codex --model explicitly."
+        if not resident:
+            return "", "Choose a Codex model with --model, MNEMOS_HOUR_MODEL, or Quiet hours settings."
+        return resident, ""
     if not resident:
         return HOUR_MODEL, ""
     if not resident.startswith("claude-"):
@@ -674,7 +681,8 @@ def _set_aside(studio: Path, folder: Path):
         yield str(path)
 
 
-def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL):
+def _files_and_command(kind, hour_id, folder, store, scope, runner_bin, mnemos_bin, model=HOUR_MODEL,
+                       runner="claude-code", config_dir=None):
     folders = read_dirs()
     mcp = {"mcpServers": {"mnemos": {
         "type": "stdio", "command": mnemos_bin,
@@ -682,6 +690,13 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
                  "--person-id", scope["person_id"], "--project-scope", scope["project_scope"], "serve"],
         "env": {"MNEMOS_HOUR_ID": hour_id},
     }}}
+    if runner == "codex":
+        from . import codex_dream
+
+        mcp["mcpServers"]["mnemos"]["env"].update(
+            MNEMOS_SHARED_MEMORY="off", MNEMOS_WAKE="light",
+        )
+        return mcp, codex_dream.model_catalog(model, config_dir), codex_dream.command(runner_bin, model, folder, mcp, config_dir)
     from .setup import scheduler
 
     deny = []
@@ -728,7 +743,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
     # in the agent's hour): only its studio's, this file and its own MCP
     # config, as Mnemos's model does (mnemos/llm.py). The wake still comes
     # from Mnemos's own hook, in this file.
-    cmd = [claude_bin, "--model", model, "--restricted",
+    cmd = [runner_bin, "--model", model, "--restricted",
            "--tools", TOOLS[kind],
            "--setting-sources", "project",
            "--strict-mcp-config", "--mcp-config", str(folder / "mcp.json"),
@@ -748,28 +763,40 @@ def _tokens(usages):
     )}
 
 
-def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_MODEL):
+def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_MODEL,
+           runner="claude-code"):
+    from .codex_dream import Events
+
+    codex = Events() if runner == "codex" else None
     usage_by_id = {}
     result = None
-    model = ""
+    model = hour if codex else ""
     seen_model = None
     last_synthetic = ""
     stopped = []
     stop_lock = threading.Lock()
     with (folder / "stderr.txt").open("w") as stderr, (folder / "stream.jsonl").open("w") as stream:
         proc = subprocess.Popen(cmd, cwd=studio, env=env, stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=stderr, text=True, bufsize=1)
+                                stdout=subprocess.PIPE, stderr=stderr, text=True, bufsize=1,
+                                start_new_session=True)
 
         def stop(cause):
             with stop_lock:
                 if stopped:
                     return
                 stopped.append(cause)
-            proc.terminate()
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
             try:
                 proc.wait(timeout=STOP_GRACE_SECONDS)
             except subprocess.TimeoutExpired:
-                proc.kill()
+                pass
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
         timer = threading.Timer(max_seconds, lambda: stop("time"))
         timer.start()
@@ -786,6 +813,12 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
                     event = json.loads(raw)
                 except json.JSONDecodeError:
                     continue
+                if codex:
+                    event = codex.accept(event)
+                    if codex.forbidden:
+                        stop("guard")
+                    if event is None:
+                        continue
                 if event.get("type") == "system" and event.get("subtype") == "init":
                     model = event.get("model") or ""
                     if isinstance(model, str) and model and model not in (hour, "<synthetic>"):
@@ -813,6 +846,10 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
                         stop("tokens")
                 elif event.get("type") == "result":
                     result = event
+                    if codex:
+                        used = event.get("usage") or {}
+                        if used.get("input_tokens", 0) + used.get("output_tokens", 0) > max_tokens:
+                            stop("tokens")
             rc = proc.wait()
         finally:
             if proc.poll() is None:
@@ -823,7 +860,9 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
             proc.stdout.close()
     tokens = _tokens([result.get("usage", {})] if result is not None else list(usage_by_id.values()))
     cause = stopped[0] if stopped else ""
-    if seen_model is not None:
+    if codex and codex.forbidden:
+        status, reason = "failed", f"Codex attempted a non-memory action: {codex.forbidden}."
+    elif seen_model is not None:
         status, reason = "skipped", (
             f"The hour ran as {seen_model}, not {hour}, so nothing it wrote was kept."
         )
@@ -831,6 +870,10 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
         status, reason = "done", f"Stopped at the token ceiling ({max_tokens:,})."
     elif cause == "time":
         status, reason = "done", f"Stopped at the time limit ({max_seconds / 60:g} minutes)."
+    elif codex and rc != 0:
+        status, reason = "failed", f"codex exited with code {rc}: " + (folder / "stderr.txt").read_text()[-400:].strip()
+        if result is not None and result.get("is_error"):
+            reason = "The session ended with an error: " + _line(str(result.get("result", ""))) + "; " + reason
     elif result is not None and result.get("is_error"):
         status, reason = "failed", "The session ended with an error: " + _line(str(result.get("result", "")))
     elif result is not None:
@@ -838,13 +881,13 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
     elif rc != 0:
         status, reason = "failed", f"claude exited with code {rc}: " + (folder / "stderr.txt").read_text()[-400:].strip()
     else:
-        status, reason = "failed", "claude ended without a result."
+        status, reason = "failed", "codex ended without a result." if codex else "claude ended without a result."
     if status == "done" and not reason and last_synthetic:
         reason = "Claude Code said: " + _line(last_synthetic)
     return {
         "model": model, "status": status, "reason": reason, "tokens": tokens,
         "session_id": result.get("session_id", "") if result is not None else "",
-    }, seen_model is not None
+    }, seen_model is not None or bool(codex and codex.forbidden)
 
 
 def _answered(store, ids) -> list[str]:
@@ -857,7 +900,7 @@ def _answered(store, ids) -> list[str]:
     ).fetchall()]
 
 
-def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out) -> dict:
+def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out, model=None) -> dict:
     """An hour handed to the agent: the prompt the hour would get, printed to
     ``out`` for the agent to take in its own session, and recorded like any
     hour (a done hour on the live store) so the next one's material moves on
@@ -875,7 +918,7 @@ def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out) -> dict:
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         records = _records(records_path)
         since = since_for(kind, records)
-        model = hand_off_model(live, scope)
+        model = hand_off_model(live, scope, model)
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model, resolved.agent_id, records)
         print(f"Dry run · {kind} hour · hand-off · nothing recorded", file=out)
         print(f"Store: {live}", file=out)
@@ -907,7 +950,7 @@ def _hand_off(kind, *, resolved, scope, live, hours, dry_run, out) -> dict:
             if not live.exists():
                 record.update(status="failed", reason=f"There is no memory store at {live}.")
                 return record
-            model = hand_off_model(live, scope)
+            model = hand_off_model(live, scope, model)
             record["model"] = model
             prompt, waiting, skip, said = _prepare(kind, live, since, scope, model, resolved.agent_id, records)
             record["waiting"] = waiting
@@ -941,7 +984,12 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
              dry_run: bool = False, config_dir: str | None = None, store_copy: bool = False,
              max_minutes: float | None = None, max_tokens: int | None = None,
              max_seconds: float | None = None, out=sys.stdout,
-             handoff: bool = False, runner: str = "claude-code") -> dict:
+             handoff: bool = False, runner: str = "claude-code", model: str | None = None) -> dict:
+    from .setup.harnesses import get
+
+    harness = get(runner)
+    if harness is not None:
+        runner = harness.key
     started_at = datetime.now(timezone.utc).isoformat()
     resolved = resolve_scope(db_path=db_path, agent_id=agent_id, person_id=person_id,
                              project_scope=project_scope)
@@ -952,10 +1000,14 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
     records_path = hours / "hours.jsonl"
     if handoff:
         return _hand_off(kind, resolved=resolved, scope=scope, live=live, hours=hours,
-                         dry_run=dry_run, out=out)
+                         dry_run=dry_run, out=out, model=model)
     refusal = builtin_refusal(runner, kind)
     if refusal:
         return {"kind": kind, "id": "", "status": "failed", "reason": refusal}
+    if runner == "codex":
+        config_dir = str(Path(
+            config_dir or os.environ.get("CODEX_HOME") or Path.home() / ".codex"
+        ).expanduser().absolute())
     max_seconds, max_tokens, unbudgeted = budget(
         kind, max_minutes=max_minutes, max_tokens=max_tokens, max_seconds=max_seconds,
     )
@@ -966,30 +1018,41 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             return {"status": "failed", "reason": f"There is no memory store at {live}."}
         records = _records(records_path)
         since = since_for(kind, records)
-        model, why = hour_model(live, scope)
+        model, why = hour_model(live, scope, runner, model)
+        if runner == "codex" and not model:
+            return {"status": "failed", "reason": why}
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model or HOUR_MODEL,
                                                resolved.agent_id, records)
         skip = why or skip
-        claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
+        runner_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
         mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
-        if not claude_bin or not mnemos_bin:
-            return {"status": "failed", "reason": "The claude command wasn't found." if not claude_bin else "The mnemos command wasn't found."}
+        if not runner_bin or not mnemos_bin:
+            return {"status": "failed", "reason": f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not runner_bin else "The mnemos command wasn't found."}
         folder = hours / "dry-run"
         store = folder / "store.db" if store_copy else live
-        mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, claude_bin, mnemos_bin,
-                                                model or HOUR_MODEL)
+        try:
+            mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, runner_bin, mnemos_bin,
+                                                    model or HOUR_MODEL, runner, config_dir)
+        except (OSError, ValueError, RuntimeError) as exc:
+            return {"status": "failed", "reason": str(exc)}
         print(f"Dry run · {kind} hour · nothing will run", file=out)
         print(f"Model: {model or '(none: ' + why + ')'}", file=out)
         print(f"Store: {live} ({'a copy would be used' if store_copy else 'live'})", file=out)
         print(f"Since: {_minute(since)}", file=out)
         if skip:
             print("The hour would skip: " + skip, file=out)
-        for path in _studio_settings(studio_dir(resolved.agent_id)):
-            print(f"Set aside before the hour, into its folder: {path}", file=out)
+        if runner == "codex":
+            from .codex_dream import PREAMBLE
+
+            prompt = PREAMBLE + prompt
+        else:
+            for path in _studio_settings(studio_dir(resolved.agent_id)):
+                print(f"Set aside before the hour, into its folder: {path}", file=out)
         print("\n── prompt (stdin) ──\n" + prompt, file=out)
         print("\n── command ──\n" + shlex.join(cmd), file=out)
         print("\n── mcp.json ──\n" + json.dumps(mcp, indent=2), file=out)
-        print("\n── settings.json ──\n" + json.dumps(settings, indent=2), file=out)
+        settings_name = "model-catalog.json" if runner == "codex" else "settings.json"
+        print(f"\n── {settings_name} ──\n" + json.dumps(settings, indent=2), file=out)
         return {"dry_run": True, "kind": kind, "skip": skip, "prompt": prompt, "waiting": waiting}
 
     hour_id = _gen_ulid()
@@ -1037,11 +1100,14 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 if integrity != "ok":
                     record.update(status="failed", reason="The store copy failed its integrity check.")
                     return record
-            model, why = hour_model(store, scope)
+            model, why = hour_model(store, scope, runner, model)
             if not model:
-                record.update(status="skipped", reason=why)
+                record.update(status="failed" if runner == "codex" else "skipped", reason=why)
                 return record
             record["model"] = model
+            if runner == "codex":
+                record["runner"] = runner
+                record["model_verified"] = False
             prompt, waiting, skip, said = _prepare(kind, store, since, scope, model, resolved.agent_id, records)
             record["waiting"] = waiting
             if kind == "dream":
@@ -1049,27 +1115,35 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
             if skip:
                 record.update(status="skipped", reason=skip)
                 return record
-            claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
+            runner_bin = os.environ.get("MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN") or shutil.which("codex" if runner == "codex" else "claude")
             mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
-            if not claude_bin or not mnemos_bin:
-                record.update(status="failed", reason="The claude command wasn't found." if not claude_bin else "The mnemos command wasn't found.")
+            if not runner_bin or not mnemos_bin:
+                record.update(status="failed", reason=f"The {'codex' if runner == 'codex' else 'claude'} command wasn't found." if not runner_bin else "The mnemos command wasn't found.")
                 return record
             folder.mkdir(exist_ok=True)
-            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model)
+            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, runner_bin, mnemos_bin, model, runner, config_dir)
+            if runner == "codex":
+                from .codex_dream import PREAMBLE
+
+                prompt = PREAMBLE + prompt
             (folder / "prompt.md").write_text(prompt)
             (folder / "mcp.json").write_text(json.dumps(mcp, indent=2))
-            (folder / "settings.json").write_text(json.dumps(settings, indent=2))
+            (folder / ("model-catalog.json" if runner == "codex" else "settings.json")).write_text(json.dumps(settings, indent=2))
             studio = studio_dir(resolved.agent_id)
-            (studio / "worktrees").mkdir(parents=True, exist_ok=True)
-            # Nothing in the studio configures Claude Code for this hour, and
-            # the record says what was moved aside, one path at a time: a move
-            # that fails ends the hour before Claude starts.
-            for path in _set_aside(studio, folder):
-                record.setdefault("set_aside", []).append(path)
+            if runner != "codex":
+                (studio / "worktrees").mkdir(parents=True, exist_ok=True)
+                # Nothing an hour writes may configure Claude Code for its next run.
+                for path in _set_aside(studio, folder):
+                    record.setdefault("set_aside", []).append(path)
             env = dict(os.environ)
+            if runner == "codex":
+                # A CLI launched from an app/session must not inherit its tool bridge.
+                from .codex_dream import environment
+
+                env = environment(env)
             env["MNEMOS_HOUR_ID"] = hour_id
             if config_dir is not None:
-                env["CLAUDE_CONFIG_DIR"] = str(Path(config_dir).expanduser())
+                env["CODEX_HOME" if runner == "codex" else "CLAUDE_CONFIG_DIR"] = str(Path(config_dir).expanduser())
             # An hour is the agent living: the day counts on its own clock, in
             # the store the hour uses.
             try:
@@ -1080,7 +1154,8 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                     marker.close()
             except Exception:
                 pass
-            outcome, guarded = _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, model)
+            outcome, guarded = _watch(cmd, folder if runner == "codex" else studio, env, folder, prompt,
+                                      max_seconds, max_tokens, model, runner=runner)
             launched = True
             record.update(outcome)
             if guarded:

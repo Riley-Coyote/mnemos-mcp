@@ -17,6 +17,7 @@ here, so neither version is a second-class door.
 from __future__ import annotations
 
 from typing import Any
+from collections.abc import Mapping
 
 try:  # mcp 2.x
     from mcp.server.mcpserver import Context, MCPServer as Server
@@ -27,7 +28,7 @@ except ImportError:  # mcp 1.x
 
     MCP_MAJOR = 1
 
-__all__ = ["Context", "MCP_MAJOR", "Server", "client_name", "lowlevel_server", "make_server", "wire"]
+__all__ = ["Context", "MCP_MAJOR", "Server", "client_name", "lowlevel_server", "make_server", "wire", "request_meta"]
 
 
 def make_server(name: str, *, instructions: str, version: str) -> Server:
@@ -64,3 +65,14 @@ def client_name(ctx: Context | None) -> str:
         return str(getattr(info, "name", "") or "").strip()
     except Exception:
         return ""
+
+
+def request_meta(ctx: Context | None) -> dict[str, Any]:
+    """The inbound _meta map: a model on SDK 1, a mapping on SDK 2."""
+    try:
+        meta = ctx.request_context.meta
+        if isinstance(meta, Mapping):
+            return dict(meta)
+        return meta.model_dump(by_alias=True) if meta is not None else {}
+    except (AttributeError, ValueError):
+        return {}

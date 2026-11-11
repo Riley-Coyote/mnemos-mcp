@@ -193,6 +193,45 @@ def test_the_export_carries_the_minds_days(mind):
     assert life["memory"]["version"] == memories["version"]
 
 
+def test_codex_export_reads_completed_tool_calls_and_closing_words(mind):
+    ids = mind["ids"]
+    folder = Path.home() / ".mnemos" / "hours" / AGENT / HOUR
+    call = {
+        "id": "item-1", "type": "mcp_tool_call", "server": "mnemos",
+        "tool": "mnemos_recall", "arguments": {"query": ids[0]},
+        "result": {"content": [{"type": "text", "text": f"found [{ids[2]}]"}],
+                   "structured_content": {"memory": ids[1]}},
+        "error": None, "status": "completed",
+    }
+    events = [
+        {"type": "item.started", "item": {**call, "status": "in_progress", "result": None}},
+        {"type": "item.completed", "item": call},
+        {"type": "item.completed", "item": call},
+        {"type": "item.completed", "item": {
+            **call, "id": "failed", "status": "failed", "result": None,
+            "arguments": {"query": "engram_" + "0" * 26},
+            "error": {"message": "The tool call was denied."},
+        }},
+        {"type": "item.started", "item": {
+            **call, "id": "pending", "status": "in_progress", "result": None,
+            "arguments": {"query": "engram_" + "1" * 26},
+        }},
+        {"type": "item.completed", "item": None},
+        {"type": "item.completed", "item": {
+            "id": "final", "type": "agent_message", "text": "The dream checked its memory.",
+        }},
+        {"type": "turn.completed", "usage": {"input_tokens": 10, "output_tokens": 5}},
+    ]
+    (folder / "stream.jsonl").write_text("\n".join(json.dumps(event) for event in events))
+    before = digest(store_path())
+
+    [hour] = Exporter.for_scope(agent_id=AGENT).export()[0]["hours"]
+
+    assert hour["trail"] == {"woke": [], "waiting": [ids[0]], "reached": [ids[0], ids[2], ids[1]]}
+    assert hour["said"] == "The dream checked its memory."
+    assert digest(store_path()) == before
+
+
 def test_the_memories_version_changes_only_with_the_memories(mind):
     exporter = Exporter.for_scope(agent_id=AGENT)
     first = exporter.export()[1]["version"]
@@ -825,7 +864,7 @@ def test_inside_hermes_the_page_changes_nothing_that_is_claude_codes(mind, jev_u
     with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
         for request in ({"command": "hours", "on": True, "mine": "07:15"}, {"command": "hours", "on": False}):
             status, answer = post(server, request)
-            assert status == 400 and "Claude Code" in answer["error"], (request, answer)
+            assert status == 400 and "host" in answer["error"], (request, answer)
         for request in ({"command": "jev", "key": "ts_other_key"}, {"command": "jev", "on": True},
                         {"command": "jev", "on": False}, {"command": "jev", "remove_key": True}):
             status, answer = post(server, request)
@@ -1041,3 +1080,25 @@ def test_shared_acts_have_the_pages_guards_and_export_separate_rows(mind, monkey
         assert life["shared"]["rows"][0]["content"] == request["text"]
         assert life["shared"]["rows"][0]["person"]
         assert all(m["content"] != request["text"] for m in memories["memories"])
+
+
+def test_quiet_hour_settings_round_trip_runner_and_model_without_enabling(mind, monkeypatch):
+    from mnemos import cli
+    from mnemos.setup import state
+
+    def change(args):
+        state.record_hours_choice(args.agent_id, 'yes' if args.daemon_command == 'install' else 'no',
+                                  runner=args.runner, model=args.model)
+        print('Saved.')
+        return 0
+
+    monkeypatch.setattr(cli, '_cmd_daemon', change)
+    exporter = Exporter.for_scope(agent_id=AGENT)
+    with serving(exporter) as server:
+        status, reply = post(server, {'command': 'hours', 'on': False, 'runner': 'codex', 'model': 'user-model'})
+        assert status == 200 and reply['result'] == 'Saved.'
+        data = exporter.export()[0]
+        assert data['hourSettings'] == {'runner': 'codex', 'model': 'user-model'}
+        for request in ({'runner': 'unknown'}, {'runner': []}, {'model': ['bad']}, {'model': 'bad\nmodel'}):
+            status, reply = post(server, {'command': 'hours', 'on': True, **request})
+            assert status == 400 and 'error' in reply

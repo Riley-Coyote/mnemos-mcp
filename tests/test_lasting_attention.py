@@ -496,3 +496,24 @@ def test_code_older_than_the_store_promotes_nothing(tmp_path, monkeypatch):
     assert "Cycle: skipped" in said, said
     assert promotion == {"candidates": [], "promoted": 0}
     assert _pair_of(db, note) is None
+
+
+@pytest.mark.parametrize("origin", [{}, {"thread_id": "origin-thread-123", "project_id": "project-one"}])
+def test_promotion_keeps_the_notes_origin_not_the_maintainers(tmp_path, monkeypatch, origin):
+    from mnemos.attribution import bind_origin
+
+    db = tmp_path / "memory.db"
+    with bind_origin(origin):
+        note = _closed_with_synthesis(db, TIMETABLE)
+    _revised(db, note, TIMETABLE_REVISED)
+    for session in ("session-monday", "session-friday"):
+        _recalled(db, monkeypatch, note, session)
+    with bind_origin({"thread_id": "maintaining-thread-123", "project_id": "other-project"}):
+        _maintained(db)
+    memory = _pair_of(db, note)
+    assert memory
+    store = EngramStore(db)
+    try:
+        assert store.get_engram(memory).origin == origin
+    finally:
+        store.close()

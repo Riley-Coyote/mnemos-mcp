@@ -171,7 +171,7 @@ def test_connecting_codex_adds_the_server_the_wake_and_the_cue(agents, tmp_path,
     assert "--agent-id codex" in hooks["SessionStart"][0]["hooks"][0]["command"]
     assert "open /hooks" in text.lower() or "/hooks" in text
     assert "Upkeep between sessions is on" in text
-    assert "Quiet hours don't run by themselves for Codex" in text
+    assert "Codex can run a memory-only nightly dream" in text
     # And the status now says so, read from the machine.
     st = cn.status(hs.get("codex"), "codex", str(Path.home() / ".mnemos" / "codex.db"))
     assert (st.wake, st.cue) == ("set", "set")

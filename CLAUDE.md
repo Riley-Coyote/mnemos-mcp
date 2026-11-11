@@ -168,14 +168,24 @@ the CLI, and every serve mode route through `resolve_scope()` or
 Scope must never be inferred from ambient state such as the working directory;
 an MCP server's cwd belongs to whichever client spawned it.
 
+Entry provenance is separate from scope (`mnemos/attribution.py`). The simple
+MCP tools bind request metadata for one call: Codex's thread ID attributes
+writes and keeps parallel handoffs separate; its session-tree ID is retained
+as metadata. Explicit project/task labels are snapshotted at creation, not
+inferred from cwd or retroactively attached to existing entries. The
+`--codex-origin` option enables desktop assignment lookup in standard Codex
+hooks; `integrations/codex_origin.py` also supports custom hook commands.
+See `docs/guide.md`.
+
 Storage is local SQLite, one file per agent by default
 (`~/.mnemos/<agent>.db`). Nothing leaves the machine unless a provider is
 configured, or the quiet hours are on: then the agent thinks over its memory
-through the person's own Claude Code, or, for another agent, in its own session
+through the person's own Claude Code or Codex, or, for another agent, in its own session
 when an hour is handed to it (`mnemos life --handoff`) or its own cron wakes it
-(`mnemos connect hermes|openclaw --hours`). Mnemos runs a quiet hour only for
-Claude Code, walled in (`mnemos/life.py`); every other agent's flags failed or
-were not shown to wall a run in (`Runner` in `mnemos/setup/harnesses.py`)
+(`mnemos connect hermes|openclaw --hours`). Mnemos runs all three quiet hours
+with Claude Code and memory-only dreams with Codex (`mnemos/life.py`). Broader
+Codex hours remain handoffs; every other agent's flags failed or were not shown
+to wall a run in (`Runner` in `mnemos/setup/harnesses.py`)
 (`docs/privacy-security.md`, "Quiet Hours").
 
 ---

@@ -83,3 +83,90 @@ def test_a_client_wakes_saves_and_recalls_and_mnemos_knows_its_name(monkeypatch,
         assert runtime.client_name == "sdk-version-check"
     finally:
         runtime.close()
+
+
+def test_mcp_thread_metadata_keeps_parallel_handoffs_separate(monkeypatch, tmp_path):
+    """The wire ids, not agent-supplied arguments, separate two tasks."""
+    from mnemos import simple_mcp
+
+    runtime = MnemosRuntime(db_path=str(tmp_path / 'memory.db'), use_dedicated_model=False)
+    monkeypatch.setattr(simple_mcp, '_get_runtime', lambda: runtime)
+    first = '11111111-1111-7111-8111-111111111111'
+    second = '22222222-2222-7222-8222-222222222222'
+
+    async def session():
+        async with _client(simple_mcp.simple_mcp, 'codex') as client:
+            for thread, text in [(first, 'First task: fix parser'), (second, 'Second task: review storage')]:
+                result = await client.call_tool('mnemos_handoff', {'text': text}, meta={
+                    'threadId': thread, 'sessionId': first,
+                })
+                assert not _failed(result), _text(result)
+            result = await client.call_tool('mnemos_context', {}, meta={'threadId': first, 'sessionId': first})
+            return _text(result)
+
+    try:
+        packet = anyio.run(session)
+        notes = runtime._store.live_handoffs(**runtime._scope_args())
+        assert {note['author_session'] for note in notes} == {first, second}
+        assert packet.index('First task: fix parser') < packet.index('Second task: review storage')
+    finally:
+        runtime.close()
+
+
+def test_metadata_survives_a_real_server_restart_and_recall_from_another_task(tmp_path):
+    """Transport metadata must work across processes, with the shared scope unchanged."""
+    import os
+    import sys
+    from mcp.client.session import ClientSession
+    from mcp.client.stdio import StdioServerParameters, stdio_client
+
+    path = tmp_path / 'served.db'
+    first = '11111111-1111-7111-8111-111111111111'
+    second = '22222222-2222-7222-8222-222222222222'
+    args = ['-m', 'mnemos.cli', 'serve', '--mode', 'simple', '--db-path', str(path),
+            '--agent-id', 'probe', '--person-id', 'person', '--project-scope', 'global']
+
+    async def run(write):
+        params = StdioServerParameters(command=sys.executable, args=args, env=dict(os.environ))
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as client:
+                await client.initialize()
+                schemas = await client.list_tools()
+                assert all('ctx' not in tool.model_dump(by_alias=True)['inputSchema'].get('properties', {}) for tool in schemas.tools)
+                if write:
+                    result = await client.call_tool('mnemos_capture', {'content': 'The copper lantern inspection passed.'}, meta={
+                        'threadId': first, 'sessionId': first,
+                        'mnemos/origin': {'project_id': 'project-one', 'project_name': 'Mnemos', 'thread_title': 'Inspection'},
+                    })
+                else:
+                    result = await client.call_tool('mnemos_recall', {'query': 'copper lantern inspection'}, meta={
+                        'threadId': second, 'sessionId': second,
+                    })
+                assert not _failed(result), _text(result)
+                return _text(result)
+
+    assert 'Captured continuity.' in anyio.run(run, True)
+    found = anyio.run(run, False)
+    assert 'The copper lantern inspection passed.' in found
+    assert 'project=Mnemos (project-one)' in found
+    assert f'task=Inspection ({first})' in found
+
+
+def test_missing_or_malformed_metadata_never_inherits_previous_task(monkeypatch, tmp_path):
+    from mnemos import simple_mcp
+    runtime = MnemosRuntime(db_path=str(tmp_path / 'memory.db'), use_dedicated_model=False)
+    monkeypatch.setattr(simple_mcp, '_get_runtime', lambda: runtime)
+    thread = '11111111-1111-7111-8111-111111111111'
+    async def session():
+        async with _client(simple_mcp.simple_mcp, 'codex') as client:
+            await client.call_tool('mnemos_introduce', {'agent_model': 'gpt-6.1-sol'}, meta={'threadId': thread})
+            for meta in ({'threadId': thread}, None, {'threadId': ['not', 'an', 'id']}, {'threadId': 'bad'}):
+                result = await client.call_tool('mnemos_journal', {'text': 'A separate observation.'}, meta=meta)
+                assert not _failed(result), _text(result)
+    try:
+        anyio.run(session)
+        rows = runtime._store.journal_entries(**runtime._scope_args())
+        assert [row['session_id'] for row in rows] == ['', '', '', thread]
+        assert [row['model_id'] for row in rows] == ['', '', '', 'gpt-6.1-sol']
+    finally:
+        runtime.close()

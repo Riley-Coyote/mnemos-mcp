@@ -178,15 +178,30 @@ def hour_jobs(
     mine_at: tuple[int, int] | None = None,
     ours_at: tuple[int, int] | None = None,
     dream_at: tuple[int, int] | None = None,
+    runner: str = "claude-code", model: str | None = None,
 ) -> list[SchedulerJob]:
     """The quiet hours, at the given times or their own (08:00, 19:00, and
     03:30 for the dream, after the deep upkeep)."""
     mine, ours, dream = HOUR_JOBS
-    return [
+    jobs = [
         replace(mine, daily_at=mine_at or mine.daily_at),
         replace(ours, daily_at=ours_at or ours.daily_at),
         replace(dream, daily_at=dream_at or dream.daily_at),
     ]
+    if runner == "codex":
+        jobs = [jobs[2]]
+    if runner != "claude-code" or model:
+        extra = ("--runner", runner) + (("--model", model) if model else ())
+        jobs = [replace(job, args=job.args + extra) for job in jobs]
+    return jobs
+
+
+def _find_cli(command: str, setting: str) -> str | None:
+    found = os.environ.get(setting, "").strip() or shutil.which(command)
+    if not found:
+        return None
+    path = os.path.abspath(os.path.expanduser(found))
+    return path if os.path.isfile(path) and os.access(path, os.X_OK) else None
 
 
 def find_claude() -> str | None:
@@ -198,39 +213,37 @@ def find_claude() -> str | None:
     followed through its links: Claude Code updates itself by moving the link,
     and a job pinned to the version behind it breaks once that version goes.
     """
-    named = os.environ.get("MNEMOS_CLAUDE_BIN", "").strip()
-    found = named or shutil.which("claude")
-    if not found:
-        return None
-    path = os.path.abspath(os.path.expanduser(found))
-    if not (os.path.isfile(path) and os.access(path, os.X_OK)):
-        return None
-    return path
+    return _find_cli("claude", "MNEMOS_CLAUDE_BIN")
 
 
-# What a job's PATH holds besides the claude command's own folder: launchd
-# starts a job with /usr/bin:/bin:/usr/sbin:/sbin, where a claude installed
-# by Claude Code's installer, Homebrew or npm is not.
+def find_codex() -> str | None:
+    """Resolve the chosen Codex executable without pinning its symlink target."""
+    return _find_cli("codex", "MNEMOS_CODEX_BIN")
+
+
+# launchd's default PATH omits many CLI installations; include the selected
+# executable's directory without pinning its symlink target.
 _SYSTEM_PATH = ("/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 
 def hour_environment(
     *, claude_bin: str, mnemos_command: str, config_dir: str | None = None,
+    runner: str = "claude-code",
 ) -> dict[str, str]:
     """What a quiet hour needs from its environment when no shell made it:
-    a PATH holding the folder the claude command is in (an npm claude needs
+    a PATH holding the selected CLI's folder (an npm installation needs
     the node beside it), and both commands' absolute paths, which the runner
-    reads before any PATH lookup (``MNEMOS_CLAUDE_BIN``,
-    ``MNEMOS_LIFE_MNEMOS_BIN``). ``config_dir`` is the Claude login the hours
-    use (``CLAUDE_CONFIG_DIR``), when the person set one."""
+    reads before any PATH lookup (``MNEMOS_CLAUDE_BIN`` or ``MNEMOS_CODEX_BIN``,
+    and ``MNEMOS_LIFE_MNEMOS_BIN``). ``config_dir`` selects the login through
+    ``CLAUDE_CONFIG_DIR`` or ``CODEX_HOME``, when the person set one."""
     folders = dict.fromkeys([str(Path(claude_bin).parent), *_SYSTEM_PATH])
     environment = {
         "PATH": os.pathsep.join(folders),
-        "MNEMOS_CLAUDE_BIN": claude_bin,
+        "MNEMOS_CODEX_BIN" if runner == "codex" else "MNEMOS_CLAUDE_BIN": claude_bin,
         "MNEMOS_LIFE_MNEMOS_BIN": mnemos_command,
     }
     if config_dir:
-        environment["CLAUDE_CONFIG_DIR"] = os.path.abspath(os.path.expanduser(config_dir))
+        environment["CODEX_HOME" if runner == "codex" else "CLAUDE_CONFIG_DIR"] = os.path.abspath(os.path.expanduser(config_dir))
     return environment
 
 

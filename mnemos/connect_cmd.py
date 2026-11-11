@@ -410,6 +410,9 @@ def _hours_gaps(h: hs.Harness) -> list[str]:
                if h.key == "hermes" else "")
         ]
     why = h.hours.runner.why if h.hours.runner else ""
+    if h.key == "codex":
+        return ["Codex can run a memory-only nightly dream: mnemos daemon install --hours --runner codex --write. "
+                "It uses your Codex account and sends the dream's context to OpenAI. The other hours use --handoff."]
     return [
         f"Quiet hours don't run by themselves for {h.label}: it has no scheduler Mnemos uses, and "
         f"Mnemos runs no hour of its own for it ({why}). An hour can be handed to it in a session "
