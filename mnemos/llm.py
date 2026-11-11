@@ -344,6 +344,44 @@ def host_secrets_active() -> bool:
     return _host_secrets is not None
 
 
+# The key each provider is reached with.
+_PROVIDER_KEYS = {
+    "openai": "OPENAI_API_KEY",
+    "openrouter": "OPENROUTER_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+}
+
+
+def host_settings_for_upkeep() -> dict[str, str]:
+    """What the background upkeep process reads from the host, read here, in
+    the scope of the profile that is speaking: Mnemos's provider and model, the
+    key of the provider chosen and no other, meaning search's provider, and
+    Gemini's key only when meaning search uses Gemini. Empty without a host.
+
+    The process runs beyond the host's get_secret, so it is handed these and
+    nothing else of the host's (Hermes's review of 0.6.6: it was handed the
+    whole environment, every provider's key in it, and a gateway's second
+    profile ran upkeep on the first profile's choices)."""
+    if _host_secrets is None:
+        return {}
+    from .store.embedding_index import GEMINI, PROVIDER_SETTING, embedding_choice
+
+    settings: dict[str, str] = {}
+    for name in ("MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", PROVIDER_SETTING):
+        value = _load_env_key(name)
+        if value:
+            settings[name] = value
+    key_name = _PROVIDER_KEYS.get(chosen_provider())
+    key = _load_env_key(key_name) if key_name else ""
+    if key:
+        settings[key_name] = key
+    if embedding_choice()["provider"] == GEMINI:
+        gemini = _load_env_key("GEMINI_API_KEY")
+        if gemini:
+            settings["GEMINI_API_KEY"] = gemini
+    return settings
+
+
 def _dotenv_disabled() -> bool:
     if _host_secrets is not None:
         return True

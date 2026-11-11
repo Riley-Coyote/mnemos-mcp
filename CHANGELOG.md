@@ -9,6 +9,22 @@
   context; existing entries keep unknown origins. Standard installed Codex hooks
   resolve desktop project assignments locally; a helper supports custom commands.
 
+## 0.6.7 (2026-11-11)
+
+What Hermes's review of 0.6.6 asked for, before its catalog lists Mnemos. Sessions keep the code they
+started with, so restart them after updating.
+
+- **Inside Hermes, the upkeep process gets only what it needs.** It was handed Hermes's whole
+  environment, every provider's key in it, and when one gateway served several profiles, a second
+  profile's upkeep ran on the first profile's provider and keys. Now the provider reads, through
+  `get_secret` and for the profile that is speaking, Mnemos's provider and model, the chosen
+  provider's key and no other, and Gemini's key only when meaning search uses Gemini, and hands the
+  process those, with what any process needs (where programs and home are, the language, a folder
+  for temporary files, proxies) and Mnemos's own settings, never a key.
+- **Hermes's memory-context tags are stripped in linear time.** The old pattern was quadratic on a
+  message with many `<` (4.6 s at 51 KB); it now matches Hermes's own bounded shape.
+- **The Hermes plugin needs 0.6.7** (`mnemos-continuity>=0.6.7,<0.7`), so what the catalog reviewed
+  and what Hermes installs stay close.
 
 ## 0.6.6 (2026-11-08)
 
