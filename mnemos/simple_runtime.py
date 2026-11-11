@@ -468,6 +468,44 @@ def _maintenance_stopped(failure: str) -> str:
 # too, it reads them from the environment it was given and from no file.
 _SECRETS_FROM_HOST_ENV = "MNEMOS_SECRETS_FROM_HOST"
 
+# What any process needs from the environment, for upkeep's process inside a
+# host: where programs and home are, the language and time zone, somewhere for
+# temporary files, the way to the network (proxies, certificates), where models
+# are cached, and on Windows what Python itself needs. No key.
+_UPKEEP_PASSES_ON = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "TMPDIR", "TEMP", "TMP", "LANG", "LANGUAGE", "TZ",
+    "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "https_proxy", "http_proxy", "no_proxy",
+    "SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE",
+    "PYTHONHOME", "PYTHONUTF8", "PYTHONIOENCODING",
+    "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+    "HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE", "TRANSFORMERS_CACHE", "SENTENCE_TRANSFORMERS_HOME",
+    "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT",
+    "USERPROFILE", "HOMEDRIVE", "HOMEPATH", "APPDATA", "LOCALAPPDATA",
+})
+# Mnemos's settings the host hands out: upkeep's process gets them as the
+# profile's get_secret answers, never as the environment says.
+_FROM_THE_HOST = frozenset({"MNEMOS_LLM_PROVIDER", "MNEMOS_MODEL", "MNEMOS_EMBEDDING_PROVIDER"})
+_SECRET_WORDS = ("KEY", "TOKEN", "SECRET", "PASSWORD")
+
+
+def _upkeep_env() -> dict[str, str]:
+    """The environment of upkeep's process inside a host (Hermes): what any
+    process needs, Mnemos's own settings (paths, ids, models, never a key), and
+    the settings and keys of the profile that is speaking, read here through
+    the host. Not the rest of the host's environment, which holds every
+    provider's keys and the choices of the profile it was started with."""
+    from .llm import host_settings_for_upkeep
+
+    env = {
+        name: value for name, value in os.environ.items()
+        if name in _UPKEEP_PASSES_ON or name.startswith("LC_")
+        or (name.startswith("MNEMOS_") and name not in _FROM_THE_HOST
+            and not any(word in name for word in _SECRET_WORDS))
+    }
+    env.update(host_settings_for_upkeep())
+    env[_SECRETS_FROM_HOST_ENV] = "1"
+    return env
+
 
 def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = True) -> bool:
     """Start ``scope``'s maintenance in a process of its own, detached, so it
@@ -496,7 +534,7 @@ def _spawn_upkeep(scope: MnemosScope, token: str, *, dedicated_model: bool = Tru
     from .llm import host_secrets_active
 
     if host_secrets_active():
-        options["env"] = {**os.environ, _SECRETS_FROM_HOST_ENV: "1"}
+        options["env"] = _upkeep_env()
     if os.name == "nt":
         options["creationflags"] = (
             getattr(subprocess, "DETACHED_PROCESS", 0)

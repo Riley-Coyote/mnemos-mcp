@@ -59,7 +59,11 @@ except ImportError:  # pragma: no cover - Windows only
 
 logger = logging.getLogger(__name__)
 
-_CONTEXT_TAG_RE = re.compile(r"<[^>]*memory-context[^>]*>[\s\S]*?</[^>]*memory-context>", re.IGNORECASE)
+# Hermes's own bounded shape for the tags: the old pattern was quadratic on a
+# message with many "<" (4.6 s at 51 KB, in Hermes's review of 0.6.6).
+_CONTEXT_TAG_RE = re.compile(
+    r"<\s*memory-context\s*>[\s\S]*?<\s*/\s*memory-context\s*>", re.IGNORECASE
+)
 # The headings the provider opens what it adds with, alone on a line, and those it used
 # to. Words about recall, the agent's or the person's, are theirs.
 _MNEMOS_CONTEXT_RE = re.compile(
