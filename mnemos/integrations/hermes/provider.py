@@ -862,11 +862,12 @@ class MnemosMemoryProviderCore:
         if cached and cached[0] == clean and revision is not None and cached[1] == revision:
             self._last_recalled = cached[3]
             return cached[2]
-        # What comes up by itself is a use of it, in a conversation. In a run
-        # nobody is in it is only read: nothing strengthened, linked or woken.
-        recalled = self._runtime._recall_own(
-            clean, max_results=self._config.max_recall_results, reinforce=self._writes_enabled,
-        )
+        # What comes up by itself is a use of it, in a conversation, and noted
+        # as the cue (its ids), so the notebook's mind lights with it. In a run
+        # nobody is in it is only read: nothing strengthened, linked, woken or
+        # noted.
+        recall = self._runtime._recall_cued if self._writes_enabled else self._runtime._recall_own
+        recalled = recall(clean, max_results=self._config.max_recall_results, reinforce=self._writes_enabled)
         if recalled.startswith("No relevant continuity found"):
             return ""
         # Recall heads its answer with the query it was asked. Here that is the

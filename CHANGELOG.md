@@ -89,6 +89,11 @@ release before it, run both ways, found nothing else.
 
 ### Inside Hermes: the rest
 
+- **The notebook's mind lights on every message, inside Hermes.** The page lights the memories
+  that come to mind as they come, and in Hermes what came up with a message left nothing for it
+  to read. Now a conversation notes which memories came up, by their ids and none of the
+  message's words. A scheduled run still notes nothing, and a message doesn't count the day as
+  one the agent lived.
 - **The agent has its quiet hours again, inside Hermes.** A twelfth tool, `mnemos_hour`, hands it
   the hour `mnemos life --hour <kind> --handoff` hands any agent (its own, the day's work, or a
   dream), from the same code: the same words and material, read from the profile's own memory

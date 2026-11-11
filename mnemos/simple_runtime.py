@@ -4612,8 +4612,9 @@ class MnemosRuntime:
                 written_ids=trace["written"],
             )
             # A tool call is the agent living, and the day counts on its own
-            # clock (see consolidation/lived.py). Maintenance is not.
-            if self._marks_lived and tool != "maintain":
+            # clock (see consolidation/lived.py). Maintenance is not, and
+            # neither is a message arriving (the cue).
+            if self._marks_lived and tool not in ("maintain", "cue"):
                 self._store.mark_lived(self.scope.agent_id)
         except Exception:
             pass
@@ -5787,6 +5788,17 @@ class MnemosRuntime:
         own = self._recall_own(query, max_results, include_archived, standing)
         shared = shared_memory.recall(query, agent_id=self.scope.agent_id, session=harness_session())
         return own + "\n\n" + shared if shared else own
+
+    @_traced("cue")
+    def _recall_cued(
+        self, query: str, max_results: int = RECALL_RESULTS, reinforce: bool = True,
+    ) -> str:
+        """What a host brings up by itself with a person's message
+        (``_recall_own``), noted as the cue: one ``memory_trace`` row with the
+        ids it brought and none of the message's words, so the notebook's mind
+        lights as it comes. Only in a conversation: a run nobody is in calls
+        ``_recall_own`` itself, a look that leaves nothing."""
+        return self._recall_own(query, max_results=max_results, reinforce=reinforce)
 
     def _recall_own(
         self,

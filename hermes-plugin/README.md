@@ -37,7 +37,8 @@ agent keeps its memory and its settings.
 - **What comes to mind.** With each message, up to four memories that came up by
   themselves, by the words they share with the message (searching by meaning is a
   choice, below). A long message is looked up by its start and its end. When some came
-  up, Hermes says so in a line of its own.
+  up, Hermes says so in a line of its own. Mnemos notes which ones came up, by their ids and
+  none of the message's words, so the page's mind lights with each message.
 - **Twelve tools** to keep the memory itself: `mnemos_capture`, `mnemos_recall`,
   `mnemos_correct`, `mnemos_handoff`, `mnemos_journal`, `mnemos_note`, `mnemos_reflect`,
   `mnemos_introduce`, `mnemos_maintain`, `mnemos_health`, `mnemos_page`, and

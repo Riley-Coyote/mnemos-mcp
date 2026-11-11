@@ -810,8 +810,9 @@ class Exporter:
 # ── What came to mind just now ──
 
 # What each kind of call did to the memories it names: a recall brings them back, a wake is the briefing, a reflection
-# answers what the memory asked; a capture or a correction keeps one.
-PULSE_READ = {"recall": "recall", "context": "wake", "reflect": "reflect"}
+# answers what the memory asked, a cue is what came up by itself with a message (Hermes notes it as a call); a capture
+# or a correction keeps one.
+PULSE_READ = {"recall": "recall", "context": "wake", "reflect": "reflect", "cue": "cue"}
 PULSE_WRITTEN = {"capture": "kept", "correct": "kept"}
 PULSE_MOST = 120
 
