@@ -342,7 +342,7 @@ def main(argv: list[str] | None = None) -> int:
     p_life.add_argument("--dry-run", action="store_true",
                         help="Print what would be gathered and run, and run nothing")
     p_life.add_argument("--config-dir",
-                        help="Which Claude login pays, e.g. ~/.claude-2 (sets CLAUDE_CONFIG_DIR for the hour)")
+                        help="Login directory: CLAUDE_CONFIG_DIR for Claude, CODEX_HOME for Codex")
     p_life.add_argument("--store-copy", action="store_true",
                         help="Run the hour on a copy of the store; the live store is not touched")
     p_life.add_argument("--max-minutes", type=float)
@@ -351,8 +351,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="Print the hour's prompt for the agent to take in its own session, "
                              "run nothing, and record the hour. Needs no claude; works for any agent")
     p_life.add_argument("--runner", default="claude-code", metavar="AGENT",
-                        help="Whose command runs the hour built in. Only claude-code does; "
-                             "any other agent has the hour handed to it (--handoff)")
+                        help="Runner: claude-code for all hours, codex for dreams; other agents use --handoff")
+    p_life.add_argument("--model", help="Model for this run (otherwise MNEMOS_HOUR_MODEL or the memory’s resident)")
 
     # ── notes ──
     p_notes = sub.add_parser(
@@ -885,14 +885,16 @@ def main(argv: list[str] | None = None) -> int:
                 help="Apply the change instead of printing what it would do",
             )
         if _name == "install":
+            _p.add_argument("--runner", choices=("claude-code", "codex"), default=None,
+                            help="Quiet-hour CLI (Codex schedules only the dream)")
+            _p.add_argument("--model", default=None, help="Quiet-hour model (otherwise the memory’s resident)")
             _p.add_argument(
                 "--hours",
                 action="store_true",
                 help=(
                     "Also schedule the quiet hours: an hour a day that's the agent's "
                     "own, half an hour for the day's work, and a short time each night "
-                    "to dream over its memory. They run Claude on its own and use your "
-                    "Claude plan."
+                    "to dream over its memory. Choose the CLI with --runner; Codex supports dreams only."
                 ),
             )
             _p.add_argument(
@@ -1289,6 +1291,8 @@ def _scope_args(args: argparse.Namespace) -> tuple[str, ...]:
 def _cmd_daemon(args: argparse.Namespace) -> int:
     """Schedule upkeep, and with ``--hours`` the quiet hours, with whatever
     scheduler the host provides."""
+    from .setup import scheduler
+
     command = getattr(args, "daemon_command", None)
     if command not in {"install", "status", "uninstall"}:
         print("Usage: mnemos daemon {install|status|uninstall}", file=sys.stderr)
@@ -1320,8 +1324,40 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     if command == "status":
         return _daemon_status(blueprint)
     if command == "uninstall":
+        blueprint["hours"] = scheduler.plan(
+            agent_id=blueprint["agent_id"], mnemos_command=_mnemos_command(), backend=backend)["hours"]
         return _daemon_uninstall(blueprint, write=args.write, only_hours=hours)
+    if hours and args.write and blueprint.get("runner") == "codex":
+        if not _codex_hours_ready(blueprint, _cli_scope(args)):
+            return 1
     return _daemon_install(blueprint, write=args.write, hours=hours)
+
+
+def _codex_hours_ready(blueprint: dict, scope) -> bool:
+    """Check Codex's selected model and policy before scheduling a dream."""
+    from . import codex_dream, life
+
+    environment = blueprint.get("hour_env")
+    if not environment:
+        print("Codex dreams are not ready: the codex command was not found.", file=sys.stderr)
+        return False
+    model = blueprint.get("model")
+    store = Path(scope.db_path).expanduser()
+    try:
+        if not model and store.exists():
+            model, _ = life.hour_model(store, {
+                "agent_id": scope.agent_id, "person_id": scope.person_id,
+                "project_scope": scope.project_scope}, runner="codex")
+        if not model:
+            print("Choose a Codex model with --model, MNEMOS_HOUR_MODEL, or Quiet hours settings.", file=sys.stderr)
+            return False
+        config_dir = environment.get("CODEX_HOME")
+        codex_dream.model_catalog(model, config_dir)
+        codex_dream.isolation(environment["MNEMOS_CODEX_BIN"], config_dir)
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"Codex dreams are not ready: {exc}", file=sys.stderr)
+        return False
+    return True
 
 
 def _blueprint(
@@ -1334,38 +1370,46 @@ def _blueprint(
 ) -> dict:
     """What would be scheduled for this command's scope (``scheduler.plan``).
 
-    With ``hours``, the quiet hours' environment is found now, the claude
-    command and the Claude login, because a job started in the background
-    finds neither. Without a claude command they can't be scheduled
-    (``hours_ready`` is false)."""
+    With ``hours``, the selected CLI and login are found now, because a job
+    started in the background finds neither. Without that CLI they can't be
+    scheduled (``hours_ready`` is false)."""
     from .setup import scheduler
 
     scope = _cli_scope(args)
     mnemos_command = _mnemos_command()
+    selected = _state.hour_settings(scope.agent_id)
+    runner = getattr(args, "runner", None) or selected["runner"]
+    model = getattr(args, "model", None)
+    if model is None:
+        model = selected["model"] if runner == selected["runner"] else ""
+    model = model or os.environ.get("MNEMOS_HOUR_MODEL") or None
     hour_env = None
     if hours:
-        claude = scheduler.find_claude()
-        if claude:
+        runner_bin = scheduler.find_codex() if runner == "codex" else scheduler.find_claude()
+        if runner_bin:
             hour_env = scheduler.hour_environment(
-                claude_bin=claude,
+                claude_bin=runner_bin,
                 mnemos_command=mnemos_command,
-                config_dir=os.environ.get("CLAUDE_CONFIG_DIR") or None,
+                config_dir=os.environ.get("CODEX_HOME" if runner == "codex" else "CLAUDE_CONFIG_DIR") or None,
+                runner=runner,
             )
-    return scheduler.plan(
+    blueprint = scheduler.plan(
         agent_id=scope.agent_id,
         mnemos_command=mnemos_command,
         scope_args=_scope_args(args),
-        hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at, dream_at=dream_at),
+        hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at, dream_at=dream_at, runner=runner, model=model),
         hour_env=hour_env,
     )
+    blueprint.update(runner=runner, model=model, hour_env=hour_env)
+    return blueprint
 
 
 # What the quiet hours are, said wherever they're offered or scheduled: what
-# they cost the person, up to an hour and a half a day of Claude on their plan.
+# they cost the person and which runner supports them.
 QUIET_HOURS = (
     "up to an hour a day that's its own, half an hour for the day's work, and a "
-    "short time each night to dream over its memory; they run Claude on its own "
-    "and use your Claude plan"
+    "short time each night to dream over its memory; Claude Code runs all three "
+    "on your Claude account, or choose Codex for the dream on your Codex account"
 )
 QUIET_HOURS_QUESTION = f"Quiet hours give the agent {QUIET_HOURS}. Turn them on? [Y/n] "
 _HOURS_ON = "mnemos daemon install --hours --write"
@@ -1392,7 +1436,7 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
     entries = list(blueprint["entries"])
-    no_claude = hours and not blueprint["hours_ready"]
+    runner_missing = hours and not blueprint["hours_ready"]
 
     print(f"Scheduler:   {backend}")
     print(f"Agent:       {agent_id}")
@@ -1404,10 +1448,12 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
             f"\n  {job.name} — skipped: needs a model provider "
             f"(set MNEMOS_LLM_PROVIDER and a key, then reinstall)"
         )
-    if no_claude:
-        print(f"\n  The quiet hours are not scheduled: {_NO_CLAUDE}.")
+    if runner_missing:
+        reason = "the codex command was not found" if blueprint.get("runner") == "codex" else _NO_CLAUDE
+        print(f"\n  The quiet hours are not scheduled: {reason}.")
     elif hours:
-        print(f"\n  Quiet hours give the agent {QUIET_HOURS}.")
+        print("\n  Codex runs the nightly dream on your Codex account." if blueprint.get("runner") == "codex"
+              else f"\n  Quiet hours give the agent {QUIET_HOURS}.")
         for entry in blueprint["hours"]:
             _print_job(entry)
         entries += blueprint["hours"]
@@ -1427,21 +1473,29 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
 
     if not write:
         print("\nThis is a preview. Re-run with --write to schedule these jobs.")
-        return 1 if no_claude else 0
+        return 1 if runner_missing else 0
+
+    if runner_missing and blueprint.get("runner") == "codex":
+        return 1
 
     try:
+        if hours and blueprint.get("runner") == "codex":
+            all_hours = _scheduler.plan(
+                agent_id=agent_id, mnemos_command=_mnemos_command(), backend=backend)["hours"]
+            blueprint["obsolete_hours"] = [e for e in all_hours if e["job"].name != "hour-dream"]
         _apply_schedule(blueprint, entries, retired)
     except (OSError, RuntimeError) as exc:
         print(f"Failed to activate background maintenance: {exc}", file=sys.stderr)
         return 1
-    if hours and not no_claude:
-        _state.record_hours_choice(agent_id, "yes")
+    if hours and not runner_missing:
+        _state.record_hours_choice(agent_id, "yes", runner=blueprint.get("runner", "claude-code"),
+                                   model=blueprint.get("model"))
 
     print(f"\nScheduled {len(entries)} job(s). Background maintenance is active.")
     if retired:
         print(f"Removed {len(retired)} job(s) an earlier install scheduled.")
     print("Check them any time with: mnemos daemon status")
-    return 1 if no_claude else 0
+    return 1 if runner_missing else 0
 
 
 def _apply_schedule(blueprint: dict, entries: list[dict], retired: list[dict]) -> None:
@@ -1456,7 +1510,7 @@ def _apply_schedule(blueprint: dict, entries: list[dict], retired: list[dict]) -
     # The logs' folder, and so ~/.mnemos, the folder every job runs in: it
     # has to be there before any job starts.
     secure_directory(Path.home() / ".mnemos" / "logs", force=True)
-    _remove_retired(backend, retired)
+    _remove_retired(backend, [*retired, *blueprint.get("obsolete_hours", [])])
     if backend == "launchd":
         for entry in entries:
             path = entry["path"]
@@ -1476,6 +1530,7 @@ def _apply_schedule(blueprint: dict, entries: list[dict], retired: list[dict]) -
     else:
         names = [entry["job"].name for entry in entries]
         names += [job.name for job in scheduler.RETIRED_JOBS]
+        names += [e["job"].name for e in blueprint.get("obsolete_hours", [])]
         merged = scheduler.merge_cron_lines(
             scheduler.read_crontab(), [entry["line"] for entry in entries],
             blueprint["agent_id"], replacing=names,
@@ -1592,7 +1647,8 @@ def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False)
         found += scheduler.retired_installed(blueprint, crontab)
 
     if only_hours and write:
-        _state.record_hours_choice(agent_id, "no")
+        _state.record_hours_choice(agent_id, "no", runner=blueprint.get("runner", "claude-code"),
+                                   model=blueprint.get("model"))
     if not found:
         if only_hours:
             print("The quiet hours aren't scheduled.")
@@ -1717,17 +1773,19 @@ def _quiet_hours_setup(blueprint: dict, scope) -> bool:
     the first session doesn't ask again. Without a terminal nothing is asked
     or scheduled: the question goes to whoever ran setup (an agent, mostly),
     with the command for each answer, and unanswered the agent asks in its
-    first session. Without a claude command they can't be scheduled, and that
+    first session. Without the selected CLI they can't be scheduled, and that
     is said. Returns whether scheduling them failed."""
     from .setup import scheduler
 
     agent_id = blueprint["agent_id"]
+    codex = blueprint.get("runner") == "codex"
     crontab = _read_crontab_safe() if blueprint["backend"] == "crontab" else ""
     if scheduler.installed(blueprint, blueprint["hours"], crontab):
         print(f"Quiet hours: on. Turn them off: {_HOURS_OFF}")
         return False
     if not blueprint["hours_ready"]:
-        print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {_HOURS_ON}")
+        reason = "the codex command was not found" if codex else _NO_CLAUDE
+        print(f"Quiet hours: off, because {reason}. Once it's there: {_HOURS_ON}")
         return False
     if not _can_ask():
         if _state.hours_choice(agent_id) == "no":
@@ -1758,20 +1816,29 @@ def _quiet_hours_setup(blueprint: dict, scope) -> bool:
         _state.record_hours_choice(agent_id, "no")
         print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
         return False
+    if codex and not _codex_hours_ready(blueprint, scope):
+        return True
     try:
         _apply_schedule(blueprint, blueprint["hours"], [])
     except (OSError, RuntimeError) as exc:
         print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
         return True
-    _state.record_hours_choice(agent_id, "yes")
-    mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
-    print(
-        f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
-        f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
-        f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
-    )
-    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
-          "--dream-at HH:MM --write")
+    _state.record_hours_choice(agent_id, "yes", runner=blueprint.get("runner", "claude-code"),
+                               model=blueprint.get("model"))
+    if codex:
+        dream = blueprint["hours"][0]["job"].daily_at
+        print(f"Quiet hours are on: its Codex dream daily at {dream[0]:02d}:{dream[1]:02d} "
+              "(skipped when nothing waits).")
+        print("  Other times: mnemos daemon install --hours --dream-at HH:MM --write")
+    else:
+        mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
+        print(
+            f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
+            f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
+            f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
+        )
+        print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
+              "--dream-at HH:MM --write")
     print(f"  Turn them off: {_HOURS_OFF}")
     return False
 
@@ -2821,7 +2888,7 @@ def _cmd_life(args: argparse.Namespace) -> int:
     record = life.run_hour(
         args.hour, **scope_args, dry_run=args.dry_run, config_dir=args.config_dir,
         store_copy=args.store_copy, max_minutes=args.max_minutes, max_tokens=args.max_tokens,
-        handoff=args.handoff, runner=args.runner,
+        handoff=args.handoff, runner=args.runner, model=getattr(args, "model", None),
     )
     if record.get("status") == "failed" and (args.dry_run or not record.get("id")):
         print(record["reason"], file=sys.stderr)

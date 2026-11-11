@@ -323,7 +323,7 @@ def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd,
     # on the person's own plan.
     assert ("up to an hour a day that's its own, half an hour for the day's work, and a short "
             "time each night to dream over its memory") in asked[0]
-    assert "they run Claude on its own and use your Claude plan" in asked[0]
+    assert "choose Codex for the dream on your Codex account" in asked[0]
     assert asked[0].endswith("[Y/n] ")
     assert launchd.loaded == LABELS | HOURS
 
@@ -417,7 +417,7 @@ def test_daemon_install_hours_previews_then_schedules(launchd, claude, capsys):
     assert not _agents().exists() and launchd.calls == []
     assert "hour-mine — The agent's own hour" in preview
     assert f"env:      MNEMOS_CLAUDE_BIN={claude}" in preview
-    assert "they run Claude on its own and use your Claude plan" in preview
+    assert "choose Codex for the dream on your Codex account" in preview
 
     assert main(["daemon", "install", *SCOPE, "--hours", "--mine-at", "07:30",
                  "--ours-at", "21:15", "--write"]) == 0
@@ -575,3 +575,115 @@ def test_mnemos_log_sees_the_hours_setup_schedules(monkeypatch, os_scheduler, cl
         ("mine", {"Hour": 7, "Minute": 30}, True),
         ("ours", {"Hour": 19, "Minute": 0}, True),
     ]
+
+
+@pytest.fixture
+def codex(claude, monkeypatch):
+    """A discoverable Codex CLI whose native readiness checks are recorded."""
+    from mnemos import codex_dream
+
+    binary = claude.with_name("codex")
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    monkeypatch.delenv("MNEMOS_CODEX_BIN", raising=False)
+    monkeypatch.delenv("MNEMOS_HOUR_MODEL", raising=False)
+    checked = []
+
+    def catalog(model, config_dir):
+        checked.append(("model", model))
+        return {}
+
+    def isolation(command, config_dir):
+        checked.append(("isolation", command))
+
+    monkeypatch.setattr(codex_dream, "model_catalog", catalog)
+    monkeypatch.setattr(codex_dream, "isolation", isolation)
+    return binary, checked
+
+
+def test_codex_daemon_finds_the_default_stores_resident(launchd, codex):
+    import subprocess
+    import sys
+    from mnemos.simple_runtime import MnemosRuntime
+
+    # Write in another process, without spelling out the store or other scope defaults.
+    subprocess.run([sys.executable, "-c", """
+from mnemos.simple_runtime import MnemosRuntime
+runtime = MnemosRuntime(agent_id="review", use_dedicated_model=False)
+try:
+    runtime.capture("The default-store resident keeps the harbour ledger.", signed_as="gpt-test")
+finally:
+    runtime.close()
+"""], check=True)
+    runtime = MnemosRuntime(agent_id="review", use_dedicated_model=False)
+    try:
+        assert "harbour ledger" in runtime.recall("harbour ledger")
+    finally:
+        runtime.close()
+
+    assert main(["daemon", "install", "--hours", "--runner", "codex", "--agent-id", "review", "--write"]) == 0
+    assert codex[1] == [("model", "gpt-test"), ("isolation", str(codex[0]))]
+    dream = _plist("com.mnemos.review.hour-dream")["ProgramArguments"]
+    assert str(Path.home() / ".mnemos/review.db") in dream
+    assert "--model" not in dream  # Automatic selection stays automatic in the scheduled command.
+    assert not {"com.mnemos.review.hour-mine", "com.mnemos.review.hour-ours"} & launchd.loaded
+
+
+@pytest.mark.parametrize("model_args,saved", [([], ""), (["--model", ""], "previous-model")])
+def test_codex_schedule_preserves_the_environment_model(launchd, codex, monkeypatch, model_args, saved):
+    from mnemos.setup import state
+    from mnemos.store.sqlite_store import EngramStore
+
+    state.record_hours_choice("nova", "no", runner="codex", model=saved)
+    EngramStore(Path.home() / ".mnemos/nova.db").close()
+    monkeypatch.setenv("MNEMOS_HOUR_MODEL", "environment-model")
+
+    assert main(["daemon", "install", *SCOPE, "--hours", "--runner", "codex",
+                 *model_args, "--write"]) == 0
+
+    assert codex[1] == [("model", "environment-model"), ("isolation", str(codex[0]))]
+    dream = _plist("com.mnemos.nova.hour-dream")["ProgramArguments"]
+    assert dream[-2:] == ["--model", "environment-model"]
+    monkeypatch.delenv("MNEMOS_HOUR_MODEL")
+    assert state.hour_settings("nova") == {"runner": "codex", "model": "environment-model"}
+
+
+def test_claude_setup_reenables_only_the_saved_codex_dream(tmp_path, launchd, codex, monkeypatch, capsys):
+    from mnemos.setup import state
+
+    assert main(["daemon", "install", *SCOPE, "--hours", "--runner", "codex",
+                 "--model", "gpt-test", "--write"]) == 0
+    assert main(["daemon", "uninstall", *SCOPE, "--hours", "--write"]) == 0
+    assert state.hours_choice("nova") == "no"
+    asked = _answers(monkeypatch, "y")
+    capsys.readouterr()
+
+    assert _claude_code(tmp_path) == 0
+    assert len(asked) == 1
+    assert launchd.loaded == LABELS | {"com.mnemos.nova.hour-dream"}
+    assert _plist("com.mnemos.nova.hour-dream")["ProgramArguments"][-7:] == [
+        "life", "--hour", "dream", "--runner", "codex", "--model", "gpt-test"]
+    assert codex[1] == [("model", "gpt-test"), ("isolation", str(codex[0]))] * 2
+    assert state.hours_choice("nova") == "yes"
+    assert state.hour_settings("nova") == {"runner": "codex", "model": "gpt-test"}
+    assert "Codex dream daily at 03:30" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("check", ["model_catalog", "isolation"])
+def test_codex_setup_validates_before_scheduling(tmp_path, launchd, codex, monkeypatch, capsys, check):
+    from mnemos import codex_dream
+    from mnemos.setup import state
+
+    state.record_hours_choice("nova", "no", runner="codex", model="gpt-test")
+    choice = state.hours_dir("nova") / state.CHOICE_FILE
+    before = choice.read_bytes()
+
+    def unavailable(*args):
+        raise ValueError("The selected Codex configuration is unavailable.")
+
+    monkeypatch.setattr(codex_dream, check, unavailable)
+    _answers(monkeypatch, "y")
+    assert _claude_code(tmp_path, "--no-upkeep") == 1
+    assert launchd.loaded == set()
+    assert choice.read_bytes() == before
+    assert "Codex dreams are not ready" in capsys.readouterr().err

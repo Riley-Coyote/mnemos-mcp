@@ -560,20 +560,24 @@ export class Room {
     const plan = life.schedule || [], at = (k) => plan.find((p) => p.kind === k);
     const hhmm = (w) => (w ? `${String(w.Hour ?? 0).padStart(2, '0')}:${String(w.Minute ?? 0).padStart(2, '0')}` : '');
     const DEFAULT = { mine: '08:00', ours: '19:00', dream: '03:30' };
-    const saved = { on: plan.length > 0, mine: hhmm(at('mine')?.when) || DEFAULT.mine, ours: hhmm(at('ours')?.when) || DEFAULT.ours, dream: hhmm(at('dream')?.when) || DEFAULT.dream };
+    const saved = { runner: 'claude-code', model: '', ...life.hourSettings, on: plan.length > 0, mine: hhmm(at('mine')?.when) || DEFAULT.mine, ours: hhmm(at('ours')?.when) || DEFAULT.ours, dream: hhmm(at('dream')?.when) || DEFAULT.dream };
     const h = this.hours || saved, changed = JSON.stringify(h) !== JSON.stringify(saved);
     const notice = this.notices.get('hours');
     const off = plan.filter((p) => !p.loaded);
+    const codex = h.runner === 'codex';
     const row = (k, label, what) => `<label class="set-row"><span><span class="set-k">${label}</span><span class="set-d">${what}</span></span>
-      <input class="set-time" type="time" data-hours-time="${k}" value="${esc(h[k])}"${h.on ? '' : ' disabled'} aria-label="${label}, starts at"></label>`;
+      <input class="set-time" type="time" data-hours-time="${k}" value="${esc(h[k])}"${h.on && (!codex || k === 'dream') ? '' : ' disabled'} aria-label="${label}, starts at"></label>`;
     const hoursPanel = who.unfiled ? `<div class="belief set"><div class="set-title">Quiet hours</div>
         <p class="set-d">${esc(who.name)}’s memory is from before quiet hours, so there’s nothing here to set. This page only reads it.</p></div>` : null;
     return `<section class="settings">
       ${hoursPanel || `<div class="belief set">
         <div class="set-head"><div><div class="set-title">Quiet hours</div>
-          <p class="set-d">Time between conversations that’s ${esc(who.name)}’s own: an hour a day to itself, half an hour for the day’s work, and a short time each night to dream over its memory. They run Claude on its own and use ${person(who) === 'you' ? 'your' : `${esc(person(who))}’s`} Claude plan.</p></div>
+          <p class="set-d">Time between conversations that’s ${esc(who.name)}’s own: an hour a day to itself, half an hour for the day’s work, and a short time each night to dream over its memory. They use the selected runner and its signed-in account. Codex currently runs only the dream.</p></div>
           <button class="switch" type="button" role="switch" aria-checked="${h.on}" data-hours-on="${h.on ? 'off' : 'on'}"><span class="knob" aria-hidden="true"></span><span class="vh">Quiet hours</span></button></div>
-        <div class="set-rows">${row('mine', 'Its own hour', 'An hour to itself')}${row('ours', 'Our hour', 'Half an hour for the day’s work')}${row('dream', 'The dream', 'A short time each night')}</div>
+        <div class="set-rows">
+          <label class="set-row"><span class="set-k">Runner</span><select class="set-choice" data-hours-runner aria-label="Quiet-hour runner"><option value="claude-code"${!codex ? ' selected' : ''}>Claude Code</option><option value="codex"${codex ? ' selected' : ''}>Codex</option></select></label>
+          <label class="set-row"><span class="set-k">Model</span><input class="set-model" type="text" data-hours-model value="${esc(h.model || '')}" placeholder="Automatic" aria-label="Quiet-hour model"></label>
+          ${row('mine', 'Its own hour', codex ? 'Available with Claude Code' : 'An hour to itself')}${row('ours', 'Our hour', codex ? 'Available with Claude Code' : 'Half an hour for the day’s work')}${row('dream', 'The dream', 'A short time each night')}</div>
         ${off.length ? `<p class="set-d flag">${off.length === plan.length ? 'Scheduled, but not loaded: they won’t run until they are.' : `${plural(off.length, 'hour')} scheduled but not loaded.`}</p>` : ''}
         <div class="acts"><span class="hint${notice ? ' flag' : ''}" aria-live="polite">${esc(notice || (changed ? 'Not saved yet.' : h.on ? 'Scheduled on this machine.' : 'Off. Nothing runs between conversations.'))}</span>
           ${changed ? '<button class="cancel" type="button" data-hours-reset="1">Undo</button>' : ''}
@@ -638,14 +642,14 @@ export class Room {
     if (this.hours) return this.hours;
     const plan = this.ctx().life.schedule || [], at = (k) => plan.find((p) => p.kind === k)?.when;
     const hhmm = (w, d) => (w ? `${String(w.Hour ?? 0).padStart(2, '0')}:${String(w.Minute ?? 0).padStart(2, '0')}` : d);
-    return { on: plan.length > 0, mine: hhmm(at('mine'), '08:00'), ours: hhmm(at('ours'), '19:00'), dream: hhmm(at('dream'), '03:30') };
+    return { runner: 'claude-code', model: '', ...this.ctx().life.hourSettings, on: plan.length > 0, mine: hhmm(at('mine'), '08:00'), ours: hhmm(at('ours'), '19:00'), dream: hhmm(at('dream'), '03:30') };
   }
   async saveHours() {
     const h = this.hours;
     if (!h || this.sending || !this.hooks.send) return;
     this.sending = 'hours'; this.notices.delete('hours'); this.render();
     let answer;
-    try { answer = await this.hooks.send({ command: 'hours', on: h.on, mine: h.mine, ours: h.ours, dream: h.dream }); }
+    try { answer = await this.hooks.send({ command: 'hours', on: h.on, runner: h.runner, model: h.model, mine: h.mine, ours: h.ours, dream: h.dream }); }
     catch { answer = { error: 'It couldn’t be changed just now. Is `mnemos log` still running?' }; }
     this.sending = null;
     if (answer?.result) this.hours = null; else this.notices.set('hours', answer?.error || 'It couldn’t be changed.');
@@ -712,7 +716,9 @@ export class Room {
       const k = e.target.closest('[data-qkind]'); if (k) { this.s.qkind = this.s.qkind === k.dataset.qkind ? 'all' : k.dataset.qkind; this.s.shown = PAGE; return this.render(); }
       const h = e.target.closest('[data-hour]'); if (h && this.hooks.hour) return this.hooks.hour(h.dataset.hour);
     });
-    body.addEventListener('change', (e) => { if (e.target.dataset?.sortSelect) { this.s.sort = e.target.value; this.s.shown = PAGE; this.render(); } });
+    body.addEventListener('change', (e) => {
+      if (e.target.hasAttribute('data-hours-runner')) { this.hours = { ...this.currentHours(), runner: e.target.value, model: '' }; this.notices.delete('hours'); return this.render(); }
+      if (e.target.dataset?.sortSelect) { this.s.sort = e.target.value; this.s.shown = PAGE; this.render(); } });
     body.addEventListener('keydown', (e) => {
       // ⌘↩ or Ctrl↩ sends what you wrote
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && e.target.dataset?.draft) {
@@ -730,9 +736,10 @@ export class Room {
         return;
       }
       const time = e.target.dataset?.hoursTime;
-      if (time) {
+      const model = e.target.hasAttribute('data-hours-model');
+      if (time || model) {
         // the field keeps its focus: only the Save button and the hint change while you set a time
-        this.hours = { ...this.currentHours(), [time]: e.target.value };
+        this.hours = { ...this.currentHours(), [model ? 'model' : time]: e.target.value };
         const save = this.find('[data-hours-save]'); if (save) save.disabled = false;
         const hint = this.find('.set .acts .hint'); if (hint) { hint.textContent = 'Not saved yet.'; hint.classList.remove('flag'); }
         return;

@@ -94,7 +94,7 @@ macOS or Linux.
 | Hermes agent | Hermes Provider Mode, or the tools alone if another memory provider holds the slot | `mnemos connect hermes --write` |
 | Hermes agent installing Mnemos for itself | Hermes Sidecar Mode, leaving `memory.provider` alone | `mnemos hermes quickstart --agent-safe` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
-| The agent's quiet hours, on your Claude plan | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
+| The agent's quiet hours, through Claude Code or Codex | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
 
 Start with **Simple MCP Mode**. It is the product: twelve tools, and the default.
 
@@ -287,12 +287,12 @@ instructions have it call `mnemos_context` first, and the first session says
 so in so many words. Upkeep between sessions (memories fading, links forming)
 is scheduled for every agent `connect` sets up. The quiet hours (an hour of its
 own, the day's work, the night's dream) are different for each agent, because
-only Claude Code can be run walled in to its memory's tools:
+Claude Code runs all three, while Codex runs the dream with only its memory tools:
 
 | Agent | Quiet hours |
 |---|---|
 | Claude Code | Mnemos runs them, walled in; on unless you say no. Thoughts go to Anthropic, on your Claude plan |
-| Codex | Handed over in a session; Mnemos runs none: its flags leave the shell (not tested). Goes to OpenAI |
+| Codex | Native memory-only dream with `mnemos daemon install --hours --runner codex --model YOUR_MODEL_ID --write`; other hours use a handoff. Goes to OpenAI |
 | Grok | Handed over in a session; Mnemos runs none: its flags did not wall a run in (saw it). Goes to xAI |
 | Gemini CLI | Handed over in a session; Mnemos runs none (not tested). Goes to Google |
 | Hermes | Three jobs in its own cron, off unless you ask (saw it, in a throwaway home). Goes to the provider Hermes uses |
@@ -303,7 +303,7 @@ only Claude Code can be run walled in to its memory's tools:
 prints the prompt an hour would get, and the agent takes it in its own session,
 with its own tools, signed as itself. Nothing Mnemos prints writes into its
 memory, and the hour is recorded so the same material is not handed twice. It is
-not walled in the way Claude Code's hours are: the agent has its usual tools,
+not walled in the way built-in hours are: the agent has its usual tools,
 and the hour's words ask it to keep to what the hour is for. An hour taken in a
 session spends what that session spends. `mnemos connect hermes --hours --write`
 (or `openclaw`) schedules the three hours in that agent's own cron; each job's

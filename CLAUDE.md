@@ -171,11 +171,12 @@ an MCP server's cwd belongs to whichever client spawned it.
 Storage is local SQLite, one file per agent by default
 (`~/.mnemos/<agent>.db`). Nothing leaves the machine unless a provider is
 configured, or the quiet hours are on: then the agent thinks over its memory
-through the person's own Claude Code, or, for another agent, in its own session
+through the person's own Claude Code or Codex, or, for another agent, in its own session
 when an hour is handed to it (`mnemos life --handoff`) or its own cron wakes it
-(`mnemos connect hermes|openclaw --hours`). Mnemos runs a quiet hour only for
-Claude Code, walled in (`mnemos/life.py`); every other agent's flags failed or
-were not shown to wall a run in (`Runner` in `mnemos/setup/harnesses.py`)
+(`mnemos connect hermes|openclaw --hours`). Mnemos runs all three quiet hours
+with Claude Code and memory-only dreams with Codex (`mnemos/life.py`). Broader
+Codex hours remain handoffs; every other agent's flags failed or were not shown
+to wall a run in (`Runner` in `mnemos/setup/harnesses.py`)
 (`docs/privacy-security.md`, "Quiet Hours").
 
 ---

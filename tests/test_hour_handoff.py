@@ -295,7 +295,7 @@ def test_the_wake_does_not_report_a_hand_off_as_an_hour(db, home):
 # ── 4. What Mnemos won't run by itself ──
 
 
-@pytest.mark.parametrize("runner", ["codex", "grok", "gemini", "hermes", "openclaw", "pi"])
+@pytest.mark.parametrize("runner", ["grok", "gemini", "hermes", "openclaw", "pi"])
 def test_mnemos_runs_no_hour_it_cannot_wall_in(db, home, runner):
     from mnemos.life import run_hour
 
@@ -316,12 +316,11 @@ def test_grok_is_refused_for_the_reason_it_was_seen(db):
     assert "read /etc/hosts" in record["reason"]
 
 
-def test_codex_and_gemini_are_refused_as_not_shown_walled(db):
+def test_gemini_is_refused_as_not_shown_walled(db):
     from mnemos.life import run_hour
 
-    for runner in ("codex", "gemini"):
-        record = run_hour("dream", db_path=str(db), **SCOPE, runner=runner)
-        assert "has not been shown to limit it to Mnemos's tools" in record["reason"]
+    record = run_hour("dream", db_path=str(db), **SCOPE, runner="gemini")
+    assert "has not been shown to limit it to Mnemos's tools" in record["reason"]
 
 
 def test_an_unknown_runner_is_refused(db):

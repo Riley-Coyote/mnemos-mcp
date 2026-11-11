@@ -255,14 +255,44 @@ no.
   <img alt="Fig. 4, where Mnemos runs, drawn as a data-flow diagram. Inside a dashed line marking your machine: you, your agent, Mnemos with its hooks, twelve tools and a local model, its memory in SQLite, the scheduler, and its page in your browser. Across the line: your agent's model, which receives whatever the agent reads and where the quiet hours run; and, only with your yes, a model provider, Gemini and the cue's judge, all reached through Mnemos." src="https://raw.githubusercontent.com/Riley-Coyote/mnemos-mcp/main/docs/images/map.png">
 </picture>
 
-For now the quiet hours run through Claude Code, so they come to a memory kept
-mostly by a Claude model: Mnemos doesn't wake another kind of model in an
-agent's memory. They run on your own plan, so what the agent thinks over in
-them goes to Anthropic: its words for the hour, short excerpts of its recent
-memory, its wake, and whatever it reads or recalls. Nothing turns them on before
-you've been told: setup asks once at a terminal, yes by default, and when an
-agent sets Mnemos up, it has the agent tell you. With no `claude` command they
-stay off. To turn them off:
+Quiet hours use your selected CLI and its signed-in account. Claude Code supports
+all three hours; Codex currently supports the memory-only nightly dream. The
+hour's prompt, wake and recalled material go to Anthropic or OpenAI respectively.
+The CLI must be installed and signed in on the machine running the scheduler.
+Nothing turns quiet hours on before you've chosen them.
+
+Choose the runner, model and times in the notebook's Quiet hours settings, or:
+
+```bash
+mnemos life --hour dream --runner codex --model YOUR_MODEL_ID --store-copy
+mnemos daemon install --hours --runner codex --model YOUR_MODEL_ID --write
+```
+
+Codex dreams reuse the model metadata in `CODEX_HOME/models_cache.json` (by default
+`~/.codex/models_cache.json`), preserving its instructions while removing shell,
+patch, image and web tools. Run Codex once with the chosen model first. Shared
+memory is disabled for the dream server. Only the
+scoped Mnemos server is configured, with notes, pages and handoffs excluded.
+User config, hooks, plugins and inherited app tool bridges are disabled for the
+run. Codex CLI 0.167.0 or newer is required. Mnemos inspects native settings before
+launching, disables inherited MCP servers, and refuses to run when managed policy
+requires tools, hooks or a model catalog incompatible with a memory-only dream.
+
+The scheduler uses launchd, systemd or cron; it does not require the desktop app.
+Selecting Codex replaces earlier Claude quiet-hour jobs for that agent with the
+dream only. Upkeep and other agents' schedules are preserved. Missing binaries, an unavailable model catalog entry or incompatible managed
+policy fail before changing the schedule. To select another login directory for a
+single run, `life --config-dir` sets `CODEX_HOME` for Codex or `CLAUDE_CONFIG_DIR`
+for Claude; installation captures the corresponding environment variable.
+
+Codex JSONL reports usage at turn completion, so the token ceiling is checked
+at those boundaries, not during an in-flight turn. Uncached input and output
+count toward that ceiling. The time limit stops the process group. Codex hour
+records identify the requested model with `model_verified: false`: its standard
+exec events do not independently attest the served model. A successful dream
+may write nothing. `--dry-run` previews without launching an agent.
+
+To turn them off:
 
 ```bash
 mnemos daemon uninstall --hours --write

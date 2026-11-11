@@ -4656,6 +4656,10 @@ class MnemosRuntime:
         status = self._onboarding_status()
         self._current_session()
         packet = self._briefing_packet(session_counter=self._current_session())
+        if packet["wake"] == "light":
+            # Dreams leave delivery markers for the next interactive session.
+            self._traced_read(*sorted(shown_ids(packet)))
+            return packet["prompt"]
         self._record_briefing_shown(packet)
         shown = packet.get("shown") or {}
         asked = set(shown.get("questions") or [])
@@ -4755,6 +4759,7 @@ class MnemosRuntime:
             workdir=self._workdir() if workdir is None else workdir,
             older_than_store=self._older_than_store() is not None,
             person_name=os.environ.get("MNEMOS_PERSON_NAME", ""),
+            wake=os.environ.get("MNEMOS_WAKE", "full"),
         )
 
     def _query_results(self, query: str, max_results: int, shown: set[str], room: int) -> str:

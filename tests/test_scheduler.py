@@ -644,3 +644,62 @@ class TestTheRealSchedulerCalls:
         assert os_scheduler.real["write_crontab"]("x\n") is False
         assert os_scheduler.real["launchd_job_active"]("nova", scheduler.JOBS[0]) is False
         assert os_scheduler.real["systemd_timer_active"]("nova", scheduler.JOBS[0]) is False
+
+
+@pytest.mark.parametrize('backend', ['launchd', 'systemd', 'crontab'])
+def test_codex_schedule_contains_only_a_scoped_dream_with_the_selected_model(backend):
+    env = scheduler.hour_environment(claude_bin='/opt/codex', mnemos_command='/opt/mnemos',
+                                     runner='codex', config_dir='/account/codex')
+    plan = scheduler.plan(agent_id='nova', mnemos_command='/opt/mnemos', backend=backend,
+                          scope_args=('--db-path', '/stores/nova.db', '--person-id', 'riley'),
+                          hours=scheduler.hour_jobs(runner='codex', model='chosen-model', dream_at=(4, 15)),
+                          hour_env=env)
+    assert len(plan['hours']) == 1
+    entry = plan['hours'][0]
+    assert entry['job'].daily_at == (4, 15)
+    assert entry['job'].args == ('life', '--hour', 'dream', '--runner', 'codex', '--model', 'chosen-model')
+    assert env['MNEMOS_CODEX_BIN'] == '/opt/codex' and env['CODEX_HOME'] == '/account/codex'
+    assert 'MNEMOS_CLAUDE_BIN' not in env and 'CLAUDE_CONFIG_DIR' not in env
+    assert set(e['job'].name for e in plan['entries']) >= {'maintain', 'maintain-deep'}
+
+
+def test_switching_runners_preserves_other_agents_and_removes_only_broader_hours(tmp_path, monkeypatch):
+    from mnemos.cli import main
+    from mnemos import cli, codex_dream
+    from mnemos.setup import state
+
+    monkeypatch.setenv('HOME', str(tmp_path))
+    monkeypatch.setattr(scheduler, 'detect_backend', lambda: 'launchd')
+    monkeypatch.setattr(scheduler, 'find_claude', lambda: '/bin/claude')
+    monkeypatch.setattr(scheduler, 'find_codex', lambda: None)
+    monkeypatch.setattr(cli, '_launchctl', lambda *args, **kwargs: None)
+    for agent in ('nova', 'other'):
+        assert main(['daemon', 'install', '--hours', '--agent-id', agent, '--write']) == 0
+    before = {p: p.read_bytes() for p in scheduler.launchd_plist_path('other', scheduler.HOUR_JOBS[0]).parent.glob('*other*')}
+    old = scheduler.launchd_plist_path('nova', scheduler.HOUR_JOBS[0])
+    assert main(['daemon', 'install', '--hours', '--runner', 'codex', '--agent-id', 'nova', '--write']) == 1
+    assert old.exists()  # failure to find Codex does not remove an existing working schedule
+    monkeypatch.setattr(scheduler, 'find_codex', lambda: '/bin/codex')
+    def invalid_model(*args, **kwargs):
+        raise ValueError('The selected model is not cached.')
+    monkeypatch.setattr(codex_dream, 'model_catalog', invalid_model)
+    codex_args = ['daemon', 'install', '--hours', '--runner', 'codex', '--model', 'custom-model',
+                  '--agent-id', 'nova', '--write']
+    assert main(codex_args) == 1
+    assert old.exists() and state.hour_settings('nova')['runner'] == 'claude-code'
+    monkeypatch.setattr(codex_dream, 'model_catalog', lambda *args: {})
+    def invalid_policy(*args, **kwargs):
+        raise ValueError('Managed policy requires hooks.')
+    monkeypatch.setattr(codex_dream, 'isolation', invalid_policy)
+    assert main(codex_args) == 1 and old.exists()
+    monkeypatch.setattr(codex_dream, 'isolation', lambda *args: [])
+    assert main(['daemon', 'install', '--hours', '--runner', 'codex', '--model', 'custom-model',
+                 '--agent-id', 'nova', '--write']) == 0
+    assert not old.exists()
+    assert not scheduler.launchd_plist_path('nova', scheduler.HOUR_JOBS[1]).exists()
+    assert scheduler.launchd_plist_path('nova', scheduler.HOUR_JOBS[2]).exists()
+    assert state.hour_settings('nova') == {'runner': 'codex', 'model': 'custom-model'}
+    assert all(p.read_bytes() == contents for p, contents in before.items())
+    assert main(['daemon', 'uninstall', '--hours', '--agent-id', 'nova', '--write']) == 0
+    assert state.hour_settings('nova') == {'runner': 'codex', 'model': 'custom-model'}
+    assert not scheduler.launchd_plist_path('nova', scheduler.HOUR_JOBS[2]).exists()
