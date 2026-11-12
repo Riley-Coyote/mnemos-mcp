@@ -207,21 +207,91 @@ def test_the_first_sessions_questions_end(tmp_path):
 # ── The page ──
 
 
+def _page_address(said: str) -> str:
+    return re.search(r"http://127\.0\.0\.1:\d+/\S+", said).group()
+
+
+def _answers(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url, timeout=10) as answer:
+            return answer.status == 200
+    except OSError:
+        return False
+
+
+def _close_pages() -> None:
+    for page in list(provider_module._pages.values()):
+        page.shutdown()
+        page.server_close()
+    provider_module._pages.clear()
+    provider_module._page_holders.clear()
+    provider_module._pages_closing.clear()
+
+
 def test_the_page_opens_once_for_a_memory(tmp_path):
     first, second = _provider(tmp_path), _provider(tmp_path)
     try:
-        said = _call(first, "mnemos_page")
-        url = re.search(r"http://127\.0\.0\.1:\d+/\S+", said).group()
+        url = _page_address(_call(first, "mnemos_page"))
         assert url in _call(second, "mnemos_page")
-        with urllib.request.urlopen(url, timeout=10) as answer:
-            assert answer.status == 200
+        assert _answers(url)
     finally:
         first.shutdown()
         second.shutdown()
-        for page in provider_module._pages.values():
-            page.shutdown()
-            page.server_close()
-        provider_module._pages.clear()
+        _close_pages()
+
+
+def test_the_page_closes_when_its_conversations_have_ended_and_it_is_left_alone(tmp_path, monkeypatch):
+    """A page an agent opened was served for as long as Hermes ran: on a gateway,
+    for days after the conversation that opened it had ended (Nous's review of
+    the catalog entry, 2026-11-09). It stays while a conversation that opened it
+    goes on, and while somebody has it open, and then closes."""
+    import time
+
+    # A second, so a slow machine's pause between two asks isn't taken for leaving.
+    monkeypatch.setattr(provider_module, "_PAGE_LEFT_ALONE_SECONDS", 1.0)
+    first, second = _provider(tmp_path), _provider(tmp_path)
+    try:
+        url = _page_address(_call(first, "mnemos_page"))
+        assert url in _call(second, "mnemos_page")
+
+        first.shutdown()
+        time.sleep(1.6)  # left alone, but the other conversation goes on
+        assert _answers(url), "the page closed under a conversation that had it open"
+
+        second.shutdown()
+        for _ in range(6):  # somebody reading it: an open page keeps asking
+            time.sleep(0.25)
+            assert _answers(url), "the page closed on someone who had it open"
+
+        time.sleep(3.0)  # nobody: the wait, the watch's next look, and the server's own stop
+        assert not _answers(url), "the page was still served after everyone had left it"
+        assert not provider_module._pages and not provider_module._pages_closing
+
+        # Asked for again, it opens anew.
+        third = _provider(tmp_path)
+        again = _page_address(_call(third, "mnemos_page"))
+        assert again != url and _answers(again)
+        third.shutdown()
+    finally:
+        _close_pages()
+
+
+def test_a_conversation_that_asks_again_keeps_the_page(tmp_path, monkeypatch):
+    """Between the last conversation ending and the page closing, one that asks
+    for the page takes it back: the same page, at the same address."""
+    import time
+
+    monkeypatch.setattr(provider_module, "_PAGE_LEFT_ALONE_SECONDS", 1.0)
+    first, later = _provider(tmp_path), _provider(tmp_path)
+    try:
+        url = _page_address(_call(first, "mnemos_page"))
+        first.shutdown()
+        assert url in _call(later, "mnemos_page")
+        time.sleep(2.5)
+        assert _answers(url), "the page closed under the conversation that took it back"
+    finally:
+        later.shutdown()
+        _close_pages()
 
 
 # ── Room for many conversations ──

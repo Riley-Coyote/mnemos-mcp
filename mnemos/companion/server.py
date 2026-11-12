@@ -207,6 +207,9 @@ class LogServer(ThreadingHTTPServer):
         self._settings = threading.Lock()  # one change to the schedule at a time
         self._home = _Mind(exporter)
         self._others: tuple[float, dict[str, _Mind]] | None = None
+        # When the page was last asked for anything, by its own address: an open
+        # page asks every few seconds, so this says whether anyone has it open.
+        self.last_asked = time.monotonic()
         super().__init__(("127.0.0.1", port), _Handler)
 
     def server_bind(self) -> None:
@@ -498,6 +501,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._json(HTTPStatus.FORBIDDEN, {"error": "The log answers only on 127.0.0.1."})
         if urlsplit(self.path).path != f"/{server.token}/act":
             return self._json(HTTPStatus.NOT_FOUND, {"error": "Not here."})
+        server.last_asked = time.monotonic()
         # A browser names the page a request comes from, and a site elsewhere can't send JSON here
         # without asking first, which this never answers: so only the log's own page writes.
         if self.headers.get("Origin", "") not in server.origins():
@@ -529,6 +533,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send(HTTPStatus.FORBIDDEN, b"The log answers only on 127.0.0.1.\n", TYPES[".txt"], body)
         path = urlsplit(self.path).path
         base = f"/{server.token}"
+        if path == base or path.startswith(f"{base}/"):
+            server.last_asked = time.monotonic()  # asked by its own address, not by a stray caller
         if path in (base, f"{base}/", f"{base}/log"):
             return self._redirect(f"{base}/log/")
         if not path.startswith(f"{base}/"):
