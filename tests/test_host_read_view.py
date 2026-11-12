@@ -653,3 +653,21 @@ def test_the_example_runs_and_finds_nothing_of_the_other_resident(tmp_path):
                           env=_env(tmp_path / "unused-home"))
     assert done.returncode == 0, done.stdout + done.stderr
     assert "Nothing of otter's or quinn-example's appeared in any reply" in done.stdout
+
+
+def test_the_speed_script_runs_at_a_tiny_size(tmp_path):
+    """The script behind the "How fast" table, at 100 memories with one
+    timed call, so it can't stop working unnoticed."""
+    results = tmp_path / "results.json"
+    done = subprocess.run([sys.executable, str(REPO / "examples" / "host_read_view" / "measure.py"),
+                           "--sizes", "100", "--runs", "1", "--cli", "summary", "--json", str(results)],
+                          capture_output=True, text=True, timeout=120, cwd=str(REPO),
+                          env={**_env(tmp_path / "unused-home"), "TMPDIR": str(tmp_path)})
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "the direct build gives the same summary counts and section lengths as the capture build: yes" \
+        in done.stdout
+    measured = json.loads(results.read_text())
+    assert [(row["size"], row["built_by"]) for row in measured["sizes"]] == [(100, "capture"), (100, "direct")]
+    assert set(measured["sizes"][0]["sections"]) == set(host_view.SECTIONS)
+    assert measured["live_writer"]["inprocess_ms"]["median"] > 0
+    assert [p.name for p in tmp_path.iterdir() if p.name.startswith("mnemos-view-measure-")] == []

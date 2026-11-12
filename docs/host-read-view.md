@@ -180,6 +180,60 @@ schedule, no studio files and no keys.
   cursor only works for the section that gave it, and any other cursor is
   refused (`bad_cursor`).
 
+## How fast
+
+`summary` reads the whole scope every time it is asked: it builds every
+memory, entry and note to count them and to make the `change_token`. So its
+time grows with the memory. The list sections read one page.
+
+Measured with `uv run python examples/host_read_view/measure.py`, on an
+Apple M4 Max running macOS 27.0.1, with Python 3.12.11 and SQLite 3.50.4. The
+script builds one store holding two residents of the same size, with made-up
+words. The first is the one read, and it holds its memories, one standing
+memory in fifty, a journal entry and a note for every twenty memories, a
+reply for every forty, three handoffs, and a belief for every hundred. The
+second is as large, so reading "only this resident" is paid for in full.
+
+Each cell is in milliseconds: the median, then the worst in brackets, of 7
+calls after one warm-up. The first number calls `read_view` in the host's own
+Python process. The second runs `mnemos view` as a process of its own, which
+pays for Python's start-up (77 ms median on its own, for a request refused
+before any store is opened). A list section asks for its first page of 50.
+
+| Section | 1,000 memories | 10,000 memories | 50,000 memories |
+| --- | --- | --- | --- |
+| summary | 13.1 (14.0) · 89.3 (105.3) | 133.0 (148.1) · 212.7 (226.7) | 739.3 (888.2) · 830.9 (1,076.1) |
+| memories | 2.2 (2.4) · 78.4 (82.5) | 9.1 (10.2) · 86.1 (90.2) | 35.7 (36.9) · 112.5 (121.4) |
+| standing | 7.6 (8.1) · 86.6 (99.6) | 62.5 (64.4) · 140.1 (147.2) | 222.5 (237.9) · 298.6 (305.5) |
+| journal | 1.3 (1.5) · 77.8 (86.4) | 2.4 (2.6) · 79.5 (83.1) | 7.5 (8.3) · 83.7 (84.3) |
+| notes | 1.4 (1.6) · 78.1 (84.5) | 3.4 (3.6) · 82.1 (92.3) | 12.0 (12.4) · 85.3 (87.8) |
+| handoffs | 1.1 (1.5) · 81.4 (90.6) | 1.2 (1.5) · 84.6 (98.0) | 1.0 (1.2) · 73.9 (75.8) |
+| beliefs | 1.6 (1.9) · 79.9 (83.7) | 8.1 (8.5) · 82.5 (85.3) | 84.6 (85.2) · 157.6 (160.0) |
+| store file | 10.6 MB | 69.3 MB | 332.1 MB |
+
+With another process holding the 50,000-memory store open for writing, its
+newest commit still only in the write-ahead log, `summary` took 730.5 ms
+(772.5) in-process and 857.0 ms (891.4) through `mnemos view`, about the
+same as with nobody writing.
+
+A reply's size doesn't grow with the memory. `summary` was 367 to 377 bytes.
+A first page was at most about 31 KB (the journal's).
+
+The 1,000-memory store was written through Mnemos's normal write path. The
+larger ones were built faster, by copying the rows that path wrote for the
+first memory, entry, note and belief, with new ids, words and times. At
+1,000 memories, a store built that way gave the same `summary` counts and the
+same number of items in every section as the one written through the normal
+path, and its in-process timings were within 5 ms of it. The copies leave
+out the links Mnemos draws between similar memories, which the view never
+reads. So those files are smaller than a real store of that size would be.
+
+**How often to ask.** Up to 10,000 memories, asking for `summary` when the
+tab opens and then every few seconds while it is in view costs little. At
+50,000, one `summary` takes most of a second, so ask for it when the tab opens
+or comes back into view, and no more than about every 30 seconds while it
+stays open.
+
 ## Reads, never writes, never wakes
 
 | Section | Reads | Never writes | Never wakes |

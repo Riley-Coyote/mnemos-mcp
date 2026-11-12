@@ -16,6 +16,13 @@
   nobody has open, no file appears. Search is left out for now: today's search path leaves a
   `-wal` and a `-shm` beside an idle store. See `docs/host-read-view.md`, and
   `examples/host_read_view/run.py` for two residents in one file.
+- **How fast the view is on a large memory, measured.** `examples/host_read_view/measure.py`
+  builds a store of made-up memories at 1,000, 10,000 and 50,000 memories (with a second resident
+  as large in the same file) and times every section, in-process and through `mnemos view`. On an
+  Apple M4 Max, `summary` took a median of 13 ms at 1,000, 133 ms at 10,000 and 739 ms at 50,000 in
+  process, because it reads the whole scope each time. A first page of any list section stayed
+  under 240 ms in process, and a reply's size didn't grow with the memory. The table, and how often
+  a host can reasonably ask for `summary`, are in the "How fast" section of `docs/host-read-view.md`.
 
 ## 0.6.7 (2026-11-11)
 
