@@ -9,6 +9,7 @@ Commands:
     mnemos snapshot              Print an inline Mermaid memory snapshot
     mnemos search QUERY          Search memories, by meaning and words (writes nothing)
     mnemos memories              List the memories, oldest first (reads only)
+    mnemos view --section S      A host app's read-only view of one resident, as JSON
     mnemos correct ID TEXT       Correct a memory, in your own words
     mnemos forget ID             Let a memory go: archived, never deleted
     mnemos interface             The commands above for an app, one JSON line each
@@ -202,6 +203,27 @@ def main(argv: list[str] | None = None) -> int:
         help='Print {"memories": [{"id", "words", "kept", "state", "alive", "conversation", '
              '"corrected", "impact", "author"}], "counts": {"active", "dormant", "archived"}}',
     )
+
+    # ── view ──
+    p_view = sub.add_parser(
+        "view", help="A host app's read-only view of one resident's memory, as one JSON document",
+        description=(
+            "One section of one resident's memory, for an app that shows it: printed as one "
+            "JSON document, and nothing written, woken or marked read. The store, agent, "
+            "person and project must all be given here; the environment and "
+            "~/.mnemos/config.json are not read for them. See docs/host-read-view.md."
+        ),
+    )
+    _scope_options(p_view)
+    p_view.add_argument("--protocol", default=None, metavar="N",
+                        help="The view protocol you speak (this Mnemos speaks 1); required")
+    p_view.add_argument("--section", default=None,
+                        metavar="summary|memories|standing|journal|notes|handoffs|beliefs",
+                        help="Which part of the memory to read; required")
+    p_view.add_argument("--limit", default=None, metavar="N",
+                        help="At most N items, from 1 to 200 (default 50)")
+    p_view.add_argument("--cursor", default=None, metavar="CURSOR",
+                        help="Go on from where a reply with truncated: true stopped (its next_cursor)")
 
     # ── correct / forget ──
     for name, help_text, description in (
@@ -974,6 +996,7 @@ def main(argv: list[str] | None = None) -> int:
         "snapshot": _cmd_snapshot,
         "search": _cmd_search,
         "memories": _cmd_memories,
+        "view": _cmd_view,
         "correct": _cmd_correct,
         "forget": _cmd_forget,
         "interface": _cmd_interface,
@@ -2384,6 +2407,22 @@ def _cmd_memories(args: argparse.Namespace) -> int:
         f"{counts['archived']:,} archived."
     )
     return 0
+
+
+def _cmd_view(args: argparse.Namespace) -> int:
+    """A host app's read-only view of one resident (``host_view.read_view``):
+    one JSON document on stdout, 0 with the reply and 2 with a refusal. The
+    scope is the flags alone, never ``resolve_scope``'s environment and config,
+    and nothing it reaches can write."""
+    from .host_view import answer
+
+    status, text = answer(
+        protocol=args.protocol, db_path=args.db_path, agent_id=args.agent_id,
+        person_id=args.person_id, project_scope=args.project_scope,
+        section=args.section, limit=args.limit, cursor=args.cursor,
+    )
+    print(text)
+    return status
 
 
 def _cmd_correct(args: argparse.Namespace) -> int:

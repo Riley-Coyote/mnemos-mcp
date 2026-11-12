@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- **A read-only view for an app that hosts an agent: `mnemos view`.** An app can now show one
+  resident's memory in a tab of its own, and opening or refreshing it changes nothing. It reads one
+  section at a time (`summary`, `memories`, `standing`, `journal`, `notes`, `handoffs`, `beliefs`)
+  and prints one JSON document. A host written in Python can call the same engine,
+  `mnemos.host_view.read_view`. The store, agent, person and project must all be given as flags,
+  and the environment and `~/.mnemos/config.json` are never read for them. Every reply is kept to
+  that one scope, beliefs included, so another resident in the same file never shows. The caller
+  names the protocol (`--protocol 1`, `mnemos.VIEW_PROTOCOL_VERSION`), and any other version is
+  refused before the store is opened. Lists are bounded: at most 200 items a reply (50 when not
+  asked), long texts cut at 16,384 characters, at most 256 KiB a reply, and a cursor to go on.
+  Nothing is woken, strengthened, linked or marked read, no trace is written, and beside a store
+  nobody has open, no file appears. Search is left out for now: today's search path leaves a
+  `-wal` and a `-shm` beside an idle store. See `docs/host-read-view.md`, and
+  `examples/host_read_view/run.py` for two residents in one file.
+
 ## 0.6.7 (2026-11-11)
 
 What Hermes's review of 0.6.6 asked for, before its catalog lists Mnemos. Sessions keep the code they

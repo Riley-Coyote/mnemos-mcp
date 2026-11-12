@@ -43,6 +43,7 @@ from .simple_runtime import (
     HostMutationConflictError,
     MnemosRuntime,
 )
+from .host_view import VIEW_PROTOCOL_VERSION
 
 __all__ = [
     "EngramStore",
@@ -56,4 +57,5 @@ __all__ = [
     "HOST_MUTATION_PROTOCOL_VERSION",
     "HostMutationConflictError",
     "MnemosRuntime",
+    "VIEW_PROTOCOL_VERSION",
 ]
