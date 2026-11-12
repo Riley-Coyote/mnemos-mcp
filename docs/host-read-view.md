@@ -123,7 +123,9 @@ as it says it. The store's path appears nowhere in a reply.
 
 `unread` counts the agent's notes the person hasn't read. Each count is
 counted by the database, through the same scope the section reads, so it is
-how many items paging that section to its end gives.
+how many items paging that section to its end gives. A stored flag (a
+memory's standing mark, a note's `read_at`) is read one way everywhere: it is
+set unless it is empty, zero or missing, as the items have always read it.
 
 The `change_token` stays the same until something a section would show
 changes, and changes when it does. Another resident's writes don't move it,
@@ -132,8 +134,10 @@ host can compare tokens and skip a refresh when they match. The token is made
 from the stored values the sections show, not from the items as shown, so it
 can also move when a value changes but looks the same on screen (a memory's
 `alive` is shown to three places). A token is only comparable with tokens
-from the same Mnemos version, which every reply names: after an update, the
-first token can differ even though nothing changed.
+from replies of the same Mnemos version, which every reply names, run on the
+same version of Python, because it rests on Python's `marshal` format 0.
+After an update of either, the first token can differ even though nothing
+changed.
 
 **memories** and **standing** items have the shape `mnemos memories --json`
 gives, plus `standing`:
@@ -209,18 +213,18 @@ second is as large, so reading "only this resident" is paid for in full.
 Each cell is in milliseconds: the median, then the worst in brackets, of 7
 calls after one warm-up. The first number calls `read_view` in the host's own
 Python process. The second runs `mnemos view` as a process of its own, which
-pays for Python's start-up (79 ms median on its own, for a request refused
+pays for Python's start-up (73 ms median on its own, for a request refused
 before any store is opened). A list section asks for its first page of 50.
 
 | Section | 1,000 memories | 10,000 memories | 50,000 memories |
 | --- | --- | --- | --- |
-| summary | 4.7 (5.6) · 96.4 (128.2) | 38.4 (44.9) · 113.5 (118.0) | 198.9 (222.6) · 274.5 (278.5) |
-| memories | 2.9 (3.0) · 89.2 (106.4) | 8.2 (8.9) · 84.4 (88.4) | 35.0 (35.7) · 111.7 (112.5) |
-| standing | 2.3 (2.6) · 81.1 (95.8) | 12.5 (12.8) · 89.8 (96.0) | 51.5 (52.6) · 129.7 (130.7) |
-| journal | 1.3 (1.6) · 82.2 (86.2) | 2.2 (2.8) · 78.3 (80.7) | 7.7 (8.0) · 85.8 (86.8) |
-| notes | 1.2 (1.3) · 80.6 (85.0) | 3.1 (7.3) · 79.6 (81.6) | 12.1 (12.1) · 88.1 (90.8) |
-| handoffs | 0.9 (1.3) · 79.9 (83.9) | 1.0 (1.0) · 77.6 (79.4) | 0.8 (0.9) · 75.4 (79.6) |
-| beliefs | 1.0 (1.1) · 76.1 (81.0) | 2.1 (2.3) · 77.4 (81.1) | 5.5 (5.9) · 84.1 (84.9) |
+| summary | 4.6 (5.1) · 78.1 (79.7) | 39.1 (39.7) · 115.0 (121.8) | 197.6 (250.3) · 274.7 (289.7) |
+| memories | 2.2 (2.6) · 75.4 (76.9) | 9.5 (14.5) · 83.2 (84.2) | 34.2 (34.4) · 113.6 (115.5) |
+| standing | 2.1 (2.6) · 75.7 (76.3) | 11.8 (12.0) · 87.3 (89.1) | 53.5 (63.0) · 126.7 (138.3) |
+| journal | 1.2 (1.6) · 73.9 (75.3) | 2.2 (2.6) · 75.7 (78.4) | 7.3 (7.5) · 82.7 (84.4) |
+| notes | 1.2 (1.7) · 74.1 (75.2) | 3.2 (6.3) · 77.2 (78.2) | 11.7 (12.2) · 86.7 (94.7) |
+| handoffs | 0.9 (1.2) · 74.1 (75.0) | 0.8 (1.1) · 73.9 (74.8) | 0.9 (1.3) · 75.1 (89.7) |
+| beliefs | 1.0 (1.1) · 73.4 (75.3) | 2.0 (2.3) · 75.0 (77.4) | 5.5 (5.7) · 81.2 (82.4) |
 | store file | 10.6 MB | 69.3 MB | 332.1 MB |
 
 Before, when `summary` built every item and `standing` sorted the scope
@@ -230,8 +234,8 @@ machine and day measured `summary` at 12.5, 128.3 and 774.1 ms in-process
 221.7 ms.
 
 With another process holding the 50,000-memory store open for writing, its
-newest commit still only in the write-ahead log, `summary` took 199.5 ms
-(202.0) in-process and 281.7 ms (349.7) through `mnemos view`, about the
+newest commit still only in the write-ahead log, `summary` took 201.5 ms
+(205.4) in-process and 272.8 ms (285.0) through `mnemos view`, about the
 same as with nobody writing.
 
 A reply's size doesn't grow with the memory. `summary` was 367 to 377 bytes.
@@ -313,6 +317,13 @@ The tests check these things:
   some of them live outside the store. A tab of one resident's memory doesn't
   need them, and each one would be more to keep to the scope.
 - **The store's path and size.** Nothing here is about where the store is.
+
+## Not checked, and known limits
+
+- A memory whose id is kept as bytes instead of text can't be shown: the
+  `memories` and `standing` sections fail to print it as JSON, as they did
+  before the summary counted with the database. (A time kept as bytes is
+  shown, and ordered after every time kept as text.)
 
 ## How edits happen instead
 

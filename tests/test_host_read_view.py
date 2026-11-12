@@ -746,6 +746,124 @@ def test_values_of_mixed_kinds_are_still_put_in_one_order(store):
     assert _token(db) != one
 
 
+#: The commit before the summary counted with the database: its view is what
+#: the counts must still agree with, for any value a store can hold.
+BEFORE_COUNTING = "b917904"
+STORED = (None, 0, 0.0, 1, 1.5, "", "0", "x", b"")
+
+
+def _view_at(commit: str, folder: Path):
+    """``mnemos/host_view.py`` as it was at ``commit``, from a ``git
+    archive`` copy, run against today's package; None when this checkout
+    doesn't hold that commit (a shallow clone)."""
+    import importlib.util
+    import io
+    import tarfile
+
+    done = subprocess.run(["git", "-C", str(REPO), "archive", commit, "mnemos/host_view.py"],
+                          capture_output=True, timeout=60)
+    if done.returncode != 0:
+        return None
+    safe = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+    tarfile.open(fileobj=io.BytesIO(done.stdout)).extractall(folder, **safe)
+    path = folder / "mnemos" / "host_view.py"
+    spec = importlib.util.spec_from_file_location(f"mnemos.host_view_{commit}", path)
+    old = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(old)
+    assert Path(old.__file__) == path
+    return old
+
+
+def _all_items(view, db: Path, section: str) -> list[dict]:
+    items, cursor = [], None
+    while True:
+        reply = view.read_view(protocol=1, db_path=str(db), section=section, limit=200, cursor=cursor, **WREN)
+        items += reply["items"]
+        if not reply["truncated"]:
+            return items
+        cursor = reply["next_cursor"]
+
+
+def _unread_items(db: Path) -> int:
+    """The agent's notes not read, by each note item's own ``read_at``, as
+    the summary has always counted them. Built without printing: a value
+    kept as bytes can't be printed as JSON, in any version."""
+    conn = open_read_only(db)
+    try:
+        from mnemos.companion.export import _Reading
+        from mnemos.simple_scope import MnemosScope
+
+        reading = _Reading(conn, MnemosScope(db_path=str(db), **WREN))
+        notes = [host_view._note_item(n) for n in reading.note_rows()]
+    finally:
+        conn.close()
+    return sum(1 for n in notes if n["author"] == "agent" and not n["read_at"])
+
+
+def test_every_count_agrees_with_its_section_for_any_stored_value(store, tmp_path):
+    """Wherever a count is decided in SQL and the items it counts in Python
+    (or were, before), each value a store can hold is set in turn on one row
+    of the scope: the summary's count must equal what the section gives,
+    paged to its end, and what the view before counting with the database
+    gave. A value the column refuses (NULL where it is NOT NULL) is left out."""
+    db = store["db"]
+    old = _view_at(BEFORE_COUNTING, tmp_path / "before")
+    if old is not None:
+        assert not hasattr(old, "_truthy") and Path(old.__file__).is_relative_to(tmp_path)
+    belief = _first(db, "SELECT id FROM beliefs WHERE content LIKE 'Pat keeps%'")
+    handoff = _first(db, "SELECT id FROM hypomnema_entries WHERE agent_id='wren' AND person_id='pat-example' "
+                         "AND entry_kind='handoff'")
+    note = _first(db, "SELECT id FROM notes WHERE agent_id='wren' AND person_id='pat-example' AND author='agent'")
+    plain = store["wren"][0]  # not standing
+
+    def standing(counts):
+        flagged = sum(1 for m in _all_items(host_view, db, "memories") if m["standing"])
+        shown = _all_items(host_view, db, "standing")
+        return counts["standing"], len(shown), flagged, sum(1 for m in shown if m["standing"])
+
+    def shown_memories(counts):
+        return counts["memories"]["active"] + counts["memories"]["dormant"], len(_all_items(host_view, db, "memories"))
+
+    def unread(counts):
+        return counts["notes"]["unread"], _unread_items(db)
+
+    predicates = [
+        ("a memory's standing mark", "engrams", "standing", plain, standing),
+        ("a memory's state", "engrams", "state", plain, shown_memories),
+        ("a note's read_at", "notes", "read_at", note, unread),
+        ("a note's author", "notes", "author", note, unread),
+        ("a handoff's active mark", "hypomnema_entries", "active", handoff,
+         lambda counts: (counts["handoffs"], len(_all_items(host_view, db, "handoffs")))),
+        ("a belief's superseded_by", "beliefs", "superseded_by", belief,
+         lambda counts: (counts["beliefs"], len(_all_items(host_view, db, "beliefs")))),
+    ]
+    checked, refused, wrong, old_unprintable = 0, [], [], []
+    for name, table, column, row_id, section in predicates:
+        kept = _first(db, f"SELECT {column} FROM {table} WHERE id = ?", row_id)
+        for value in STORED:
+            try:
+                _sql(db, f"UPDATE {table} SET {column} = ? WHERE id = ?", value, row_id)
+            except sqlite3.IntegrityError:
+                refused.append((column, value))
+                continue
+            checked += 1
+            counts = _view(db, "summary")["counts"]
+            seen = section(counts)
+            then = None
+            if old is not None:
+                try:
+                    then = old.read_view(protocol=1, db_path=str(db), section="summary", **WREN)["counts"]
+                except TypeError:  # the old summary printed every item and the states, and bytes don't print
+                    old_unprintable.append((column, value))
+            if len(set(seen)) != 1 or (then is not None and then != counts):
+                wrong.append((name, value, seen, then and then != counts))
+        _sql(db, f"UPDATE {table} SET {column} = ? WHERE id = ?", kept, row_id)
+    assert wrong == [], wrong
+    assert refused == [("standing", None), ("state", None), ("author", None), ("active", None)]
+    assert checked == 50
+    assert old is None or old_unprintable == [("state", b""), ("read_at", b"")]
+
+
 def test_search_is_not_a_section(store, capsys):
     status, reply = _cli(capsys, "--protocol", "1", "--section", "search", "--db-path", str(store["db"]), *_flags())
     assert status == 2 and reply["error"]["code"] == "unknown_section"

@@ -25,12 +25,15 @@
   every memory, entry and note as a full item and turn them all into JSON, only to count them and
   make its `change_token`. It now counts with the database, through the same scope the sections
   read, and makes the token from the stored values the sections show. On an Apple M4 Max, at
-  50,000 memories, it went from 774 ms to 199 ms in process (128 ms to 38 ms at 10,000). The counts
+  50,000 memories, it went from 774 ms to 198 ms in process (128 ms to 39 ms at 10,000). The counts
   are the same as before; the token keeps its promise, and a test of 32 kinds of change (20 a
   section shows, 12 outside the scope) holds it to that. A token is now only comparable with tokens
-  from the same Mnemos version. `standing` used to sort the whole scope again for every 500
+  from the same Mnemos version on the same Python. A stored flag (a memory's standing mark, a
+  note's `read_at`) is read one way by the counts and the items, as the items always read it, and a
+  test sets nine kinds of stored value on each such column to hold the counts to the sections and
+  to the view before this change. `standing` used to sort the whole scope again for every 500
   memories it looked through; it now puts them in order once, and its first page went from 222 ms
-  to 52 ms, with the same items, order and cursors. `beliefs` went from 105 ms to 6 ms, because the
+  to 54 ms, with the same items, order and cursors. `beliefs` went from 105 ms to 6 ms, because the
   memories a belief rests on are now looked up by id.
 
 ## 0.6.7 (2026-11-11)

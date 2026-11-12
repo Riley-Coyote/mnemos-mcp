@@ -201,7 +201,7 @@ def _memory_items(reading: _Reading, rows: list[sqlite3.Row]) -> list[dict[str, 
 
     kept = first_kept(reading, {row["id"]: (row["created_at"], row["lineage"]) for row in rows})
     return [
-        _clip({**memory_view(row, kept[row["id"]]), "standing": bool(row["standing"])}, "words", "impact")
+        _clip({**memory_view(row, kept[row["id"]]), "standing": _truthy(row["standing"])}, "words", "impact")
         for row in rows
     ]
 
@@ -314,10 +314,20 @@ def _shown_memories(reading: _Reading) -> tuple[str, tuple[str, ...]]:
     return f"{clause} AND state IN ({marks})", (*scope, *_SHOWN_STATES)
 
 
-def _is_standing(reading: _Reading) -> str:
-    """Whether a memory is standing, as SQL. A store from before memories
-    could stand has none standing."""
-    return "standing != 0" if "standing" in reading.columns("engrams") else "0"
+def _truthy(value: Any) -> bool:
+    """Whether a stored flag is set: Python's truth of the stored value, as
+    the items have always read it. NULL, 0, 0.0, '' and an empty blob are
+    not set; anything else is. The one test of a stored flag (a memory's
+    standing, a note's ``read_at``): items and Python call it, and SQL calls
+    it as ``view_truthy`` (registered on the view's connection), so a count
+    and the items it counts can't read the same value two ways."""
+    return bool(value)
+
+
+def _standing_column(reading: _Reading) -> str:
+    """A memory's stored standing mark, as SQL. A store from before memories
+    could stand has none, and reads as not standing."""
+    return "standing" if "standing" in reading.columns("engrams") else "0"
 
 
 def _memory_columns(reading: _Reading) -> str:
@@ -368,7 +378,7 @@ def _in_order(reading: _Reading, start: int) -> Any:
     where, params = _shown_memories(reading)
     cursor = reading.c.cursor()
     cursor.row_factory = None
-    query = f"SELECT created_at, id, {_is_standing(reading)} FROM engrams WHERE {where}"
+    query = f"SELECT created_at, id, {_standing_column(reading)} FROM engrams WHERE {where}"
     rows = cursor.execute(query, params).fetchall()
     try:
         rows.sort()
@@ -388,7 +398,7 @@ def _page_memories(reading: _Reading, after: Any, limit: int,
         return _memory_items(reading, page), [start + i + 1 for i in range(len(page))], len(rows) > limit
     found: list[tuple[int, str]] = []
     for place, memory_id, standing in _in_order(reading, start):
-        if standing:
+        if _truthy(standing):
             found.append((place, memory_id))
             if len(found) > limit:
                 break
@@ -484,7 +494,7 @@ def _summary(reading: _Reading) -> dict[str, Any]:
                             (*scope_params, *_SHOWN_STATES)))
     states = reading.state_counts()
     feed("states", sorted(states.items(), key=repr))
-    standing = _count(reading, "engrams", f"{shown} AND {_is_standing(reading)}", shown_params)
+    standing = _count(reading, "engrams", f"{shown} AND view_truthy({_standing_column(reading)})", shown_params)
 
     journal = notes = unread = 0
     for table in ("journal_entries", "notes"):
@@ -496,7 +506,7 @@ def _summary(reading: _Reading) -> dict[str, Any]:
             journal = _count(reading, table, where, params)
         else:
             notes, unread = reading.c.execute(
-                "SELECT count(*), coalesce(sum(author = 'agent' AND (read_at IS NULL OR read_at = '')), 0) "
+                "SELECT count(*), coalesce(sum(author = 'agent' AND NOT view_truthy(read_at)), 0) "
                 f"FROM notes WHERE {where}", params).fetchone()
 
     handoffs = reading.handoffs()
@@ -589,6 +599,7 @@ def read_view(
     except sqlite3.Error:
         raise ViewRefused("unreadable_store", "That store couldn't be opened for reading.") from None
     try:
+        conn.create_function("view_truthy", 1, _truthy, deterministic=True)
         reading = _Reading(conn, scope)
         try:
             if not reading.has("engrams"):
