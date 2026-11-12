@@ -233,9 +233,10 @@ def _handoff_item(handoff: Mapping[str, Any]) -> dict[str, Any]:
 def _scoped_beliefs(reading: _Reading) -> list[dict[str, Any]]:
     """This scope's beliefs, oldest first. A belief is kept by agent alone
     (the table has no person or project), so a belief belongs to this scope
-    only through what it rests on: it is shown when at least one memory
-    supporting it is this agent's, about this person, in this project, and
-    it names only those. A belief nothing here supports is not shown."""
+    only through what it rests on: it is shown when every memory supporting
+    it is this agent's, about this person, in this project. One that also
+    rests on a memory from elsewhere is not shown, because its words may
+    carry what was said there; nor is one that rests on no memory at all."""
     if not reading.has("beliefs"):
         return []
     rows = reading.c.execute(
@@ -254,7 +255,7 @@ def _scoped_beliefs(reading: _Reading) -> list[dict[str, Any]]:
     out = []
     for row in rows:
         own = [s for s in supports[row["id"]] if s in here]
-        if not own:
+        if not own or len(own) != len(supports[row["id"]]):
             continue
         try:
             history = json.loads(row["revision_history"] or "[]")

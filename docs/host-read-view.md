@@ -23,7 +23,9 @@ mnemos view --protocol 1 --section memories \
 ```
 
 It prints one JSON document on stdout. The exit status is 0 with a reply and
-2 with a refusal. A refusal is JSON too.
+2 with a refusal. A refusal is JSON too, with one exception: a flag the
+command doesn't know at all is refused by the command line itself, with a
+plain usage message on stderr and nothing on stdout.
 
 A host written in Python can call the same engine without a process:
 
@@ -142,10 +144,11 @@ never sets it.
 `{"id", "text", "confidence", "domain", "created_at", "revised_at", "revisions", "supports", "supports_total"}`.
 Mnemos keeps a belief by agent alone (the table has no person or project).
 So a belief belongs to this scope only through the memories it rests on. It
-is listed when at least one memory supporting it is this agent's, about this
-person, in this project. `supports` names only those memories (at most 50),
-and `supports_total` counts them. A belief that rests only on another
-person's memories, or on no memory at all, is not listed.
+is listed when every memory supporting it is this agent's, about this
+person, in this project. `supports` names those memories (at most 50), and
+`supports_total` counts them. A belief that rests, even in part, on another
+person's or project's memories is not listed, because its words may carry
+what was said there. Nor is one that rests on no memory at all.
 
 ## Only this resident
 
@@ -200,6 +203,11 @@ The tests check these things:
 - **An idle store.** If nobody has the store open, there's no `-wal` beside
   it. After a view of every section, the store's bytes are identical, and so
   is its folder's listing: no `-wal`, `-shm` or journal appears.
+  One case is outside this promise: a `-wal` left behind by a writer that
+  was killed, with no `-shm` beside it. Reading such a store makes SQLite
+  create a `-shm` again; the main file and the `-wal` keep their bytes. (An
+  independent check saw this by killing a writer and deleting its `-shm`; no
+  test in the suite covers it.)
 - **A live writer.** Suppose another process holds the store open in WAL
   mode, and its last commit is still only in the `-wal`. The view reads that
   newest commit. The main file's bytes are unchanged, the `-wal`'s bytes are

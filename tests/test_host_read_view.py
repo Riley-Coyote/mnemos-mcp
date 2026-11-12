@@ -411,7 +411,7 @@ def test_nothing_of_another_resident_appears_in_any_reply(store):
     summary = replies[0]
     assert summary["counts"] == {
         "memories": {"active": 3, "dormant": 0, "archived": 0}, "standing": 1, "journal": 1,
-        "notes": {"all": 2, "unread": 1}, "handoffs": 1, "beliefs": 2,
+        "notes": {"all": 2, "unread": 1}, "handoffs": 1, "beliefs": 1,
     }
     seen = {s: [i for r in replies if r["section"] == s for i in r["items"]] for s in LISTS}
     assert [m["words"] for m in seen["memories"]] == [*WORDS["wren"], WORDS["wren_standing"]]
@@ -425,18 +425,18 @@ def test_nothing_of_another_resident_appears_in_any_reply(store):
 
 def test_beliefs_are_kept_to_the_whole_scope(store):
     """The beliefs table is the agent's alone (no person, no project): a
-    belief is this scope's only through a memory of this scope it rests on,
-    and it names only those."""
+    belief is this scope's only when every memory it rests on is this
+    scope's. One that also rests on another person's memory is shown to
+    neither, because its words may carry what the other person said."""
     beliefs = _view(store["db"], "beliefs")["items"]
-    assert [b["text"] for b in beliefs] == ["Pat keeps paper records close at hand.",
-                                            "Binders and hooks both get used here."]
-    assert beliefs[0]["supports"] == [store["wren"][0]]
-    assert beliefs[1]["supports"] == [store["wren"][1]] and beliefs[1]["supports_total"] == 1
+    assert [b["text"] for b in beliefs] == ["Pat keeps paper records close at hand."]
+    assert beliefs[0]["supports"] == [store["wren"][0]] and beliefs[0]["supports_total"] == 1
     assert store["quinn"][0] not in json.dumps(beliefs)
     quinn = host_view.read_view(protocol=1, db_path=str(store["db"]), section="beliefs", **QUINN)["items"]
-    assert [b["text"] for b in quinn] == ["Binders and hooks both get used here.",
-                                          "Quinn trusts hooks more than drawers."]
+    assert [b["text"] for b in quinn] == ["Quinn trusts hooks more than drawers."]
     assert quinn[0]["supports"] == [store["quinn"][0]]
+    for shown in (beliefs, quinn):
+        assert "Binders and hooks both get used here." not in json.dumps(shown)
 
 
 # ── Bounds ──
