@@ -121,10 +121,19 @@ as it says it. The store's path appears nowhere in a reply.
 "change_token": "…32 hex characters…"
 ```
 
-`unread` counts the agent's notes the person hasn't read. The
-`change_token` stays the same until something a section would show changes.
-Another resident's writes don't move it. A host can compare tokens and skip
-a refresh when they match.
+`unread` counts the agent's notes the person hasn't read. Each count is
+counted by the database, through the same scope the section reads, so it is
+how many items paging that section to its end gives.
+
+The `change_token` stays the same until something a section would show
+changes, and changes when it does. Another resident's writes don't move it,
+nor do this agent's writes about another person or in another project. A
+host can compare tokens and skip a refresh when they match. The token is made
+from the stored values the sections show, not from the items as shown, so it
+can also move when a value changes but looks the same on screen (a memory's
+`alive` is shown to three places). A token is only comparable with tokens
+from the same Mnemos version, which every reply names: after an update, the
+first token can differ even though nothing changed.
 
 **memories** and **standing** items have the shape `mnemos memories --json`
 gives, plus `standing`:
@@ -182,9 +191,12 @@ schedule, no studio files and no keys.
 
 ## How fast
 
-`summary` reads the whole scope every time it is asked: it builds every
-memory, entry and note to count them and to make the `change_token`. So its
-time grows with the memory. The list sections read one page.
+`summary` counts each section with the database and makes its token from the
+stored values those sections show, read in one fixed order. It reads every
+memory of the scope to do that, so its time still grows with the memory, but
+it builds no item and writes no JSON for it. The list sections read one page.
+`standing` puts the scope's memories in order once, reading only each one's
+time, id and mark, and then reads its page's memories by id.
 
 Measured with `uv run python examples/host_read_view/measure.py`, on an
 Apple M4 Max running macOS 27.0.1, with Python 3.12.11 and SQLite 3.50.4. The
@@ -197,23 +209,29 @@ second is as large, so reading "only this resident" is paid for in full.
 Each cell is in milliseconds: the median, then the worst in brackets, of 7
 calls after one warm-up. The first number calls `read_view` in the host's own
 Python process. The second runs `mnemos view` as a process of its own, which
-pays for Python's start-up (77 ms median on its own, for a request refused
+pays for Python's start-up (79 ms median on its own, for a request refused
 before any store is opened). A list section asks for its first page of 50.
 
 | Section | 1,000 memories | 10,000 memories | 50,000 memories |
 | --- | --- | --- | --- |
-| summary | 13.1 (14.0) · 89.3 (105.3) | 133.0 (148.1) · 212.7 (226.7) | 739.3 (888.2) · 830.9 (1,076.1) |
-| memories | 2.2 (2.4) · 78.4 (82.5) | 9.1 (10.2) · 86.1 (90.2) | 35.7 (36.9) · 112.5 (121.4) |
-| standing | 7.6 (8.1) · 86.6 (99.6) | 62.5 (64.4) · 140.1 (147.2) | 222.5 (237.9) · 298.6 (305.5) |
-| journal | 1.3 (1.5) · 77.8 (86.4) | 2.4 (2.6) · 79.5 (83.1) | 7.5 (8.3) · 83.7 (84.3) |
-| notes | 1.4 (1.6) · 78.1 (84.5) | 3.4 (3.6) · 82.1 (92.3) | 12.0 (12.4) · 85.3 (87.8) |
-| handoffs | 1.1 (1.5) · 81.4 (90.6) | 1.2 (1.5) · 84.6 (98.0) | 1.0 (1.2) · 73.9 (75.8) |
-| beliefs | 1.6 (1.9) · 79.9 (83.7) | 8.1 (8.5) · 82.5 (85.3) | 84.6 (85.2) · 157.6 (160.0) |
+| summary | 4.7 (5.6) · 96.4 (128.2) | 38.4 (44.9) · 113.5 (118.0) | 198.9 (222.6) · 274.5 (278.5) |
+| memories | 2.9 (3.0) · 89.2 (106.4) | 8.2 (8.9) · 84.4 (88.4) | 35.0 (35.7) · 111.7 (112.5) |
+| standing | 2.3 (2.6) · 81.1 (95.8) | 12.5 (12.8) · 89.8 (96.0) | 51.5 (52.6) · 129.7 (130.7) |
+| journal | 1.3 (1.6) · 82.2 (86.2) | 2.2 (2.8) · 78.3 (80.7) | 7.7 (8.0) · 85.8 (86.8) |
+| notes | 1.2 (1.3) · 80.6 (85.0) | 3.1 (7.3) · 79.6 (81.6) | 12.1 (12.1) · 88.1 (90.8) |
+| handoffs | 0.9 (1.3) · 79.9 (83.9) | 1.0 (1.0) · 77.6 (79.4) | 0.8 (0.9) · 75.4 (79.6) |
+| beliefs | 1.0 (1.1) · 76.1 (81.0) | 2.1 (2.3) · 77.4 (81.1) | 5.5 (5.9) · 84.1 (84.9) |
 | store file | 10.6 MB | 69.3 MB | 332.1 MB |
 
+Before, when `summary` built every item and `standing` sorted the scope
+again for every 500 memories it looked through, the same script on the same
+machine and day measured `summary` at 12.5, 128.3 and 774.1 ms in-process
+(at 1,000, 10,000 and 50,000 memories) and `standing` at 7.9, 58.8 and
+221.7 ms.
+
 With another process holding the 50,000-memory store open for writing, its
-newest commit still only in the write-ahead log, `summary` took 730.5 ms
-(772.5) in-process and 857.0 ms (891.4) through `mnemos view`, about the
+newest commit still only in the write-ahead log, `summary` took 199.5 ms
+(202.0) in-process and 281.7 ms (349.7) through `mnemos view`, about the
 same as with nobody writing.
 
 A reply's size doesn't grow with the memory. `summary` was 367 to 377 bytes.
@@ -224,15 +242,16 @@ larger ones were built faster, by copying the rows that path wrote for the
 first memory, entry, note and belief, with new ids, words and times. At
 1,000 memories, a store built that way gave the same `summary` counts and the
 same number of items in every section as the one written through the normal
-path, and its in-process timings were within 5 ms of it. The copies leave
+path, and its in-process timings were within 1 ms of it. The copies leave
 out the links Mnemos draws between similar memories, which the view never
 reads. So those files are smaller than a real store of that size would be.
 
 **How often to ask.** Up to 10,000 memories, asking for `summary` when the
-tab opens and then every few seconds while it is in view costs little. At
-50,000, one `summary` takes most of a second, so ask for it when the tab opens
-or comes back into view, and no more than about every 30 seconds while it
-stays open.
+tab opens and then every few seconds while it is in view costs little: under
+50 ms in-process. At 50,000, one `summary` takes about a fifth of a second
+in-process and about a quarter to a third of a second through `mnemos view`,
+so ask for it when the tab opens or comes back into view, and no more than
+about every 10 seconds while it stays open.
 
 ## Reads, never writes, never wakes
 

@@ -39,6 +39,7 @@ import base64
 import binascii
 import hashlib
 import json
+import marshal
 import sqlite3
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -67,8 +68,9 @@ MOST_REPLY_BYTES = 256 * 1024
 MOST_TEXT_CHARS = 16_384
 #: A belief names at most this many of its supporting memories.
 MOST_SUPPORTS = 50
-#: Memories read at a time while the standing section looks for standing ones.
-_SCAN_CHUNK = 500
+#: The states the memories and standing sections show: the ones
+#: ``_Reading.memory_rows`` reads unless it is asked for another.
+_SHOWN_STATES = ("active", "dormant")
 
 _SCOPE_FLAGS = (
     ("db_path", "--db-path"),
@@ -230,18 +232,24 @@ def _handoff_item(handoff: Mapping[str, Any]) -> dict[str, Any]:
     return _clip({"text": handoff["text"], "created_at": handoff["at"], "model": handoff["model"] or None}, "text")
 
 
-def _scoped_beliefs(reading: _Reading) -> list[dict[str, Any]]:
-    """This scope's beliefs, oldest first. A belief is kept by agent alone
-    (the table has no person or project), so a belief belongs to this scope
-    only through what it rests on: it is shown when every memory supporting
-    it is this agent's, about this person, in this project. One that also
-    rests on a memory from elsewhere is not shown, because its words may
-    carry what was said there; nor is one that rests on no memory at all."""
+#: What a belief row is read with: everything the beliefs section shows of it.
+_BELIEF_COLUMNS = ("id", "content", "confidence", "domain", "created_at", "last_revised",
+                   "revision_history", "supporting_engram_ids")
+
+
+def _scoped_belief_rows(reading: _Reading) -> list[tuple[sqlite3.Row, list[str]]]:
+    """This scope's beliefs, oldest first, each with the memories it rests
+    on. A belief is kept by agent alone (the table has no person or project),
+    so a belief belongs to this scope only through what it rests on: it is
+    shown when every memory supporting it is this agent's, about this person,
+    in this project. One that also rests on a memory from elsewhere is not
+    shown, because its words may carry what was said there; nor is one that
+    rests on no memory at all. The one reading of them, for the section and
+    for the summary's count and token."""
     if not reading.has("beliefs"):
         return []
     rows = reading.c.execute(
-        "SELECT id, content, confidence, domain, created_at, last_revised, revision_history, "
-        "supporting_engram_ids FROM beliefs WHERE agent_id=? AND superseded_by IS NULL "
+        f"SELECT {', '.join(_BELIEF_COLUMNS)} FROM beliefs WHERE agent_id=? AND superseded_by IS NULL "
         "ORDER BY created_at, id", (reading.scope.agent_id,)).fetchall()
     supports: dict[str, list[str]] = {}
     for row in rows:
@@ -250,24 +258,80 @@ def _scoped_beliefs(reading: _Reading) -> list[dict[str, Any]]:
         except ValueError:
             named = []
         supports[row["id"]] = [s for s in named if isinstance(s, str)] if isinstance(named, list) else []
-    wanted = {s for named in supports.values() for s in named}
-    here = {row["id"] for row in reading.kept_rows(wanted)} if wanted else set()
+    here = _here(reading, {s for named in supports.values() for s in named})
     out = []
     for row in rows:
         own = [s for s in supports[row["id"]] if s in here]
-        if not own or len(own) != len(supports[row["id"]]):
-            continue
-        try:
-            history = json.loads(row["revision_history"] or "[]")
-        except ValueError:
-            history = []
-        out.append(_clip({
-            "id": row["id"], "text": row["content"], "confidence": row["confidence"],
-            "domain": row["domain"], "created_at": row["created_at"], "revised_at": row["last_revised"],
-            "revisions": len(history) if isinstance(history, list) else 0,
-            "supports": own[:MOST_SUPPORTS], "supports_total": len(own),
-        }, "text"))
+        if own and len(own) == len(supports[row["id"]]):
+            out.append((row, own))
     return out
+
+
+def _here(reading: _Reading, ids: set[str]) -> set[str]:
+    """Which of ``ids`` are memories of this scope, in any state. Each is
+    looked up by its id, and kept only if the scope's clause holds for it.
+    (Asked with the clause and an id list together, SQLite reads the whole
+    scope through its index instead, once for every 400 ids.)"""
+    clause, scope = reading.scoped("engrams", owner="owner_agent_id")
+    wanted, found = sorted(ids), set()
+    for start in range(0, len(wanted), 400):
+        chunk = wanted[start:start + 400]
+        values = ", ".join("(?)" for _ in chunk)
+        found.update(row[0] for row in reading.c.execute(
+            f"WITH wanted(wanted_id) AS (VALUES {values}) SELECT engrams.id FROM wanted "
+            f"CROSS JOIN engrams ON engrams.id = wanted_id WHERE {clause}", (*chunk, *scope)))
+    return found
+
+
+def _belief_item(row: sqlite3.Row, own: list[str]) -> dict[str, Any]:
+    try:
+        history = json.loads(row["revision_history"] or "[]")
+    except ValueError:
+        history = []
+    return _clip({
+        "id": row["id"], "text": row["content"], "confidence": row["confidence"],
+        "domain": row["domain"], "created_at": row["created_at"], "revised_at": row["last_revised"],
+        "revisions": len(history) if isinstance(history, list) else 0,
+        "supports": own[:MOST_SUPPORTS], "supports_total": len(own),
+    }, "text")
+
+
+def _scoped_beliefs(reading: _Reading) -> list[dict[str, Any]]:
+    """The beliefs section's items: ``_scoped_belief_rows``, as shown."""
+    return [_belief_item(row, own) for row, own in _scoped_belief_rows(reading)]
+
+
+# ── What the memories and standing sections read ──
+
+
+def _shown_memories(reading: _Reading) -> tuple[str, tuple[str, ...]]:
+    """The memories the memories and standing sections show: this scope's,
+    active or dormant, as ``_Reading.memory_rows`` keeps to them. The one
+    clause the standing page, the standing count and the token all read
+    through."""
+    clause, scope = reading.scoped("engrams", owner="owner_agent_id")
+    marks = ", ".join("?" for _ in _SHOWN_STATES)
+    return f"{clause} AND state IN ({marks})", (*scope, *_SHOWN_STATES)
+
+
+def _is_standing(reading: _Reading) -> str:
+    """Whether a memory is standing, as SQL. A store from before memories
+    could stand has none standing."""
+    return "standing != 0" if "standing" in reading.columns("engrams") else "0"
+
+
+def _memory_columns(reading: _Reading) -> str:
+    """A memory's columns, exactly as ``_Reading.memory_rows`` reads them
+    (with its stand-ins on an older store), so a standing item is built from
+    the same row the memories section builds it from."""
+    def col(name: str, default: str = "''") -> str:
+        return reading.col("engrams", name, default)
+
+    return ", ".join((
+        "id", "content", col("impact"), "kind", "accessibility", "state", "created_at", "last_accessed",
+        col("author_kind", "'unknown'"), col("author_model"), col("author_session"), col("lineage", "'{}'"),
+        col("standing", "0"), col("strength", "0.5"), col("stability", "0.5"),
+    ))
 
 
 # ── The sections ──
@@ -292,6 +356,27 @@ def _page_newest_first(fetch: Callable[[str, tuple], list[dict]], build: Callabl
     return [build(r) for r in page], [[r["at"], r["id"]] for r in page], len(rows) > limit
 
 
+def _in_order(reading: _Reading, start: int) -> Any:
+    """Each memory the memories section shows, as ``(place, id, standing)``
+    in that section's order (``created_at``, then ``id``), from just past
+    place ``start``. One query of these three columns alone, put in order
+    once. Python orders it, because it orders text as SQLite does (by code
+    point, which is UTF-8's byte order) and faster than SQLite's own sort of
+    a whole scope. A store holding mixed kinds of value in those columns
+    can't be ordered that way, so SQLite orders it, by the same rule
+    ``_Reading.memory_rows`` reads in."""
+    where, params = _shown_memories(reading)
+    cursor = reading.c.cursor()
+    cursor.row_factory = None
+    query = f"SELECT created_at, id, {_is_standing(reading)} FROM engrams WHERE {where}"
+    rows = cursor.execute(query, params).fetchall()
+    try:
+        rows.sort()
+    except TypeError:
+        rows = cursor.execute(f"{query} ORDER BY created_at, id", params).fetchall()
+    return ((place + 1, rows[place][1], rows[place][2]) for place in range(start, len(rows)))
+
+
 def _page_memories(reading: _Reading, after: Any, limit: int,
                    standing_only: bool) -> tuple[list[dict], list[Any], bool]:
     """Memories oldest first, as ``mnemos memories`` orders them; a cursor
@@ -301,18 +386,22 @@ def _page_memories(reading: _Reading, after: Any, limit: int,
         rows = reading.memory_rows(limit=limit + 1, offset=start)
         page = rows[:limit]
         return _memory_items(reading, page), [start + i + 1 for i in range(len(page))], len(rows) > limit
-    found: list[tuple[int, sqlite3.Row]] = []
-    offset = start
-    while len(found) <= limit:
-        chunk = reading.memory_rows(limit=_SCAN_CHUNK, offset=offset)
-        for i, row in enumerate(chunk):
-            if row["standing"]:
-                found.append((offset + i + 1, row))
-        if len(chunk) < _SCAN_CHUNK:
-            break
-        offset += len(chunk)
+    found: list[tuple[int, str]] = []
+    for place, memory_id, standing in _in_order(reading, start):
+        if standing:
+            found.append((place, memory_id))
+            if len(found) > limit:
+                break
     page = found[:limit]
-    return _memory_items(reading, [row for _, row in page]), [pos for pos, _ in page], len(found) > limit
+    rows = {}
+    if page:
+        marks = ", ".join("?" for _ in page)
+        rows = {row["id"]: row for row in reading.c.execute(
+            f"SELECT {_memory_columns(reading)} FROM engrams WHERE id IN ({marks})",
+            [memory_id for _, memory_id in page])}
+    page = [(place, memory_id) for place, memory_id in page if memory_id in rows]
+    return (_memory_items(reading, [rows[memory_id] for _, memory_id in page]), [place for place, _ in page],
+            len(found) > limit)
 
 
 def _page_list(items: list[dict], after: Any, limit: int) -> tuple[list[dict], list[Any], bool]:
@@ -335,31 +424,91 @@ def _page(reading: _Reading, section: str, after: Any, limit: int) -> tuple[list
     return _page_list(_scoped_beliefs(reading), after, limit)
 
 
+#: The stored values the token is made from, table by table: every column a
+#: section shows something of. A memory the sections don't show (archived)
+#: still counts through what an item's ``kept`` follows back to.
+_TOKEN_COLUMNS = {
+    "memories": ("id", "content", "impact", "state", "created_at", "accessibility", "author_kind",
+                 "author_session", "lineage", "standing"),
+    "earlier": ("id", "state", "created_at", "lineage"),
+    "journal_entries": ("id", "created_at", "text", "mood", "written", "model_id"),
+    "notes": ("id", "created_at", "kind", "text", "author", "model_id", "in_reply_to", "read_at",
+              "delivered_at"),
+}
+
+
+def _stored(reading: _Reading, table: str, columns: tuple[str, ...], where: str,
+            params: tuple) -> list[tuple]:
+    """The raw stored values of ``columns`` for the rows ``where`` names, as
+    plain tuples in id order (sorted here: the database would sort the
+    whole rows). A column an older store lacks is left out: it shows the
+    same stand-in everywhere."""
+    have = reading.columns(table)
+    cursor = reading.c.cursor()
+    cursor.row_factory = None
+    rows = cursor.execute(
+        f"SELECT {', '.join(name for name in columns if name in have)} FROM {table} WHERE {where}",
+        params).fetchall()
+    try:
+        rows.sort(key=_first)
+    except TypeError:  # ids of mixed kinds: still one fixed order
+        rows.sort(key=lambda row: (type(row[0]).__name__, repr(row[0])))
+    return rows
+
+
+def _first(row: tuple) -> Any:
+    return row[0]
+
+
+def _count(reading: _Reading, table: str, where: str, params: tuple) -> int:
+    return int(reading.c.execute(f"SELECT count(*) FROM {table} WHERE {where}", params).fetchone()[0])
+
+
 def _summary(reading: _Reading) -> dict[str, Any]:
-    """How much each section holds, and a token that changes whenever what
-    any section would show changes."""
-    rows = reading.memory_rows()
-    memories = _memory_items(reading, rows)
-    journal = [_journal_item(e) for e in _newest_first(reading.journal_rows(), None)]
-    notes = [_note_item(n) for n in _newest_first(reading.note_rows(), None)]
-    handoffs = [_handoff_item(h) for h in reading.handoffs()]
-    beliefs = _scoped_beliefs(reading)
-    states = reading.state_counts()
+    """How much each section holds, counted by the database through the same
+    scope the sections read, and a token that changes whenever what any
+    section would show changes. The token is made from the stored values
+    those sections draw on, read in a fixed order; no item is built for it."""
     digest = hashlib.sha256()
-    for name, items in (("memories", memories), ("journal", journal), ("notes", notes),
-                        ("handoffs", handoffs), ("beliefs", beliefs)):
-        digest.update(name.encode())
-        digest.update(json.dumps(items, sort_keys=True, ensure_ascii=False).encode())
-    digest.update(json.dumps(states, sort_keys=True).encode())
+
+    def feed(name: str, values: Any) -> None:
+        # marshal's first format: exact, the same bytes for the same values
+        digest.update(marshal.dumps((name, values), 0))
+
+    shown, shown_params = _shown_memories(reading)
+    scope, scope_params = reading.scoped("engrams", owner="owner_agent_id")
+    feed("memories", _stored(reading, "engrams", _TOKEN_COLUMNS["memories"], shown, shown_params))
+    marks = ", ".join("?" for _ in _SHOWN_STATES)
+    feed("earlier", _stored(reading, "engrams", _TOKEN_COLUMNS["earlier"],
+                            f"{scope} AND (state IS NULL OR state NOT IN ({marks}))",
+                            (*scope_params, *_SHOWN_STATES)))
+    states = reading.state_counts()
+    feed("states", sorted(states.items(), key=repr))
+    standing = _count(reading, "engrams", f"{shown} AND {_is_standing(reading)}", shown_params)
+
+    journal = notes = unread = 0
+    for table in ("journal_entries", "notes"):
+        if not reading.has(table):
+            continue
+        where, params = reading.scoped(table)
+        feed(table, _stored(reading, table, _TOKEN_COLUMNS[table], where, params))
+        if table == "journal_entries":
+            journal = _count(reading, table, where, params)
+        else:
+            notes, unread = reading.c.execute(
+                "SELECT count(*), coalesce(sum(author = 'agent' AND (read_at IS NULL OR read_at = '')), 0) "
+                f"FROM notes WHERE {where}", params).fetchone()
+
+    handoffs = reading.handoffs()
+    feed("handoffs", [(h["text"], h["at"], h["model"]) for h in handoffs])
+    beliefs = _scoped_belief_rows(reading)
+    feed("beliefs", [(tuple(row), own) for row, own in beliefs])
     return {
         "counts": {
             "memories": {name: int(states.get(name, 0)) for name in ("active", "dormant", "archived")},
-            "standing": sum(1 for m in memories if m["standing"]),
-            "journal": len(journal),
-            "notes": {
-                "all": len(notes),
-                "unread": sum(1 for n in notes if n["author"] == "agent" and not n["read_at"]),
-            },
+            "standing": standing,
+            "journal": journal,
+            "notes": {"all": int(notes), "unread": int(unread)},
             "handoffs": len(handoffs),
             "beliefs": len(beliefs),
         },

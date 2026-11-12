@@ -526,6 +526,226 @@ def test_the_summary_token_changes_only_when_the_memory_does(store):
     assert _view(store["db"], "summary")["change_token"] != one
 
 
+ELSEWHERE = {"agent_id": "wren", "person_id": "pat-example", "project_scope": "harbour-office"}
+
+
+def _token(db: Path, scope: dict[str, str] | None = None) -> str:
+    return host_view.read_view(protocol=1, db_path=str(db), section="summary",
+                               **(scope or WREN))["change_token"]
+
+
+def _run(db: Path, scope: dict[str, str], act) -> object:
+    runtime = MnemosRuntime(db_path=str(db), use_dedicated_model=False, **scope)
+    try:
+        return act(runtime)
+    finally:
+        runtime.close()
+
+
+def _in_store(db: Path, act) -> object:
+    engrams = EngramStore(db)
+    try:
+        return act(engrams)
+    finally:
+        engrams.close()
+
+
+def _sql(db: Path, statement: str, *params: object) -> None:
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute(statement, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _first(db: Path, query: str, *params: object) -> str:
+    conn = open_read_only(db)
+    try:
+        return conn.execute(query, params).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def test_the_summary_token_moves_for_every_change_a_section_shows_and_no_other(store):
+    """One table: every kind of change a section can show, each made the
+    way Mnemos makes it where it has a way, must move the token; every
+    change outside the scope (the other resident in the same file, this
+    agent's memory of another person, this agent and person in another
+    project) must not. Each outside change must move its own scope's token,
+    so a write that landed nowhere can't pass for one that was ignored."""
+    db = store["db"]
+    kept: dict[str, str] = {}
+    wren_note = _first(db, "SELECT id FROM notes WHERE agent_id='wren' AND person_id='pat-example' "
+                           "AND author='agent'")
+
+    def capture(scope, words, name):
+        kept[name] = _run(db, scope, lambda r: _memory_id(r.capture(words, signed_as=SIGNED)))
+
+    def belief(name, supports, agent="wren"):
+        made = Belief(agent_id=agent, content=f"A belief: {name}.", confidence=0.5,
+                      supporting_engram_ids=supports, source="agent")
+        kept[name] = made.id
+        _in_store(db, lambda s: s.save_belief(made))
+
+    def rest_on(name, supports):
+        def act(s):
+            held = s.get_belief(kept[name])
+            held.supporting_engram_ids = supports
+            s.save_belief(held)
+        _in_store(db, act)
+
+    def otter_entries(r):
+        r.journal("Otter's journal: the pears are in.", signed_as=SIGNED)
+        r.note("I noticed the pear ladder is loose.", kind="noticed", signed_as=SIGNED)
+        r.person_note("Sam will fix the ladder.")
+        r.handoff("Next time: the ladder.", signed_as=SIGNED)
+
+    in_scope = [
+        ("a new memory", lambda: capture(WREN, "Pat keeps the spare lamp wick in the drawer.", "wick")),
+        ("a corrected memory", lambda: kept.update(corrected=_run(db, WREN, lambda r: r.correct_memory(
+            store["wren"][0], "The keeper's log lives in the red binder now.", person=False,
+            signed_as=SIGNED))["id"])),
+        ("a forgotten memory", lambda: _run(db, WREN, lambda r: r.forget_memory(
+            store["wren"][1], person=False, signed_as=SIGNED))),
+        ("standing turned on", lambda: _in_store(db, lambda s: s.set_standing(kept["wick"], True, by=SIGNED))),
+        ("standing turned off", lambda: _in_store(db, lambda s: s.set_standing(kept["wick"], False, by=SIGNED))),
+        ("a memory fading (how alive it is)", lambda: _sql(
+            db, "UPDATE engrams SET accessibility = accessibility / 2 WHERE id = ?", kept["wick"])),
+        ("a memory going dormant", lambda: _sql(db, "UPDATE engrams SET state = 'dormant' WHERE id = ?",
+                                               kept["wick"])),
+        ("a new journal entry", lambda: _run(db, WREN, lambda r: r.journal("The lamp burned all night.",
+                                                                           signed_as=SIGNED))),
+        ("a new note from the agent", lambda: _run(db, WREN, lambda r: r.note(
+            "I noticed the wick is short.", kind="noticed", signed_as=SIGNED))),
+        ("a reply to a note", lambda: _run(db, WREN, lambda r: r.reply_to_note(wren_note, "Ordered more."))),
+        ("a new note from the person", lambda: _run(db, WREN, lambda r: r.person_note("The lamp is lovely."))),
+        ("a note read by the person", lambda: _run(db, WREN, lambda r: r.mark_notes_read([wren_note]))),
+        ("a person's note delivered", lambda: _sql(
+            db, "UPDATE notes SET delivered_at = '2026-11-12T09:00:00+00:00' WHERE agent_id = 'wren' "
+                "AND person_id = 'pat-example' AND project_scope = 'lighthouse' AND author = 'person'")),
+        ("a new handoff", lambda: _run(db, WREN, lambda r: r.handoff("Next time: the wick.", signed_as=SIGNED))),
+        ("a belief gained", lambda: belief("wick belief", [kept["wick"]])),
+        ("a belief revised", lambda: _in_store(db, lambda s: s.revise_belief(kept["wick belief"], 0.8, "seen"))),
+        ("a belief lost: it comes to rest on another person's memory too",
+         lambda: rest_on("wick belief", [kept["wick"], store["quinn"][0]])),
+        ("a belief gained: it rests on this scope's memories alone again",
+         lambda: rest_on("wick belief", [kept["wick"]])),
+        # the fixture's "Pat keeps paper records" rests on the memory the correction archived
+        ("a belief lost: a memory it rests on is deleted", lambda: _in_store(
+            db, lambda s: s.delete_engram(store["wren"][0]))),
+        ("a belief retired", lambda: _in_store(db, lambda s: s.supersede_belief(kept["wick belief"]))),
+    ]
+    outside = [
+        ("another resident's new memory", OTTER, lambda: capture(OTTER, "Otter counts the pears.", "pears")),
+        ("another resident's memory forgotten", OTTER, lambda: _run(db, OTTER, lambda r: r.forget_memory(
+            store["otter"][0], person=False, signed_as=SIGNED))),
+        ("another resident's standing turned on", OTTER, lambda: _in_store(
+            db, lambda s: s.set_standing(kept["pears"], True, by=SIGNED))),
+        ("another resident's journal, notes and handoff", OTTER, lambda: _run(db, OTTER, otter_entries)),
+        ("another resident's belief", OTTER, lambda: belief("orchard belief", [kept["pears"]], agent="otter")),
+        ("another person's new memory", QUINN, lambda: capture(QUINN, "Quinn oils the hinges.", "hinges")),
+        ("another person's memory corrected", QUINN, lambda: _run(db, QUINN, lambda r: r.correct_memory(
+            store["quinn"][0], "Quinn's spare key hangs on the blue hook.", person=False, signed_as=SIGNED))),
+        ("another person's journal entry and note", QUINN, lambda: _run(db, QUINN, lambda r: (
+            r.journal("Quinn came by.", signed_as=SIGNED),
+            r.note("I noticed Quinn's hinges squeak.", kind="noticed", signed_as=SIGNED)))),
+        ("a belief of this agent's resting only on another person's memory", QUINN,
+         lambda: belief("hinge belief", [kept["hinges"]])),
+        ("a belief of this agent's resting on this person's memory and another's", None,
+         lambda: belief("mixed belief", [kept["wick"], kept["hinges"]])),
+        ("another project's new memory", ELSEWHERE, lambda: capture(ELSEWHERE, "The office kettle is new.",
+                                                                    "kettle")),
+        ("another project's journal, note and handoff", ELSEWHERE, lambda: _run(db, ELSEWHERE, lambda r: (
+            r.journal("The office was quiet.", signed_as=SIGNED),
+            r.note("I noticed the office kettle.", kind="noticed", signed_as=SIGNED),
+            r.handoff("Next time: the office.", signed_as=SIGNED)))),
+    ]
+    still, moved, unseen = [], [], []
+    for name, change in in_scope:
+        before = _token(db)
+        change()
+        if _token(db) == before:
+            still.append(name)
+    for name, theirs, change in outside:
+        before, their_before = _token(db), _token(db, theirs) if theirs else None
+        change()
+        if _token(db) != before:
+            moved.append(name)
+        if theirs and _token(db, theirs) == their_before:
+            unseen.append(name)
+    assert len(in_scope) + len(outside) == 32
+    assert still == [], f"changes a section shows that left the token as it was: {still}"
+    assert moved == [], f"changes outside the scope that moved the token: {moved}"
+    assert unseen == [], f"outside changes their own scope's token didn't see: {unseen}"
+
+
+def test_the_summary_counts_what_the_sections_give(store):
+    """Each count is how many items paging that section to its end gives,
+    and the standing section is the memories section's standing ones, at
+    the same places."""
+    db = store["db"]
+    _run(db, WREN, lambda r: [r.capture(f"Standing rule {n}.", signed_as=SIGNED, standing=n % 2 == 0)
+                              for n in range(9)])
+    for scope in (WREN, QUINN, OTTER):
+        summary = host_view.read_view(protocol=1, db_path=str(db), section="summary", **scope)["counts"]
+        seen: dict[str, list[tuple[dict, str | None]]] = {}
+        for section in LISTS:
+            cursor, seen[section] = None, []
+            while True:
+                reply = host_view.read_view(protocol=1, db_path=str(db), section=section, limit=2,
+                                            cursor=cursor, **scope)
+                seen[section] += [(item, reply["next_cursor"]) for item in reply["items"]]
+                if not reply["truncated"]:
+                    break
+                cursor = reply["next_cursor"]
+        notes = [item for item, _ in seen["notes"]]
+        assert summary == {
+            "memories": {"active": len(seen["memories"]), "dormant": 0, "archived": 0},
+            "standing": len(seen["standing"]), "journal": len(seen["journal"]),
+            "notes": {"all": len(notes),
+                      "unread": sum(1 for n in notes if n["author"] == "agent" and not n["read_at"])},
+            "handoffs": len(seen["handoffs"]), "beliefs": len(seen["beliefs"]),
+        }, scope
+        memories = [item for item, _ in seen["memories"]]
+        assert [item for item, _ in seen["standing"]] == [m for m in memories if m["standing"]]
+    assert summary["standing"] == 1 and len(memories) == 3  # otter's, the last read
+    wren = host_view.read_view(protocol=1, db_path=str(db), section="summary", **WREN)["counts"]
+    assert wren["standing"] == 6 and wren["memories"]["active"] == 12
+    # a standing page's cursor is a place in the memories order, as it always was
+    first = _view(db, "standing", limit=2)
+    places = json.loads(base64.urlsafe_b64decode(first["next_cursor"] + "=" * (-len(first["next_cursor"]) % 4)))
+    every = [m["id"] for m in _view(db, "memories", limit=200)["items"]]
+    assert places == {"s": "standing", "a": every.index(first["items"][-1]["id"]) + 1}
+
+
+def test_values_of_mixed_kinds_are_still_put_in_one_order(store):
+    """A store can hold a value of another kind where text is expected (a
+    time or an id kept as bytes). The standing section then falls back to
+    SQLite's own order, the memories section's, and the token to a fixed
+    order of its own."""
+    db = store["db"]
+    made = _run(db, WREN, lambda r: [_memory_id(r.capture(f"Rule {n} of the lamp room.", signed_as=SIGNED,
+                                                          standing=True)) for n in range(4)])
+    _sql(db, "UPDATE engrams SET created_at = CAST(created_at AS BLOB) WHERE id = ?", made[1])
+    _run(db, WREN, lambda r: r.journal("A second entry, kept as text.", signed_as=SIGNED))
+    _sql(db, "UPDATE journal_entries SET id = CAST(id AS BLOB) WHERE agent_id = 'wren' AND text LIKE 'A quiet day%'")
+    every = [m["id"] for m in _view(db, "memories", limit=200)["items"]]
+    assert every[-1] == made[1], "SQLite puts a value kept as bytes after every text"
+    standing, cursor = [], None
+    while True:
+        reply = _view(db, "standing", limit=2, cursor=cursor)
+        standing += [m["id"] for m in reply["items"]]
+        if not reply["truncated"]:
+            break
+        cursor = reply["next_cursor"]
+    assert standing == [i for i in every if i in {*made, store["wren"][2]}]
+    one = _token(db)
+    assert _token(db) == one
+    _sql(db, "UPDATE journal_entries SET text = 'Changed.' WHERE agent_id = 'wren' AND typeof(id) = 'blob'")
+    assert _token(db) != one
+
+
 def test_search_is_not_a_section(store, capsys):
     status, reply = _cli(capsys, "--protocol", "1", "--section", "search", "--db-path", str(store["db"]), *_flags())
     assert status == 2 and reply["error"]["code"] == "unknown_section"

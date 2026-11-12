@@ -18,11 +18,20 @@
   `examples/host_read_view/run.py` for two residents in one file.
 - **How fast the view is on a large memory, measured.** `examples/host_read_view/measure.py`
   builds a store of made-up memories at 1,000, 10,000 and 50,000 memories (with a second resident
-  as large in the same file) and times every section, in-process and through `mnemos view`. On an
-  Apple M4 Max, `summary` took a median of 13 ms at 1,000, 133 ms at 10,000 and 739 ms at 50,000 in
-  process, because it reads the whole scope each time. A first page of any list section stayed
-  under 240 ms in process, and a reply's size didn't grow with the memory. The table, and how often
-  a host can reasonably ask for `summary`, are in the "How fast" section of `docs/host-read-view.md`.
+  as large in the same file) and times every section, in-process and through `mnemos view`. A
+  reply's size didn't grow with the memory. The table, and how often a host can reasonably ask for
+  `summary`, are in the "How fast" section of `docs/host-read-view.md`.
+- **The view's `summary` and `standing` stay quick on a large memory.** `summary` used to build
+  every memory, entry and note as a full item and turn them all into JSON, only to count them and
+  make its `change_token`. It now counts with the database, through the same scope the sections
+  read, and makes the token from the stored values the sections show. On an Apple M4 Max, at
+  50,000 memories, it went from 774 ms to 199 ms in process (128 ms to 38 ms at 10,000). The counts
+  are the same as before; the token keeps its promise, and a test of 32 kinds of change (20 a
+  section shows, 12 outside the scope) holds it to that. A token is now only comparable with tokens
+  from the same Mnemos version. `standing` used to sort the whole scope again for every 500
+  memories it looked through; it now puts them in order once, and its first page went from 222 ms
+  to 52 ms, with the same items, order and cursors. `beliefs` went from 105 ms to 6 ms, because the
+  memories a belief rests on are now looked up by id.
 
 ## 0.6.7 (2026-11-11)
 
