@@ -239,4 +239,4 @@ memory, and never overwrites `SOUL.md`, `AGENTS.md`, `MEMORY.md`, or `USER.md`.
 - Model-assisted deep maintenance is disabled unless `deep_maintenance` is enabled and a supported provider key is configured.
 - Provider Mode writes the provider shim, a small gateway hook that loads it, and Mnemos/Hermes config.
 - Sidecar Mode leaves `memory.provider` unchanged and only adds an MCP entry when it can do so safely.
-- `mnemos uninstall --write` takes Mnemos out of Hermes, in every profile: the provider, the server, the plugin and the hook. It leaves anything that isn't Mnemos's, the memories, and `mnemos.json`, which is how connecting again finds them.
+- `mnemos uninstall hermes --write` takes Mnemos out of Hermes' default home (or `HERMES_HOME`), and `mnemos uninstall hermes --profile <name> --write` out of one profile; `mnemos uninstall --all --write` takes it out of every profile, and every other agent. Each takes out the provider, the server, the plugin and the hook. It leaves anything that isn't Mnemos's, the memories, and `mnemos.json`, which is how connecting again finds them.

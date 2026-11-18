@@ -309,6 +309,81 @@ def has_hook(harness: table.Harness, kind: str, agent_id: str, db_path: str) -> 
     )
 
 
+@dataclass
+class Opened:
+    """One memory a harness opens: from a server of its own or a hook."""
+
+    what: str  # "server", "wake hook", "cue hook"
+    source: str  # the file it is in
+    agent_id: str
+    db_path: str  # resolved, expanded
+
+
+def _openclaw_hook_scope() -> tuple[str | None, str | None] | None:
+    """The (agent id, store) OpenClaw's mnemos-wake hook wakes with."""
+    try:
+        text = (openclaw_hook_dir() / "handler.js").read_text()
+    except OSError:
+        return None
+    match = re.search(r"^const ARGS = (\[.*\]);$", text, re.MULTILINE)
+    try:
+        args = json.loads(match.group(1)) if match else None
+    except ValueError:
+        return None
+    return _flags([str(a) for a in args], {}) if isinstance(args, list) else None
+
+
+def memories_opened(harness: table.Harness) -> list[Opened]:
+    """Every memory this harness opens through Mnemos: its own servers, and
+    its wake and cue hooks. A server it borrows is not its own and is left out."""
+    from ..simple_scope import resolve_scope
+
+    def opened(what: str, source: str, found: tuple[str | None, str | None]) -> Opened:
+        scope = resolve_scope(agent_id=found[0], db_path=found[1])
+        return Opened(what, source, scope.agent_id, str(Path(scope.db_path).expanduser()))
+
+    out = [opened("server", s.source, s.scope()) for s in servers(harness) if not s.inherited]
+    if harness.key == "hermes":
+        from ..integrations.hermes.installer import _read_active_provider
+
+        home = hermes_home()
+        kept = _hermes_config()
+        if _read_active_provider(home / "config.yaml") == "mnemos" and (kept.agent_id or kept.db_path):
+            out.append(opened("memory provider", str(home / "mnemos.json"), (kept.agent_id, kept.db_path)))
+        return out
+    if harness.key == "openclaw":
+        found = _openclaw_hook_scope()
+        if found is not None:
+            out.append(opened("wake hook", str(openclaw_hook_dir() / "handler.js"), found))
+        return out
+    path = hooks_path(harness)
+    for what, event, subcommand in (
+        ("wake hook", harness.wake_event, "session-start"), ("cue hook", harness.cue_event, "prompt"),
+    ):
+        if event and path is not None:
+            out.extend(opened(what, str(path), found)
+                       for found in hook_scope(_hook_commands(harness, event, subcommand)))
+    return out
+
+
+def _same_file(a: str, b: str) -> bool:
+    return Path(a).expanduser().resolve() == Path(b).expanduser().resolve()
+
+
+def opened_elsewhere(harness: table.Harness, agent_id: str, db_path: str) -> list[Opened]:
+    """The servers and hooks of this harness that open a memory other than this one."""
+    return [o for o in memories_opened(harness) if not _same_store((o.agent_id, o.db_path), agent_id, db_path)]
+
+
+def who_else_opens(db_path: str, but: table.Harness) -> list[str]:
+    """The other agents on this machine whose own servers or hooks open this store."""
+    return [
+        h.label for h in table.HARNESSES
+        if h.key != but.key and h.level == table.INSTALLS
+        and any(_same_file(o.db_path, db_path) for o in memories_opened(h))
+    ]
+
+
 def on_this_machine(harness: table.Harness) -> bool:
     """Whether the harness is here: its command on PATH."""
     return shutil.which(harness.command) is not None
@@ -555,5 +630,5 @@ metadata:
 # Mnemos wake
 
 Adds the agent's own memory to its bootstrap files when a run starts.
-Written by `mnemos connect openclaw`; remove with `mnemos uninstall`.
+Written by `mnemos connect openclaw`; remove with `mnemos uninstall openclaw --write`.
 """

@@ -172,7 +172,7 @@ tools, and the prompt asks it to keep to what the hour is for (a dream: no
 files, no shell, no web). Each cron job's reply goes nowhere: Hermes
 `--deliver local` keeps it on this machine, and OpenClaw `--no-deliver` sends it
 to no chat or channel. Turn them off with `mnemos connect <agent> --no-hours
---write`; `mnemos uninstall --write` removes the jobs too.
+--write`; `mnemos uninstall <agent> --write` (or `--all`) removes the jobs too.
 
 ## Stored Words and Trust
 
@@ -247,5 +247,6 @@ Before a release:
 - verify a provider key alone sends nothing (`scripts/readiness_check.py`, C5)
 - verify a `GEMINI_API_KEY` alone leaves meaning search local (`mnemos doctor`'s
   Meaning line; `tests/test_meaning_stays_on_this_machine.py`)
-- verify `mnemos uninstall --write` removes only Mnemos's own hooks, servers and
+- verify `mnemos uninstall <agent> --write` touches only that agent, and
+  `mnemos uninstall --all --write` removes only Mnemos's own hooks, servers and
   jobs, and leaves the memories
