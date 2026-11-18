@@ -155,8 +155,83 @@ def test_an_agent_that_already_has_mnemos_keeps_its_memory(agents, tmp_path, cap
     assert "old-codex" in text and "Left where it is" in text
     # Asking for another memory does not move it.
     assert main(["connect", "codex", "--agent-id", "other", "--write"]) == 1
-    assert "I don't move a memory" in _out(capsys)
+    text = _out(capsys)
+    assert "I don't move a memory" in text and "(old-codex, /data/old-codex.db)" in text
+    # It points at the way that touches Codex alone. `mnemos uninstall --write`, which it
+    # named before 2026-11-18, took Mnemos out of every agent on the machine.
+    assert "  mnemos uninstall codex --write\n" in text
+    assert "  mnemos connect codex --agent-id other --write\n" in text
+    assert "mnemos uninstall --write" not in text
     assert _calls(agents) == []
+
+
+def _codex_on_two_other_memories(tmp_path: Path) -> None:
+    """Codex as it was found on Nov 18 2026: its server opened the field's memory,
+    and its wake hook woke it with Claude Code's, which Claude Code itself opens."""
+    mnemos = Path.home() / ".mnemos"
+    (Path.home() / ".claude.json").write_text(json.dumps({"mcpServers": {"mnemos": {
+        "command": MNEMOS, "args": ["serve", "--agent-id", "claude-code",
+                                    "--db-path", str(mnemos / "claude-code.db")]}}}))
+    codex = tmp_path / "codex"
+    codex.mkdir()
+    (codex / "config.toml").write_text(
+        f'[mcp_servers.mnemos]\ncommand = "{MNEMOS}"\n'
+        f'args = ["--db-path", "{mnemos / "claude-field.db"}", "--agent-id", "claude-field", "serve"]\n'
+    )
+    (codex / "hooks.json").write_text(json.dumps({"hooks": {"SessionStart": [{"matcher": "*", "hooks": [{
+        "type": "command", "timeout": 15,
+        "command": f"{MNEMOS} hook session-start --agent-id claude-code --db-path {mnemos / 'claude-code.db'}",
+    }]}]}}))
+
+
+def test_the_list_names_a_hook_that_opens_another_agents_memory(agents, tmp_path, capsys):
+    # It said only "wakes with its memory: not set", while every Codex session woke as Claude Code.
+    _codex_on_two_other_memories(tmp_path)
+
+    assert main(["connect"]) == 0
+    text = _out(capsys)
+    codex = text[text.index("Codex: on this machine"):text.index("Grok:")]
+    assert "Memory: claude-field" in codex and "not named for Codex" in codex
+    assert "wakes with its memory: not for this memory: its wake hook opens another memory" in codex
+    assert (f"its wake hook in {tmp_path / 'codex' / 'hooks.json'} opens the memory Claude Code uses "
+            f"(claude-code, {Path.home() / '.mnemos' / 'claude-code.db'}), not claude-field's") in codex
+    assert "mnemos uninstall codex --write, then mnemos connect codex --write" in codex
+    # The same lines in the preview of connecting it.
+    assert main(["connect", "codex"]) == 0
+    assert "opens the memory Claude Code uses" in _out(capsys)
+    assert _calls(agents) == []
+
+
+def test_the_list_says_when_two_agents_open_one_memory(agents, tmp_path, capsys):
+    mnemos = Path.home() / ".mnemos"
+    (Path.home() / ".claude.json").write_text(json.dumps({"mcpServers": {"mnemos": {
+        "command": MNEMOS, "args": ["serve", "--agent-id", "claude-code",
+                                    "--db-path", str(mnemos / "claude-code.db")]}}}))
+    (tmp_path / "codex").mkdir()
+    (tmp_path / "codex" / "config.toml").write_text(
+        f'[mcp_servers.mnemos]\ncommand = "{MNEMOS}"\n'
+        f'args = ["serve", "--agent-id", "claude-code", "--db-path", "{mnemos / "claude-code.db"}"]\n'
+    )
+    assert main(["connect"]) == 0
+    text = _out(capsys)
+    codex = text[text.index("Codex: on this machine"):text.index("Grok:")]
+    assert "Claude Code opens this same memory too, so Codex and it are one agent" in codex
+    assert "mnemos uninstall codex --write" in codex
+    # An agent on a memory of its own is told none of this.
+    gemini = text[text.index("Gemini CLI: on this machine"):text.index("Hermes:")]
+    assert "opens" not in gemini and "mnemos uninstall" not in gemini
+
+
+def test_uninstalling_codex_leaves_claude_codes_memory_and_setup_alone(agents, tmp_path, capsys):
+    _codex_on_two_other_memories(tmp_path)
+    claude = (Path.home() / ".claude.json").read_text()
+
+    assert main(["uninstall", "codex", "--write"]) == 0
+    out = _out(capsys)
+    assert json.loads((tmp_path / "codex" / "hooks.json").read_text())["hooks"] == {}
+    assert _calls(agents) == ["codex mcp remove mnemos"]
+    assert (Path.home() / ".claude.json").read_text() == claude
+    assert f"Its memory stays, in {Path.home() / '.mnemos' / 'claude-field.db'}" in out
 
 
 # ── Hooks: the cue reaches Codex and Gemini, Grok's can't reach a model ──
@@ -459,7 +534,7 @@ def test_uninstall_takes_out_what_connect_put_in_and_only_that(agents, tmp_path,
     capsys.readouterr()
     agents.write_text("")
 
-    assert main(["uninstall", "--write"]) == 0
+    assert main(["uninstall", "--all", "--write"]) == 0
     capsys.readouterr()
     assert json.loads(gemini_settings.read_text())["hooks"] == {"BeforeAgent": [mine]}
     assert not (tmp_path / "openclaw" / "hooks" / "mnemos-wake").exists()

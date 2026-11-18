@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+### One agent can be given a memory of its own without cutting the others off
+
+- **Breaking: `mnemos uninstall --write` alone removes nothing now.** It took Mnemos out of every
+  agent on the machine at once (Claude Code's hooks and server, Codex's, Gemini CLI's, Grok's,
+  OpenClaw's, every Hermes profile's) and unscheduled the jobs, and `mnemos connect` pointed anyone
+  moving one agent onto another memory at it. Following that advice cut every other mind here off
+  from its memory. **Migration:** to take Mnemos out of everything, as before:
+  `mnemos uninstall --all --write`. A bare `mnemos uninstall` still previews everything.
+- **`mnemos uninstall <agent> --write` takes Mnemos out of that agent alone** (`claude-code`,
+  `claude-desktop`, `codex`, `gemini`, `grok`, `openclaw` or `hermes`, with `--profile` for one Hermes
+  profile): its hooks, its own server, and for Hermes and OpenClaw what connect put in their own
+  schedulers. Every other agent is left as it is, the memory stays, and so does the memory's
+  scheduled upkeep, since another agent may open it; it says how to remove that when none does.
+  Codex's hooks are looked for under `CODEX_HOME`, where connect writes them.
+- **Connect's refusal points at the safe path.** When an agent already has a server for another
+  memory, it names that memory and says: `mnemos uninstall <agent> --write`, then
+  `mnemos connect <agent> --write` with the memory asked for.
+- **The connect listing names any server or hook that opens a memory other than the agent's own**,
+  for every agent, and which other agent uses that memory. Codex's wake hook woke it with Claude
+  Code's memory, and all the listing said was "wakes with its memory: not set". It also says when
+  another agent opens the same memory (the two are then one agent), and no longer calls a memory
+  "its own already" when it isn't named for that agent.
+
 ## 0.6.7 (2026-11-11)
 
 What Hermes's review of 0.6.6 asked for, before its catalog lists Mnemos. Sessions keep the code they

@@ -285,10 +285,16 @@ mnemos daemon uninstall --hours --write
 
 ## Uninstall
 
-`mnemos uninstall` says what it would remove, and `mnemos uninstall --write`
-removes it: its hooks, its server entries for Claude Code, Codex and Claude
-Desktop, and its scheduled jobs. The memories stay, in `~/.mnemos`. They're the
+`mnemos uninstall` says what it would remove from each agent.
+`mnemos uninstall codex --write` takes Mnemos out of that one agent (its hooks
+and its server) and leaves every other agent as it is.
+`mnemos uninstall --all --write` takes it out of every agent at once (Claude
+Code, Claude Desktop, Codex, Gemini CLI, Grok, OpenClaw, every Hermes profile),
+with its scheduled jobs. The memories stay, in `~/.mnemos`. They're the
 agent's, so deleting them is left to you.
+
+To give one agent a memory of its own when it's on another's: `mnemos
+uninstall <agent> --write`, then `mnemos connect <agent> --write`.
 
 ## Contributing
 

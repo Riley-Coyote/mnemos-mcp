@@ -445,7 +445,7 @@ def test_uninstall_says_what_it_would_remove_and_removes_the_jobs_only_with_writ
     assert "the quiet hours (3 jobs) in its scheduler" in capsys.readouterr().out
     assert len(held(jobs)) == 3
 
-    main(["uninstall", "--write"])
+    main(["uninstall", "--all", "--write"])
     assert "the quiet hours (3 jobs) removed from its scheduler" in capsys.readouterr().out
     assert held(jobs) == []
 

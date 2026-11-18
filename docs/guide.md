@@ -55,9 +55,14 @@ For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
 the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
 [Choose A Setup](#choose-a-setup).
 
-To take Mnemos out again: `mnemos uninstall` says what it would remove, and
-`mnemos uninstall --write` removes it: its hooks, its server entries for Claude
-Code, Codex and Claude Desktop, and its scheduled jobs. Anyone else's hooks and
+To take Mnemos out again: `mnemos uninstall` says what it would remove from
+each agent. `mnemos uninstall <agent> --write` (`claude-code`,
+`claude-desktop`, `codex`, `gemini`, `grok`, `openclaw` or `hermes`, with
+`--profile` for one Hermes profile) takes it out of that agent alone: its hooks
+and its own server. Every other agent keeps its memory, and the scheduled
+upkeep stays, since another agent may open the same memory.
+`mnemos uninstall --all --write` takes it out of every agent at once, with its
+scheduled jobs; `--write` with neither removes nothing. Anyone else's hooks and
 servers stay. The memories stay too, in `~/.mnemos`; they're the agent's, so
 deleting them is left to you. If you set Mnemos up with `--agent-id` or a
 server `--name`, give `mnemos uninstall` the same.
@@ -910,8 +915,9 @@ mnemos daemon uninstall --write       # Remove all of it
 mnemos life --hour mine --dry-run     # What a quiet hour would see, running nothing
 mnemos life --hour dream --handoff    # Hand an hour to any agent: print its prompt, record the hour
 mnemos connect hermes --hours --write # Schedule the quiet hours in Hermes' (or OpenClaw's) own cron
-mnemos uninstall                      # What taking Mnemos out would remove
-mnemos uninstall --write              # Take it out; the memories stay
+mnemos uninstall                      # What taking Mnemos out would remove, agent by agent
+mnemos uninstall codex --write        # Take it out of one agent; the others and the memories stay
+mnemos uninstall --all --write        # Take it out of every agent; the memories stay
 
 mnemos init                           # Initialize a database
 mnemos remember "Prefers tabs"        # Capture continuity from the CLI

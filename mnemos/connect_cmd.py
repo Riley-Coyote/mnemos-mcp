@@ -71,6 +71,12 @@ def _scope(h: hs.Harness, args: argparse.Namespace):
     )
 
 
+def _slugify_own(h: hs.Harness) -> str:
+    from .simple_scope import _slugify
+
+    return _slugify(_own_agent_id(h), h.key)
+
+
 def _own_agent_id(h: hs.Harness) -> str:
     """The agent's own name. Each Hermes profile is an agent of its own."""
     if h.key == "hermes":
@@ -130,8 +136,13 @@ def _list(args: argparse.Namespace) -> int:
             continue
         scope, how = _scope(h, args)
         status = cn.status(h, scope.agent_id, scope.db_path)
-        _say(f"{h.label}: on this machine. Memory: {scope.agent_id} ({_db(scope)}, "
-             f"{'its own already' if how == 'kept' else 'new'}).")
+        if how != "kept":
+            held = "new"
+        elif scope.agent_id == _slugify_own(h):
+            held = "its own already"
+        else:
+            held = f"already in use; not named for {h.label}"
+        _say(f"{h.label}: on this machine. Memory: {scope.agent_id} ({_db(scope)}, {held}).")
         for line in _status_lines(h, status):
             _say(f"  {line}")
         _say(f"  Set it up: mnemos connect {h.key} --write")
@@ -218,10 +229,11 @@ def _status_lines(h: hs.Harness, st: cn.Status) -> list[str]:
         "elsewhere": "it has a Mnemos server, for another memory",
         "borrowed": "no server of its own; it has borrowed Claude Code's (see below)",
     }[st.mcp]
+    elsewhere = cn.opened_elsewhere(h, st.agent_id, st.db_path)
     lines.append(f"tools: {mcp}")
-    lines.append("wakes with its memory: " + _hook_line(h, st.wake, h.wake, "wake"))
+    lines.append("wakes with its memory: " + _hook_line(h, st.wake, h.wake, "wake", elsewhere))
     lines.append("after compaction: " + _compaction_line(h, st))
-    lines.append("memories for each message: " + _hook_line(h, st.cue, h.cue, "cue"))
+    lines.append("memories for each message: " + _hook_line(h, st.cue, h.cue, "cue", elsewhere))
     lines.append("upkeep between sessions: " + ("scheduled" if st.upkeep else "not scheduled"))
     lines.append("quiet hours: " + _hours_status(h, st))
     if st.borrowed is not None:
@@ -229,7 +241,54 @@ def _status_lines(h: hs.Harness, st: cn.Status) -> list[str]:
             f"it is reading Claude Code's `{st.borrowed.name}` server from {st.borrowed.source}: "
             f"that opens {st.borrowed.scope()[0] or 'that'} agent's memory inside {h.label}"
         )
+    lines.extend(_other_memories_lines(h, st, elsewhere))
     return lines
+
+
+def _other_memories_lines(h: hs.Harness, st: cn.Status, elsewhere: list[cn.Opened]) -> list[str]:
+    """Each server or hook of this agent's that opens a memory other than the one shown,
+    and the memory shown when another agent here opens it too: whatever it saves through
+    them goes into that memory, as that agent. Each comes with the way to part them that
+    touches no other agent."""
+    lines: list[str] = []
+    for o in elsewhere:
+        others = cn.who_else_opens(o.db_path, h)
+        whose = f"the memory {' and '.join(others)} uses" if others else f"{o.agent_id}'s memory"
+        lines.append(
+            f"its {o.what} in {o.source} opens {whose} ({o.agent_id}, {o.db_path}), not "
+            f"{st.agent_id}'s: through it {h.label} reads and saves as that agent"
+        )
+    sharing = cn.who_else_opens(_db_of(st), h)
+    if sharing:
+        lines.append(
+            f"{' and '.join(sharing)} opens this same memory too, so {h.label} and "
+            f"{'they' if len(sharing) > 1 else 'it'} are one agent"
+        )
+    if elsewhere or sharing:
+        lines.append(
+            f"for a memory of its own, take Mnemos out of {h.label} alone (no other agent is "
+            f"touched, and every memory stays where it is), then connect it again: "
+            f"{_uninstall_one(h)}, then mnemos connect {h.key}{_profile_flag(h)} --write"
+        )
+    return lines
+
+
+def _db_of(st: cn.Status) -> str:
+    from .simple_scope import resolve_scope
+
+    return str(Path(resolve_scope(agent_id=st.agent_id, db_path=st.db_path).db_path).expanduser())
+
+
+def _profile_flag(h: hs.Harness) -> str:
+    """`--profile <name>` when this is a Hermes profile, so the command reaches it."""
+    if h.key != "hermes":
+        return ""
+    home = cn.hermes_home()
+    return f" --profile {home.name}" if home.parent.name == "profiles" else ""
+
+
+def _uninstall_one(h: hs.Harness) -> str:
+    return f"mnemos uninstall {h.key}{_profile_flag(h)} --write"
 
 
 def _hours_status(h: hs.Harness, st: cn.Status) -> str:
@@ -250,11 +309,15 @@ def _hours_status(h: hs.Harness, st: cn.Status) -> str:
     )
 
 
-def _hook_line(h: hs.Harness, kind: str, ability: hs.Ability, what: str) -> str:
+def _hook_line(
+    h: hs.Harness, kind: str, ability: hs.Ability, what: str, elsewhere: list[cn.Opened] = (),
+) -> str:
     if kind == "cannot":
         return f"can't here: {ability.how} ({ability.proof})"
     if kind == "set":
         return f"set ({ability.proof})"
+    if any(o.what == f"{what} hook" for o in elsewhere):
+        return f"not for this memory: its {what} hook opens another memory (see below)"
     return f"not set ({ability.proof}): {ability.how}"
 
 
@@ -297,10 +360,26 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
         and (getattr(args, "agent_id", None) or getattr(args, "db_path", None))
         and not _can_leave_a_shared_memory(h)
     ):
-        _say(
-            f"{h.label} already has a Mnemos server, for another memory. I don't move a memory "
-            "that is already in use. To change it: mnemos uninstall --write, then connect again."
+        again = " ".join(
+            f"{flag} {shlex.quote(str(value))}"
+            for flag, value in (("--agent-id", getattr(args, "agent_id", None)),
+                                ("--db-path", getattr(args, "db_path", None)))
+            if value
         )
+        from .simple_scope import resolve_scope
+
+        held_agent, held_db = cn.existing_scope(h) or (None, None)
+        held = resolve_scope(agent_id=held_agent, db_path=held_db)
+        _say(
+            f"{h.label} already has a Mnemos server, for another memory ({held.agent_id}, "
+            f"{_db(held)}). I don't move a memory that is already in use."
+        )
+        _say(
+            f"To give {h.label} this one instead, take Mnemos out of {h.label} alone, then connect "
+            f"it again. No other agent is touched, and every memory stays where it is:"
+        )
+        _say(f"  {_uninstall_one(h)}")
+        _say(f"  mnemos connect {h.key}{_profile_flag(h)}{' ' + again if again else ''} --write")
         return 1
     if st.borrowed is not None:
         _say(

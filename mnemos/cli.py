@@ -917,8 +917,19 @@ def main(argv: list[str] | None = None) -> int:
     # ── uninstall ──
     p_uninstall = sub.add_parser(
         "uninstall",
-        help="Take Mnemos out of Claude Code, Claude Desktop and Codex, and unschedule its jobs; the memories stay",
+        help="Take Mnemos out of one agent (mnemos uninstall codex), or with --all out of every agent "
+             "and unschedule its jobs; the memories stay",
     )
+    p_uninstall.add_argument(
+        "agent", nargs="?", default=None,
+        help="The one agent to take Mnemos out of: claude-code, claude-desktop, codex, gemini, grok, "
+             "openclaw or hermes. Every other agent is left as it is",
+    )
+    p_uninstall.add_argument(
+        "--all", action="store_true",
+        help="Every agent at once, and the scheduled jobs. Every mind here loses its memory's hooks and servers",
+    )
+    p_uninstall.add_argument("--profile", default=None, help="With hermes: the profile to take it out of")
     _scope_options(p_uninstall)
     p_uninstall.add_argument("--name", default="mnemos", help="The MCP server's name (default mnemos)")
     p_uninstall.add_argument(
@@ -1807,10 +1818,6 @@ def _systemctl(*args: str) -> None:
     )
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or f"systemctl {' '.join(args)} failed")
-
-
-def _codex_hooks_path() -> Path:
-    return Path.home() / ".codex" / "hooks.json"
 
 
 # Claude Code's own timeout for the prompt hook, in seconds. The hook stops
@@ -4662,10 +4669,12 @@ def _remove_registered_server(tool: str, parts: list[str], *, write: bool) -> st
     return f"{line} said: {said[:200]}"
 
 
-def _hours_taken_out(*, write: bool) -> tuple[list[str], list[str]]:
+def _hours_taken_out(*, write: bool, keys: tuple[str, ...] = ("hermes", "openclaw"),
+                     hermes_homes: list[Path] | None = None) -> tuple[list[str], list[str]]:
     """The quiet hours connect --hours put in an agent's own scheduler: what's there or
     was removed, and what went wrong. Each Hermes home has a scheduler of its own, and a
-    job left in one would keep waking that agent, on its provider, for a command that's gone."""
+    job left in one would keep waking that agent, on its provider, for a command that's gone.
+    ``hermes_homes`` narrows Hermes to those homes (every one it knows, by default)."""
     from .integrations.hermes.installer import known_hermes_homes
     from .setup import agent_hours as _hours
 
@@ -4686,103 +4695,199 @@ def _hours_taken_out(*, write: bool) -> tuple[list[str], list[str]]:
             f"{label}: the quiet hours ({len(held)} jobs) {'removed from' if write else 'in'} its scheduler"
         )
 
-    home_was = os.environ.get("HERMES_HOME")
-    default = (Path.home() / ".hermes").resolve()
-    try:
-        for home in known_hermes_homes():
-            os.environ["HERMES_HOME"] = str(home)
-            take_out("hermes", "Hermes" if home.resolve() == default else f"Hermes ({home})")
-    finally:
-        if home_was is None:
-            os.environ.pop("HERMES_HOME", None)
-        else:
-            os.environ["HERMES_HOME"] = home_was
-    take_out("openclaw", "OpenClaw")
+    if "hermes" in keys:
+        home_was = os.environ.get("HERMES_HOME")
+        default = (Path.home() / ".hermes").resolve()
+        try:
+            for home in known_hermes_homes() if hermes_homes is None else hermes_homes:
+                os.environ["HERMES_HOME"] = str(home)
+                take_out("hermes", "Hermes" if home.resolve() == default else f"Hermes ({home})")
+        finally:
+            if home_was is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = home_was
+    if "openclaw" in keys:
+        take_out("openclaw", "OpenClaw")
     return done, problems
 
 
-def _cmd_uninstall(args: argparse.Namespace) -> int:
-    """Take Mnemos out of every client its setup writes to, and unschedule
-    its jobs. Its memories stay: they are the agent's, and this says where
-    they are. Without ``--write`` it only says what it would do."""
-    write = bool(args.write)
-    done: list[str] = []
-    problems: list[str] = []
+# What `mnemos uninstall <agent>` can take Mnemos out of, in the order --all goes.
+_UNINSTALL_AGENTS = ("claude-code", "claude-desktop", "codex", "gemini", "grok", "openclaw", "hermes")
 
+
+def _take_mnemos_out_of(key: str, name: str, *, write: bool,
+                        hermes_homes: list[Path] | None = None) -> tuple[list[str], list[str]]:
+    """Take Mnemos out of one agent: its hooks, its own server, and what else connect put
+    there for it. Nothing of any other agent's is touched; Grok's borrowed server and the
+    Claude Code hooks Grok also runs are Claude Code's, so they stay with it."""
     from .setup import connect as _connect
     from .setup import harnesses as _harnesses
 
-    for label, path in (
-        ("Claude Code", _claude_code_settings_path()),
-        ("Codex", _codex_hooks_path()),
-        ("Gemini CLI", _connect.gemini_settings_path()),
-    ):
-        count, problem = _without_mnemos_hooks(path, write=write)
+    done: list[str] = []
+    problems: list[str] = []
+    verb = "removed from" if write else "in"
+
+    if key == "claude-desktop":
+        path = _claude_desktop_config_path()
+        removed, problem = _without_desktop_server(path, name, write=write)
+        if problem:
+            problems.append(problem)
+        if removed:
+            done.append(f"Claude Desktop: the {name} server {verb} {path}")
+        return done, problems
+
+    h = _harnesses.get(key)
+    hooks_file = _claude_code_settings_path() if key == "claude-code" else _connect.hooks_path(h)
+    if key in ("claude-code", "codex", "gemini") and hooks_file is not None:
+        count, problem = _without_mnemos_hooks(hooks_file, write=write)
         if problem:
             problems.append(problem)
         if count:
             hooks = "hook" if count == 1 else "hooks"
-            done.append(f"{label}: {count} Mnemos {hooks} {'removed from' if write else 'in'} {path}")
+            done.append(f"{h.label}: {count} Mnemos {hooks} {verb} {hooks_file}")
 
-    removed, problem = _without_desktop_server(_claude_desktop_config_path(), args.name, write=write)
-    if problem:
-        problems.append(problem)
-    if removed:
-        done.append(
-            f"Claude Desktop: the {args.name} server {'removed from' if write else 'in'} "
-            f"{_claude_desktop_config_path()}"
-        )
-
-    # The agents connect sets up. Only a server of Mnemos's own is removed: a
-    # server another tool put under the same name stays, and so does the one
-    # Grok borrows from Claude Code.
-    own = {
-        key: any(not s.inherited for s in _connect.servers(_harnesses.get(key)))
-        for key in ("gemini", "grok", "openclaw")
-    }
-    for label, tool, parts in (
-        ("Claude Code", "claude", ["mcp", "remove", "--scope", "user", args.name]),
-        ("Codex", "codex", ["mcp", "remove", args.name]),
-        *(
-            (label, tool, parts)
-            for key, label, tool, parts in (
-                ("gemini", "Gemini CLI", "gemini", ["mcp", "remove", "--scope", "user", args.name]),
-                ("grok", "Grok", "grok", ["mcp", "remove", args.name]),
-                ("openclaw", "OpenClaw", "openclaw", ["mcp", "unset", args.name]),
-            )
-            if own[key]
-        ),
-    ):
-        said = _remove_registered_server(tool, parts, write=write)
+    # Only a server of Mnemos's own is removed: a server another tool put under the same
+    # name stays, and so does the one Grok borrows from Claude Code.
+    remove = {
+        "claude-code": ("claude", ["mcp", "remove", "--scope", "user", name]),
+        "codex": ("codex", ["mcp", "remove", name]),
+        "gemini": ("gemini", ["mcp", "remove", "--scope", "user", name]),
+        "grok": ("grok", ["mcp", "remove", name]),
+        "openclaw": ("openclaw", ["mcp", "unset", name]),
+    }.get(key)
+    if remove and (key in ("claude-code", "codex")
+                   or any(not s.inherited for s in _connect.servers(h))):
+        said = _remove_registered_server(remove[0], remove[1], write=write)
         if said.startswith(("ran", "would run")):
-            done.append(f"{label}: {said}")
+            done.append(f"{h.label}: {said}")
         elif said:
-            problems.append(f"{label}: {said}")
+            problems.append(f"{h.label}: {said}")
 
-    hook_dir = _connect.openclaw_hook_dir()
-    if hook_dir.is_dir() and (hook_dir / "handler.js").is_file():
-        if write:
-            _remove_registered_server("openclaw", ["hooks", "disable", "mnemos-wake"], write=True)
-            shutil.rmtree(hook_dir, ignore_errors=True)
-        done.append(f"OpenClaw: the mnemos-wake hook {'removed from' if write else 'in'} {hook_dir}")
+    if key == "openclaw":
+        hook_dir = _connect.openclaw_hook_dir()
+        if hook_dir.is_dir() and (hook_dir / "handler.js").is_file():
+            if write:
+                _remove_registered_server("openclaw", ["hooks", "disable", "mnemos-wake"], write=True)
+                shutil.rmtree(hook_dir, ignore_errors=True)
+            done.append(f"OpenClaw: the mnemos-wake hook {verb} {hook_dir}")
 
-    from .integrations.hermes.installer import known_hermes_homes, remove_from_hermes
+    if key == "hermes":
+        from .integrations.hermes.installer import known_hermes_homes, remove_from_hermes
 
-    for home in known_hermes_homes():
-        said, trouble = remove_from_hermes(home, write=write)
+        for home in known_hermes_homes() if hermes_homes is None else hermes_homes:
+            said, trouble = remove_from_hermes(home, write=write)
+            done.extend(said)
+            problems.extend(trouble)
+
+    if key in ("hermes", "openclaw"):
+        said, trouble = _hours_taken_out(write=write, keys=(key,), hermes_homes=hermes_homes)
         done.extend(said)
         problems.extend(trouble)
+    return done, problems
 
-    said, trouble = _hours_taken_out(write=write)
-    done.extend(said)
-    problems.extend(trouble)
+
+def _cmd_uninstall(args: argparse.Namespace) -> int:
+    """Take Mnemos out of one agent (``mnemos uninstall codex``), or with ``--all`` out
+    of every client its setup writes to, and unschedule its jobs. Its memories stay: they
+    are the agent's, and this says where they are. Without ``--write`` it only says what
+    it would do; ``--write`` with neither an agent nor ``--all`` writes nothing, because
+    taking Mnemos out of every agent cuts every other mind here off from its memory."""
+    from .setup import connect as _connect
+    from .setup import harnesses as _harnesses
+
+    write = bool(args.write)
+    everything = bool(getattr(args, "all", False))
+    asked = getattr(args, "agent", None)
+    profile = getattr(args, "profile", None)
+    key = None
+    if asked:
+        known = _harnesses.get(asked)
+        key = "claude-desktop" if asked in ("claude-desktop", "desktop") else (known.key if known else None)
+        if key not in _UNINSTALL_AGENTS:
+            print(f"I don't know an agent called {asked!r}. The ones Mnemos can be taken out of: "
+                  f"{', '.join(_UNINSTALL_AGENTS)}.", file=sys.stderr)
+            return 1
+        if everything:
+            print(f"Name an agent or pass --all, not both: mnemos uninstall {key} --write takes "
+                  "Mnemos out of that one alone.", file=sys.stderr)
+            return 1
+    if profile and key != "hermes":
+        print("--profile is Hermes' own: mnemos uninstall hermes --profile <name>", file=sys.stderr)
+        return 1
+    if write and not key and not everything:
+        print("Name the agent to take Mnemos out of, or pass --all for every agent at once. Nothing "
+              "was removed.", file=sys.stderr)
+        print("  One agent (every other agent keeps its memory): mnemos uninstall codex --write",
+              file=sys.stderr)
+        print("  Every agent on this machine, and the scheduled jobs: mnemos uninstall --all --write",
+              file=sys.stderr)
+        print("See what each has first: mnemos uninstall", file=sys.stderr)
+        return 1
+
+    hermes_homes = None
+    if key == "hermes":
+        if profile:
+            from .integrations.hermes.scope import profile_home
+
+            try:
+                hermes_homes = [profile_home(profile)]
+            except ValueError as exc:
+                print(exc, file=sys.stderr)
+                return 1
+        else:
+            hermes_homes = [_connect.hermes_home()]
+
+    # What this agent's memory is, read before anything is taken out.
+    kept = None
+    if key and key != "claude-desktop":
+        home_was = os.environ.get("HERMES_HOME")
+        if hermes_homes:
+            os.environ["HERMES_HOME"] = str(hermes_homes[0])
+        try:
+            kept = _connect.existing_scope(_harnesses.get(key))
+        finally:
+            if hermes_homes:
+                if home_was is None:
+                    os.environ.pop("HERMES_HOME", None)
+                else:
+                    os.environ["HERMES_HOME"] = home_was
+
+    done: list[str] = []
+    problems: list[str] = []
+    for each in (key,) if key else _UNINSTALL_AGENTS:
+        said, trouble = _take_mnemos_out_of(each, args.name, write=write, hermes_homes=hermes_homes)
+        done.extend(said)
+        problems.extend(trouble)
 
     if done:
         print("Removed:" if write else "Would remove:")
         for line in done:
             print(f"  {line}")
     else:
-        print("No Mnemos hooks or server entries were found.")
+        where = f" in {key}" if key else ""
+        print(f"No Mnemos hooks or server entries were found{where}.")
+
+    if key:
+        from .simple_scope import resolve_scope
+
+        print()
+        if kept is not None or (done and key != "claude-desktop"):
+            # A server or hook that names no memory opens the default one.
+            memory = resolve_scope(agent_id=(kept or (None, None))[0], db_path=(kept or (None, None))[1])
+            print(f"Its memory stays, in {Path(memory.db_path).expanduser()}. It is {memory.agent_id}'s; "
+                  "delete it yourself only if you mean to.")
+            print("Upkeep for that memory stays scheduled: another agent may open it too. If none does: "
+                  f"mnemos daemon uninstall --agent-id {memory.agent_id} --write")
+        print("Every other agent is left as it is.")
+        if not write:
+            print(f"Re-run with --write to remove Mnemos from {key}.")
+        elif key != "claude-desktop":
+            print(f"To connect it again, with a memory of its own: mnemos connect {key}"
+                  f"{' --profile ' + profile if profile else ''} --write")
+        for problem in problems:
+            print(f"Note: {problem}", file=sys.stderr)
+        return 1 if problems and write else 0
 
     print()
     blueprint = _blueprint(args)
@@ -4792,7 +4897,12 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
     print()
     print(f"The memories stay, in {folder}. They are the agent's; delete that folder yourself only if you mean to.")
     if not write:
-        print("Re-run with --write to remove Mnemos.")
+        if everything:
+            print("Re-run with --write to remove Mnemos from every agent.")
+        else:
+            print("Nothing was removed. To take Mnemos out of one agent, name it, and every other agent "
+                  "keeps its memory: mnemos uninstall codex --write. Out of every agent at once: "
+                  "mnemos uninstall --all --write")
     for problem in problems:
         print(f"Note: {problem}", file=sys.stderr)
     return 1 if (jobs or problems) and write else 0

@@ -311,6 +311,24 @@ def test_uninstall_says_what_it_would_do_for_hermes(home, capsys, monkeypatch):
     assert (home / "config.yaml").read_text() == before
 
 
+def test_uninstall_hermes_takes_it_out_of_one_profile_only(home, capsys, monkeypatch):
+    monkeypatch.setenv("PATH", "")
+    work = home / "profiles" / "work"
+    work.mkdir(parents=True)
+    _connected(home)
+    _connected(work)
+    default_before = (home / "config.yaml").read_text()
+
+    assert main(["uninstall", "hermes", "--profile", "work", "--write"]) == 0
+    said = capsys.readouterr().out
+    assert "Hermes: memory.provider removed from" in said and str(work) in said
+    assert (home / "config.yaml").read_text() == default_before
+    assert "mnemos" not in _config(work).get("mcp_servers", {})
+    assert _config(work)["mcp_servers"]["github"] == {"command": "gh-mcp"}
+    assert (work / "h.db").read_text() == "the memories"
+    assert "mnemos connect hermes --profile work --write" in said
+
+
 def test_a_server_added_because_hermes_cant_load_it_opens_the_memory_it_has(home, monkeypatch):
     # It came out as `serve --mode simple`: another memory altogether, with no word of it.
     (home / "mnemos.json").write_text(json.dumps({
