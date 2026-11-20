@@ -236,6 +236,107 @@ def test_without_a_store_each_part_says_so_and_makes_nothing(tmp_path):
     assert not db.exists()
 
 
+
+# ---------- Paging the memories ----------
+
+def _more(db: Path, n: int, monkeypatch) -> None:
+    rt = _runtime(db)
+    try:
+        for i in range(n):
+            rt.capture(f"Lantern {i} hangs by the harbour wall, number {i}.", signed_as=OPUS)
+    finally:
+        rt.close()
+    # a recall in a session of its own brings memories back, so the whole has something recalled
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "5f0c4a8e-2b6d-4c1e-9a7f-3d2e1b0c9a8f")
+    rt = _runtime(db)
+    try:
+        rt.recall("ferry pier lantern harbour")
+    finally:
+        rt.close()
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID")
+
+
+def test_the_pages_of_the_memories_joined_in_order_are_the_whole(notebook, monkeypatch):
+    db, _ = notebook
+    _more(db, 7, monkeypatch)
+    interface = _here(db)
+    try:
+        whole = _result(interface, "notebook", part="memories")
+        pages, offset = [], 0
+        while offset is not None:
+            page = _result(interface, "notebook", part="memories", limit=3, offset=offset)
+            pages.append(page)
+            offset = page["page"]["next"]
+        rest = _result(interface, "notebook", part="memories", offset=8)
+        first = _result(interface, "notebook", part="memories", limit=4)
+    finally:
+        interface.close()
+    assert "page" not in whole, "with neither, the whole, as before"
+    total = len(whole["document"]["memories"])
+    assert total == 10 and whole["document"]["recalled"], "a whole worth paging, with something recalled"
+    assert [page["page"]["offset"] for page in pages] == [0, 3, 6, 9]
+    assert {(page["page"]["total"], page["page"]["limit"]) for page in pages} == {(total, 3)}
+    assert [page["page"]["next"] for page in pages] == [3, 6, 9, None]
+    assert {page["document"]["version"] for page in pages} == {whole["document"]["version"]}
+    joined = [memory for page in pages for memory in page["document"]["memories"]]
+    assert joined == whole["document"]["memories"]
+    assert pages[0]["document"]["recalled"] == whole["document"]["recalled"]
+    assert all(page["document"]["recalled"] == [] for page in pages[1:])
+    for page in pages:
+        assert list(page["document"]) == list(whole["document"]), "the whole's own keys, in its order"
+    assert rest["document"]["memories"] == whole["document"]["memories"][8:] and rest["page"] == {
+        "offset": 8, "limit": None, "total": 10, "next": None}
+    assert first["document"]["memories"] == whole["document"]["memories"][:4] and first["page"]["next"] == 4
+
+
+def test_without_paging_the_memories_are_what_they_were(notebook):
+    """With neither ``limit`` nor ``offset`` (or both null), the answer is the
+    whole document and nothing beside it, as before paging."""
+    db, _ = notebook
+    interface = _here(db)
+    try:
+        answers = [_result(interface, "notebook", part="memories", **extra)
+                   for extra in ({}, {"limit": None, "offset": None})]
+        page_memories = Exporter.for_scope(db_path=str(db), **SCOPE).export()[1]
+    finally:
+        interface.close()
+    for answer in answers:
+        assert list(answer) == ["part", "document"]
+        assert _without(answer["document"], "made") == _without(page_memories, "made")
+
+
+@pytest.mark.parametrize("paging, said", [
+    ({"limit": 0}, '"limit" takes a whole number, 1 or more.'),
+    ({"limit": -2}, '"limit" takes a whole number, 1 or more.'),
+    ({"limit": "3"}, '"limit" takes a whole number, 1 or more.'),
+    ({"limit": True}, '"limit" takes a whole number, 1 or more.'),
+    ({"limit": 2.5}, '"limit" takes a whole number, 1 or more.'),
+    ({"offset": -1}, '"offset" takes a whole number, 0 or more.'),
+    ({"offset": "1"}, '"offset" takes a whole number, 0 or more.'),
+    ({"offset": 3}, '"offset" is past the last memory: there are 3, so it is 0 to 2.'),
+    ({"offset": 99, "limit": 1}, '"offset" is past the last memory: there are 3, so it is 0 to 2.'),
+])
+def test_a_page_out_of_range_or_badly_asked_is_one_plain_sentence(notebook, paging, said):
+    db, _ = notebook
+    interface = _here(db)
+    try:
+        answer = interface.answer(json.dumps({"id": "p", "command": "notebook", "part": "memories", **paging}))
+    finally:
+        interface.close()
+    assert answer == {"id": "p", "error": said}
+
+
+def test_paging_an_empty_memory_is_one_empty_page(tmp_path):
+    interface = _here(tmp_path / "nothing.db")
+    try:
+        page = _result(interface, "notebook", part="memories", limit=5, offset=0)
+        past = _ask(interface, "notebook", part="memories", offset=1)
+    finally:
+        interface.close()
+    assert page["document"]["memories"] == [] and page["page"] == {"offset": 0, "limit": 5, "total": 0, "next": None}
+    assert past["error"] == '"offset" is past the last memory: there are 0, so it is 0 to 0.'
+    assert not (tmp_path / "nothing.db").exists()
+
 # ---------- Pictures ----------
 
 def test_each_picture_is_a_file_inside_its_own_studio_and_nothing_else(notebook):
@@ -650,7 +751,7 @@ READS = [
     ("memories", {}), ("memories", {"state": "active", "limit": 1}), ("search", {"query": "ferry pier"}),
     ("journal", {}), ("notes", {}), ("notes", {"unread": True}), ("hello", {}),
     ("notebook", {"part": "life"}), ("notebook", {"part": "memories"}), ("notebook", {"part": "pulse"}),
-    ("summary", {}),
+    ("notebook", {"part": "memories", "limit": 2, "offset": 1}), ("summary", {}),
 ]
 
 
