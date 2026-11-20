@@ -6,7 +6,11 @@ and ``mnemos forget``, beside ``mnemos journal``, ``mnemos notes``, ``mnemos
 notes reply`` and ``mnemos notes write``. And ``mnemos interface``: one long-lived process that answers the
 same commands in the same shapes, one JSON request a line on stdin and one JSON
 line an answer on stdout, so the meaning model loads once rather than once a
-command (4.4 s on the maintainer's Mac, then about 14 ms a query).
+command (4.4 s on the maintainer's Mac, then about 14 ms a query). Beside
+them, the whole notebook for a host: ``hello``, each part of the notebook's
+page as the page is given it (``notebook``), what each part counts
+(``summary``), and the rest of what the person can do on that page (``read``,
+``hours``, ``shared``), each through the page's own code (docs/host-interface.md).
 
 Reading writes nothing and never makes a store. A person looking through the
 memory is not the agent remembering: nothing a search finds is woken,
@@ -21,6 +25,7 @@ Times are ISO 8601 in UTC (``utc_iso``).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import sys
@@ -31,7 +36,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from ..authorship import run_by_agent
-from ..companion.export import _Reading, open_read_only, when
+from ..companion.export import Exporter, _Reading, open_read_only, person_name, pulse, studio_picture, when
 from ..simple_runtime import (
     MnemosRuntime,
     NothingChanged,
@@ -55,8 +60,20 @@ STATES = ("active", "dormant")
 #: templates ("system") and what was brought in from elsewhere ("import").
 #: Anything else (none, or a kind a newer Mnemos adds) is "unknown".
 AUTHORS = {"agent": "agent", "person": "person", "tool": "tool", "system": "tool", "import": "tool"}
-#: What ``mnemos interface`` answers.
-COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note")
+#: The version of what ``mnemos interface`` says, as ``hello`` tells a host. It goes up only when a request or a
+#: result a host already reads changes; a new command, or a new key in a result, leaves it where it is.
+PROTOCOL = 1
+#: What ``mnemos interface`` answers: the person's commands, then what a host asks of the whole notebook (``hello``,
+#: ``notebook``, ``summary``) and the rest of what the person can do on the notebook's own page (``read``, ``hours``,
+#: ``shared``). Jev's setting is left to the page: it takes a key, and nothing here takes, says or keeps one.
+COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note",
+            "hello", "notebook", "summary", "read", "hours", "shared")
+#: The parts of the notebook ``notebook`` gives: the page's own documents (``life.json``, ``memories.json``,
+#: ``pulse.json``), for the one mind this process was started for.
+PARTS = ("life", "memories", "pulse")
+#: The four scope flags ``--strict-scope`` asks for, all of them.
+SCOPE_FLAGS = {"db_path": "--db-path", "agent_id": "--agent-id",
+               "person_id": "--person-id", "project_scope": "--project-scope"}
 _JOURNAL_LAST = 5
 
 
@@ -236,6 +253,99 @@ def _one_sentence(exc: BaseException) -> str:
     return f"Mnemos couldn't do that ({type(exc).__name__}{': ' + detail if detail else ''})."
 
 
+def missing_scope(flags: Mapping[str, str | None]) -> list[str]:
+    """The scope flags ``--strict-scope`` asks for that ``flags`` doesn't give
+    (None or blank), as the command line names them, in their order."""
+    return [flag for key, flag in SCOPE_FLAGS.items() if not (flags.get(key) or "").strip()]
+
+
+def strict_scope_sentence(missing: list[str]) -> str:
+    """Why ``--strict-scope`` won't start, in one sentence."""
+    return (f"--strict-scope takes the memory's scope from all four of {', '.join(SCOPE_FLAGS.values())}, "
+            f"and never from the environment or the config; this is missing {', '.join(missing)}.")
+
+
+# ── What a host asks of the whole notebook ──
+
+
+def waiting(notes: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The agent's questions still waiting on the person, as the page counts
+    them (``waiting`` in ``page/shared/words.js``): in each thread of notes
+    (a note and the replies that answer it), the newest note, when it is the
+    agent's and ends with a question mark."""
+    by_id = {note["id"]: note for note in notes}
+
+    def root(note: Mapping[str, Any]) -> str:
+        current = note
+        for _ in range(50):
+            above = current.get("replyTo")
+            if not above or above not in by_id:
+                break
+            current = by_id[above]
+        return current["id"]
+
+    last: dict[str, Mapping[str, Any]] = {}
+    for note in notes:
+        thread, newest = root(note), last.get(root(note))
+        moment, then = when(note.get("at")), when(newest.get("at")) if newest else None
+        if newest is None or (moment is not None and then is not None and moment >= then):
+            last[thread] = note
+    return [note for note in last.values()
+            if note.get("author") == "agent" and (note.get("text") or "").strip().endswith("?")]
+
+
+def change_token(life: Mapping[str, Any], memories: Mapping[str, Any]) -> str:
+    """A stamp of everything the notebook shows (its two documents, less the
+    moment each was made): the same while nothing a host would show has
+    changed, and different once anything has."""
+    shown = {"life": {k: v for k, v in life.items() if k != "made"},
+             "memories": {k: v for k, v in memories.items() if k != "made"}}
+    digest = hashlib.sha256(json.dumps(shown, sort_keys=True, ensure_ascii=False,
+                                       separators=(",", ":")).encode("utf-8"))
+    return digest.hexdigest()[:20]
+
+
+def summary_of(life: Mapping[str, Any], memories: Mapping[str, Any]) -> dict[str, Any]:
+    """``summary``: what each part of the notebook counts, read from the very
+    documents its page is given, so a host's counts and the page's agree.
+    ``unread`` is the agent's notes the person hasn't read; ``waiting`` its
+    questions still waiting on them (``waiting``)."""
+    notes = life.get("notes") or []
+    theirs = [note for note in notes if note.get("author") == "agent"]
+    questions = life.get("questions") or {}
+    memory = life.get("memory") or {}
+    states = memory.get("states") or {}
+    return {
+        "missing": bool(life.get("missing")),
+        "counts": {
+            "memories": int(memory.get("count", 0)),
+            "states": {name: int(states.get(name, 0)) for name in ("active", "dormant", "archived")},
+            "shared": len((life.get("shared") or {}).get("rows") or []),
+            "beliefs": len(life.get("beliefs") or []),
+            "questions": int(questions.get("open", 0)),
+            "answered": len(questions.get("answered") or []),
+            "journal": len(life.get("journal") or []),
+            "notes": len(theirs),
+            "replies": len(notes) - len(theirs),
+            "hours": len(life.get("hours") or []),
+            "made": len(life.get("studio") or []),
+            "carrying": len(life.get("handoffs") or []),
+        },
+        "unread": sum(1 for note in theirs if not note.get("read")),
+        "waiting": len(waiting(notes)),
+        "change_token": change_token(life, memories),
+    }
+
+
+def _acted(answer: Mapping[str, Any]) -> Any:
+    """What one of the page's acts answered (``{"result": ...}`` or
+    ``{"error": one sentence}``), as the interface answers: the result, or
+    the same sentence refused."""
+    if "result" in answer:
+        return answer["result"]
+    raise Refused(str(answer.get("error") or "That couldn't be done just now."))
+
+
 class Interface:
     """``mnemos interface``: the person's commands for an app, answered by one
     process for as long as the app keeps it.
@@ -255,7 +365,7 @@ class Interface:
 
     def __init__(self, *, db_path: str | None = None, agent_id: str | None = None,
                  person_id: str | None = None, project_scope: str | None = None,
-                 person: bool | None = None) -> None:
+                 person: bool | None = None, strict_scope: bool = False) -> None:
         # Whose a correction or a forget is: the person's own app says so (``person=True``: the page someone clicked,
         # even when an agent's server is serving it); with None, as the command line decides, by the shell it runs in.
         self._person = person
@@ -263,7 +373,12 @@ class Interface:
             "db_path": db_path, "agent_id": agent_id,
             "person_id": person_id, "project_scope": project_scope,
         }
+        missing = missing_scope(self._flags) if strict_scope else []
+        if missing:
+            raise Refused(strict_scope_sentence(missing))
+        self._strict = strict_scope
         self.scope = resolve_scope(**self._flags)
+        self._exporter: Exporter | None = None
         self._reader: MnemosRuntime | None = None
         # The meaning model, once loaded: an index of no store, only a backend.
         self._model: EmbeddingIndex | None = None
@@ -432,6 +547,91 @@ class Interface:
         finally:
             writer.close()
 
+    # What a host asks of the whole notebook, and the rest of what the person can do on its page.
+
+    def hello(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """What this Mnemos answers, asked once by a host: the protocol's
+        version, Mnemos's, the store schema this build writes, every command,
+        whose a write is, and the one memory this process reads."""
+        from ..package_version import mnemos_version
+        from ..store.sqlite_store import SCHEMA_VERSION
+
+        return {
+            "protocol": PROTOCOL,
+            "mnemos": mnemos_version(),
+            "schema": SCHEMA_VERSION,
+            "commands": list(COMMANDS),
+            "parts": list(PARTS),
+            "writes_as": "person" if self._as_person() else "agent",
+            "strict_scope": self._strict,
+            "scope": {**self._scope_args(), "db_path": str(Path(self.scope.db_path).expanduser()),
+                      "held": self._held()},
+        }
+
+    def _notebook(self) -> Exporter:
+        """The notebook's exporter for this process's one mind, kept as the
+        page's server keeps one, so a finished hour's record is read once."""
+        if self._exporter is None:
+            self._exporter = Exporter(self.scope, person_name())
+        return self._exporter
+
+    def notebook(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """One part of the notebook, exactly as its page is given it, made by
+        the page's own code: ``life`` and ``memories`` by ``Exporter.export``,
+        ``pulse`` by ``export.pulse``. ``life`` comes with ``pictures``: for
+        each picture the page would show, the file itself, inside this mind's
+        studio, where a host with no web server can read it."""
+        part = request.get("part")
+        if part not in PARTS:
+            raise Refused('"part" is "life", "memories" or "pulse".')
+        exporter = self._notebook()
+        if part == "pulse":
+            since = request.get("since")
+            if since is not None and not isinstance(since, str):
+                raise Refused('"since" takes a time, in ISO 8601.')
+            return {"part": part, "document": pulse(exporter, since)}
+        life, memories = exporter.export()
+        if part == "memories":
+            return {"part": part, "document": memories}
+        root = exporter.studio_dir
+        pictures: dict[str, str] = {}
+        for item in life.get("studio") or []:
+            found = studio_picture(root, item["path"]) if root is not None and item.get("picture") else None
+            if found is not None:
+                pictures[item["path"]] = found
+        return {"part": part, "document": life, "pictures": pictures}
+
+    def summary(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """What each part of the notebook counts, what waits on the person,
+        and a ``change_token`` that changes only when something shown does
+        (``summary_of``), from the page's own documents."""
+        return summary_of(*self._notebook().export())
+
+    def read(self, request: Mapping[str, Any]) -> Any:
+        """Mark the agent's notes read, as the page does when the person reads
+        them there: through the page's own act (``companion.server.read_notes``),
+        its limits and its sentences. Answers the ids this marked."""
+        from ..companion.server import read_notes
+
+        return _acted(read_notes(self.scope, request.get("note_ids")))
+
+    def hours(self, request: Mapping[str, Any]) -> Any:
+        """Turn the agent's quiet hours on, at the times given, or off, as the
+        page's Settings does (``companion.server.quiet_hours``): what `mnemos
+        daemon install --hours --write` or `uninstall --hours --write` does
+        for this scope. Answers what it said."""
+        from ..companion.server import quiet_hours
+
+        return _acted(quiet_hours(self.scope, request))
+
+    def shared(self, request: Mapping[str, Any]) -> Any:
+        """Add to the shared notebook, correct one of the person's own there,
+        or let one go (asked twice, ``"confirmed": true``), as the page does
+        (``shared_memory.notebook_act``), always as the person."""
+        from ..shared_memory import notebook_act
+
+        return _acted(notebook_act(request))
+
     def answer(self, line: str) -> dict[str, Any]:
         """The answer to one request line: ``{"id": <the request's>, "result":
         <what the command's one-shot --json prints>}``, or ``{"id": ...,
@@ -459,18 +659,30 @@ class Interface:
 
 
 def serve(
-    stdin: IO[str] | None = None, stdout: IO[str] | None = None, **flags: str | None,
+    stdin: IO[str] | None = None, stdout: IO[str] | None = None, *,
+    as_person: bool = False, strict_scope: bool = False, stderr: IO[str] | None = None,
+    **flags: str | None,
 ) -> int:
     """Run ``mnemos interface`` until stdin closes: read one JSON request a
     line and answer each with one JSON line, flushed at once. The meaning
-    model starts loading as it starts."""
+    model starts loading as it starts.
+
+    ``as_person``: every write is the person's, whatever the shell it runs in
+    says. ``strict_scope``: the scope comes from the four flags alone; with
+    any of them missing it reads nothing, says why in one sentence on stderr
+    and ends at once, with status 2."""
     stdin = sys.stdin if stdin is None else stdin
     stdout = sys.stdout if stdout is None else stdout
+    stderr = sys.stderr if stderr is None else stderr
+    missing = missing_scope(flags) if strict_scope else []
+    if missing:
+        print(strict_scope_sentence(missing), file=stderr, flush=True)
+        return 2
     for stream in (stdin, stdout):
         reconfigure = getattr(stream, "reconfigure", None)
         if reconfigure is not None:
             reconfigure(encoding="utf-8")
-    interface = Interface(**flags)
+    interface = Interface(**flags, person=True if as_person else None, strict_scope=strict_scope)
     interface.warm()
     try:
         for line in stdin:
