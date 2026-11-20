@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### The whole notebook through `mnemos interface`
+
+An app the person uses can now show everything the notebook's own page shows,
+and do everything it does but set Jev, from the one process it already keeps
+(`docs/host-interface.md`). Nothing a host written for 0.6.7 sends answers
+differently, except that an unknown command's sentence now lists every command.
+
+- **`hello`** says what this Mnemos answers: the protocol's version (1),
+  Mnemos's, the store schema, every command, whose a write will be, and the one
+  memory the process reads.
+- **`notebook`** gives each part of the page (`life`, `memories`, `pulse`)
+  exactly as the page is given it, made by the page's own code. `life` comes
+  with each picture's file, inside the mind's own studio, never its bytes.
+- **`summary`** gives what each part counts, the notes not yet read, the
+  questions waiting on the person, and a `change_token` that changes only when
+  something shown does (0.13 s on 3,000 memories).
+- **`read`, `hours` and `shared`**: mark the agent's notes read, turn the quiet
+  hours on or off and at what times, and add to, correct or let go of the shared
+  notebook, each through the page's own code, with its limits and sentences. Jev
+  stays on the page: its setting takes a key, and the interface takes none.
+- **`--as-person`** makes every write the person's, whatever the shell says.
+  **`--strict-scope`** takes the scope from all four scope flags and never the
+  environment or the config, or ends at once saying which flag is missing.
+- Reading still writes nothing: every table of the store and of the shared
+  store is the same after each read, `notebook` and `summary` included.
+
 ## 0.6.7 (2026-11-11)
 
 What Hermes's review of 0.6.6 asked for, before its catalog lists Mnemos. Sessions keep the code they
