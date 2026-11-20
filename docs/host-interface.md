@@ -20,8 +20,19 @@ JSON answer a line on its stdout, in the same order:
 
 `id` is whatever the host sent (a number or a string), given back as it was.
 An answer has either `result` or `error`, never both. An error is one plain
-sentence, never a trace. The process ends when stdin closes. Times are ISO 8601,
+sentence, never a trace and never the name of a Python error. Times are ISO 8601,
 in UTC.
+
+- **Only closing stdin ends the process.** A line that isn't JSON, holds bytes
+  that aren't UTF-8 text (or an escape like `"\ud800"` that stands for no
+  character), or is nested too deep to read gets one sentence back, with its
+  `id` when the `id` could be read and `null` when it couldn't, and the next line
+  is answered as usual.
+- **A blank line gets no answer**, so a host must not wait for one. Only a
+  newline (`\n`) ends a request; a carriage return inside a line doesn't.
+- A number past 9,223,372,036,854,775,807 (the most SQLite holds) is refused in
+  a sentence, and a file at `--db-path` that isn't a memory is answered "The
+  file at … isn't a memory Mnemos can read." from every command that reads it.
 
 ## Start here: `hello`
 
@@ -78,14 +89,17 @@ is given, made by the page's own code. Show what the page shows from it.
 - `memories.version` changes only when the memories do, as on the page: read
   `memories` again only then (`life.memory.version` says it too).
 - For `pulse`, ask next with the `now` the last answer gave as `since`. An
-  event's `key` stays the same each time it is read, so overlap is harmless.
+  event's `key` stays the same each time it is read, so overlap is harmless. A
+  `since` that isn't a time is refused, never read as no `since`.
 - **Pictures.** The page shows what the mind made from its studio. A host has
   no web server, so `life` comes with `pictures`: for each studio item the page
   shows as a picture, its `path` and the file to read. Only pictures, only from
   inside this mind's own studio once links are followed, never a hidden file,
   and none over 6 MB. Read the file yourself; it is never put inside a line.
   The `picture` field inside the document is the page's own address for it and
-  means nothing to a host.
+  means nothing to a host. The paths are real ones, links followed: if the studio
+  folder (or one above it) is itself a link, they name where it really is, so
+  compare real paths (`os.path.realpath`), not the path you expected.
 - **Another mind's name.** Where the page says a memory was written "by a
   colleague", the name comes from that memory's own `model` (in `memories`), or
   a shared row's `author` and `model` (in `life.shared`). No other store is read.
@@ -201,7 +215,9 @@ page's own code, with its limits and its sentences.
   page.
 - Letting a shared memory go is asked twice: without `"confirmed": true` it is
   refused. The shared notebook is the machine's, one for every agent, and its
-  writes here are always the person's.
+  writes here are always the person's. It is always the one under `HOME`
+  (`~/.mnemos/shared-memory.db`, or `MNEMOS_SHARED_MEMORY_DB`), whatever
+  `--db-path` says, `--strict-scope` or not.
 - **Jev is not here.** Its setting takes a key, and nothing in `mnemos
   interface` takes, says or logs a key. Jev is set on the notebook's own page.
   `life.jev` says whether it is on and whether a key is saved, never the key.
@@ -220,8 +236,13 @@ page's own code, with its limits and its sentences.
   given; the environment (`MNEMOS_DB_PATH`, `MNEMOS_AGENT_ID`, ...) and
   `~/.mnemos/config.json` are never asked. With any missing, the process reads
   nothing, writes one sentence to stderr naming what's missing, and ends at once
-  with status 2. A host should pass it, so it never reads a memory it didn't
-  name.
+  with status 2. Each value is used exactly as given: one Mnemos would read as
+  something else (it keeps a scope in lower-case letters, digits, `-` and `_`, so
+  `--agent-id "!!!"` would be read as `mnemos-agent`, and `Nova` as `nova`) ends
+  it the same way, naming the flag. A host should pass it, so it never reads a
+  memory it didn't name. The person's name on the page (`life.identity.person`)
+  still comes from `MNEMOS_PERSON_NAME`: it only names them, and never chooses a
+  store.
 
 Without the flags, everything is as it was.
 
