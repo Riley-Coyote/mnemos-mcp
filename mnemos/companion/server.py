@@ -30,7 +30,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
-import os
 import re
 import secrets
 import socketserver
@@ -43,10 +42,13 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
 from pathlib import Path
-from typing import TextIO
+from typing import TYPE_CHECKING, TextIO
 from urllib.parse import unquote, urlsplit
 
-from .export import MOST_BYTES, UNFILED, Exporter
+from .export import UNFILED, Exporter, studio_picture
+
+if TYPE_CHECKING:
+    from ..simple_scope import MnemosScope
 
 logger = logging.getLogger(__name__)
 
@@ -175,6 +177,80 @@ def minds_beside(home: Exporter) -> list[Exporter]:
     return found
 
 
+# Two of the page's acts, here so the page and ``mnemos interface`` (``read``, ``hours``) run the same code, with the
+# same limits and the same sentences. Each answers ``{"result": ...}`` or ``{"error": one plain sentence}``.
+
+
+def read_notes(scope: "MnemosScope", ids: object) -> dict:
+    """Mark these notes of the agent's read, each once (one already read
+    keeps its time), as `mnemos notes` marks the notes it shows: ``{"result":
+    the ids this marked}``. Ids that aren't the agent's notes here mark
+    nothing, and no store is ever made."""
+    from ..simple_runtime import MnemosRuntime
+
+    if (not isinstance(ids, list) or not ids or len(ids) > MOST_READ
+            or not all(isinstance(i, str) and i.strip() for i in ids)):
+        return {"error": f'"note_ids" is a list of the notes read, at most {MOST_READ}.'}
+    if not Path(scope.db_path).expanduser().is_file():
+        return {"result": []}
+    writer = MnemosRuntime(db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
+                           project_scope=scope.project_scope, use_dedicated_model=False, marks_lived=False)
+    try:
+        marked = writer.mark_notes_read([i.strip() for i in ids])
+    except sqlite3.Error:
+        return {"error": "It couldn't be marked read just now."}
+    finally:
+        writer.close()
+    return {"result": marked}
+
+
+def quiet_hours(scope: "MnemosScope", request: dict, lock: "threading.Lock | None" = None) -> dict:
+    """Turn the agent's quiet hours on, at the times given (each HH:MM, or
+    its own default), or off: exactly what `mnemos daemon install --hours
+    --write` and `mnemos daemon uninstall --hours --write` do for this
+    scope, answered ``{"result": what it said}`` or ``{"error": ...}``. What
+    it prints is caught, never written to this process's own output; ``lock``
+    keeps it to one change to the schedule at a time."""
+    import argparse
+    import contextlib
+    import io
+
+    from .. import cli
+
+    if _inside_hermes():
+        return {"error": "The quiet hours run through Claude Code on your own account, so they're "
+                         "set from Claude Code, not from inside Hermes."}
+    on = request.get("on")
+    if not isinstance(on, bool):
+        return {"error": '"on" says whether the quiet hours run: true or false.'}
+    times: dict[str, tuple[int, int] | None] = {}
+    for key in ("mine", "ours", "dream"):
+        value = request.get(key)
+        if value in (None, ""):
+            times[key] = None
+            continue
+        match = CLOCK.match(value) if isinstance(value, str) else None
+        if not match:
+            return {"error": f'"{key}" is a time of day, like 08:00.'}
+        times[key] = (int(match.group(1)), int(match.group(2)))
+    args = argparse.Namespace(
+        daemon_command="install" if on else "uninstall", hours=True, write=True,
+        mine_at=times["mine"] if on else None, ours_at=times["ours"] if on else None,
+        dream_at=times["dream"] if on else None,
+        db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
+        project_scope=scope.project_scope)
+    said, failed = io.StringIO(), io.StringIO()
+    with lock or contextlib.nullcontext(), contextlib.redirect_stdout(said), contextlib.redirect_stderr(failed):
+        try:
+            code = cli._cmd_daemon(args)
+        except Exception as exc:  # anything else is one plain line, never a trace
+            code, _ = 1, failed.write(f"{exc}")
+    if code != 0:
+        words = " ".join(failed.getvalue().split()) or " ".join(said.getvalue().split())
+        return {"error": words[:400] or "The quiet hours couldn't be changed."}
+    return {"result": " ".join(said.getvalue().split())[:400]}
+
+
 class _Mind:
     """One mind the page can show: its exporter, and its documents as last made."""
 
@@ -276,50 +352,10 @@ class LogServer(ThreadingHTTPServer):
         return answer
 
     def _hours(self, request: dict, mind: _Mind) -> dict:
-        """Turn the agent's quiet hours on, at the times given (each HH:MM, or
-        its own default), or off: exactly what `mnemos daemon install --hours
-        --write` and `mnemos daemon uninstall --hours --write` do for this
-        scope, answered ``{"result": what it said}`` or ``{"error": ...}``."""
-        import argparse
-        import contextlib
-        import io
-
-        from .. import cli
-
-        if _inside_hermes():
-            return {"error": "The quiet hours run through Claude Code on your own account, so they're "
-                             "set from Claude Code, not from inside Hermes."}
-        on = request.get("on")
-        if not isinstance(on, bool):
-            return {"error": '"on" says whether the quiet hours run: true or false.'}
-        times: dict[str, tuple[int, int] | None] = {}
-        for key in ("mine", "ours", "dream"):
-            value = request.get(key)
-            if value in (None, ""):
-                times[key] = None
-                continue
-            match = CLOCK.match(value) if isinstance(value, str) else None
-            if not match:
-                return {"error": f'"{key}" is a time of day, like 08:00.'}
-            times[key] = (int(match.group(1)), int(match.group(2)))
-        scope = mind.exporter.scope
-        args = argparse.Namespace(
-            daemon_command="install" if on else "uninstall", hours=True, write=True,
-            mine_at=times["mine"] if on else None, ours_at=times["ours"] if on else None,
-            dream_at=times["dream"] if on else None,
-            db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
-            project_scope=scope.project_scope)
-        said, failed = io.StringIO(), io.StringIO()
-        with self._settings, contextlib.redirect_stdout(said), contextlib.redirect_stderr(failed):
-            try:
-                code = cli._cmd_daemon(args)
-            except Exception as exc:  # anything else is one plain line, never a trace
-                code, _ = 1, failed.write(f"{exc}")
-        mind.forget()
-        if code != 0:
-            words = " ".join(failed.getvalue().split()) or " ".join(said.getvalue().split())
-            return {"error": words[:400] or "The quiet hours couldn't be changed."}
-        return {"result": " ".join(said.getvalue().split())[:400]}
+        """The quiet hours on or off, for this mind (``quiet_hours``)."""
+        answer = quiet_hours(mind.exporter.scope, request, self._settings)
+        mind.forget()  # the page reads them again on its next look
+        return answer
 
     def _jev(self, request: dict, mind: _Mind) -> dict:
         """Jev, the cue's judge, as the person sets it, one change at a time:
@@ -358,28 +394,11 @@ class LogServer(ThreadingHTTPServer):
         return {"result": said}
 
     def _read(self, ids: object, mind: _Mind) -> dict:
-        """Mark these notes of the agent's read, each once (one already read
-        keeps its time), as `mnemos notes` marks the notes it shows: ``{"result":
-        the ids this marked}``. Ids that aren't the agent's notes here mark
-        nothing, and no store is ever made."""
-        from ..simple_runtime import MnemosRuntime
-
-        if (not isinstance(ids, list) or not ids or len(ids) > MOST_READ
-                or not all(isinstance(i, str) and i.strip() for i in ids)):
-            return {"error": f'"note_ids" is a list of the notes read, at most {MOST_READ}.'}
-        if not mind.exporter.db.is_file():
-            return {"result": []}
-        scope = mind.exporter.scope
-        writer = MnemosRuntime(db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
-                               project_scope=scope.project_scope, use_dedicated_model=False, marks_lived=False)
-        try:
-            marked = writer.mark_notes_read([i.strip() for i in ids])
-        except sqlite3.Error:
-            return {"error": "It couldn't be marked read just now."}
-        finally:
-            writer.close()
-        mind.forget()
-        return {"result": marked}
+        """The agent's notes the person read, marked for this mind (``read_notes``)."""
+        answer = read_notes(mind.exporter.scope, ids)
+        if "result" in answer:
+            mind.forget()
+        return answer
 
     def addressed_here(self, host: str) -> bool:
         """Whether a request names this server by the loopback address or
@@ -591,15 +610,10 @@ class _Handler(BaseHTTPRequestHandler):
         mind = self.server.mind(_agent(self.path))
         root = mind.exporter.studio_dir if mind else None
         kind = PICTURE_TYPES.get(Path(rel).suffix.lower())
-        if root is None or kind is None or any(part.startswith(".") for part in Path(rel).parts):
-            return self._send(HTTPStatus.NOT_FOUND, b"Not here.\n", TYPES[".txt"], body)
-        studio = os.path.realpath(root)
-        path = os.path.realpath(os.path.join(studio, rel))
-        if not path.startswith(studio + os.sep):
+        path = studio_picture(root, rel) if root is not None and kind is not None else None
+        if path is None:
             return self._send(HTTPStatus.NOT_FOUND, b"Not here.\n", TYPES[".txt"], body)
         try:
-            if not os.path.isfile(path) or os.path.getsize(path) > MOST_BYTES:
-                raise FileNotFoundError(rel)
             with open(path, "rb") as picture:
                 content = picture.read()
         except OSError:
