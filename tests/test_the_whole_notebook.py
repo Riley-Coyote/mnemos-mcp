@@ -211,12 +211,15 @@ def test_a_part_is_asked_for_by_name(notebook):
     interface = _here(db)
     try:
         answers = [_ask(interface, "notebook"), _ask(interface, "notebook", part="minds"),
-                   _ask(interface, "notebook", part="pulse", since=7)]
+                   *(_ask(interface, "notebook", part="pulse", since=since)
+                     for since in (7, "yesterday", "", "2026-13-45T00:00:00"))]
+        dated = _ask(interface, "notebook", part="pulse", since="2026-11-01")
     finally:
         interface.close()
     assert [answer["error"] for answer in answers] == [
         '"part" is "life", "memories" or "pulse".', '"part" is "life", "memories" or "pulse".',
-        '"since" takes a time, in ISO 8601.']
+        *['"since" takes a time, in ISO 8601.'] * 4], "a since that isn't a time is refused, not read as none"
+    assert "result" in dated
 
 
 def test_without_a_store_each_part_says_so_and_makes_nothing(tmp_path):
@@ -334,7 +337,7 @@ def test_paging_an_empty_memory_is_one_empty_page(tmp_path):
     finally:
         interface.close()
     assert page["document"]["memories"] == [] and page["page"] == {"offset": 0, "limit": 5, "total": 0, "next": None}
-    assert past["error"] == '"offset" is past the last memory: there are 0, so it is 0 to 0.'
+    assert past["error"] == '"offset" is past the last memory: there are none yet, so it can only be 0.'
     assert not (tmp_path / "nothing.db").exists()
 
 # ---------- Pictures ----------
@@ -777,3 +780,163 @@ def test_no_read_wakes_marks_or_writes_anything(notebook, tmp_path):
     assert done.returncode == 0, done.stderr
     assert all("result" in json.loads(line) for line in done.stdout.splitlines())
     assert _everything(db) == before
+
+
+
+# ---------- Nothing a host sends ends the process ----------
+
+def _raw(db: Path, home: Path, lines: list[bytes], *flags: str) -> subprocess.CompletedProcess:
+    """``mnemos interface`` fed these lines as bytes, as a careless host might."""
+    return subprocess.run(
+        [sys.executable, "-m", "mnemos.cli", "interface", "--db-path", str(db), *SCOPE_ARGS, *flags],
+        input=b"".join(line + b"\n" for line in lines), capture_output=True, timeout=180,
+        env={"HOME": str(home), "PATH": "/usr/bin:/bin", "MNEMOS_DISABLE_DOTENV": "1",
+             "PYTHONPATH": ":".join(sys.path)},
+    )
+
+
+def test_a_byte_that_isnt_utf8_a_lone_surrogate_or_a_deep_nest_is_answered_and_the_process_goes_on(
+        notebook, tmp_path):
+    db, _ = notebook
+    done = _raw(db, tmp_path, [
+        b'{"id": 1, "command": "notes", "unread": "\xff\xfe"}',
+        b'{"id": "\\ud800", "command": "hello"}',
+        b'{"id": 3, "command": "search", "query": "\\ud800"}',
+        b"[" * 100_000 + b"]" * 100_000,
+        b'{"id": NaN, "command": "hello"}',
+        b"\xff\xfe not even JSON",
+        b'{"id": 7, "command": "note", "text": "two\rlines in one request"}',
+        b'{"id": 8, "command": "hello"}',
+    ])
+    assert done.returncode == 0 and b"Traceback" not in done.stderr, done.stderr[-600:]
+    answers = [json.loads(line) for line in done.stdout.decode("utf-8").splitlines()]
+    assert answers[:6] == [
+        {"id": 1, "error": person.NOT_TEXT},
+        {"id": None, "error": person.NOT_TEXT},
+        {"id": 3, "error": person.NOT_TEXT},
+        {"id": None, "error": person.NOT_A_REQUEST},
+        {"id": None, "error": person.NOT_A_REQUEST},
+        {"id": None, "error": person.NOT_TEXT},
+    ]
+    assert answers[6] == {"id": None, "error": person.NOT_A_REQUEST}, "a raw carriage return in a string isn't JSON"
+    assert answers[7]["id"] == 8 and answers[7]["result"]["protocol"] == 1
+    assert len(answers) == 8, "a stray carriage return didn't split a request in two"
+
+
+def test_random_lines_each_get_one_line_of_json_and_the_process_still_answers(notebook, tmp_path):
+    import random
+
+    db, _ = notebook
+    chance = random.Random(46)
+    lines = []
+    for _ in range(300):
+        kind = chance.random()
+        if kind < 0.6:
+            line = bytes(chance.randrange(256) for _ in range(chance.randrange(1, 120)))
+        elif kind < 0.8:
+            line = json.dumps({"id": chance.randrange(10**6), "command": chance.choice(COMMANDS),
+                               "limit": chance.choice([0, -1, 10**30, "x", None, 2.5])}).encode()
+        else:
+            line = b'{"id": 1, "command": "' + bytes(chance.randrange(256) for _ in range(8)) + b'"}'
+        lines.append(line.replace(b"\n", b" "))
+    lines.append(b'{"id": "last", "command": "hello"}')
+    done = _raw(db, tmp_path, lines)
+    assert done.returncode == 0 and b"Traceback" not in done.stderr, done.stderr[-600:]
+    expected = sum(1 for line in lines if line.decode("utf-8", "surrogateescape").strip())
+    out = done.stdout.decode("utf-8").splitlines()
+    assert len(out) == expected
+    answers = [json.loads(line) for line in out]
+    assert all(("result" in answer) != ("error" in answer) for answer in answers)
+    assert answers[-1]["id"] == "last" and answers[-1]["result"]["protocol"] == 1
+
+
+def test_an_answer_that_cant_be_made_is_still_one_sentence_and_the_next_is_answered(notebook, monkeypatch):
+    import io
+
+    db, _ = notebook
+    calls = []
+
+    def broken(self, line):
+        calls.append(line)
+        if len(calls) == 1:
+            raise RecursionError("deep inside")
+        return {"id": 2, "result": "fine"}
+
+    monkeypatch.setattr(Interface, "answer", broken)
+    out = io.StringIO()
+    code = person.serve(io.StringIO('{"id": 1, "command": "hello"}\n\n{"id": 2, "command": "hello"}\n'), out,
+                        db_path=str(db), **SCOPE)
+    assert code == 0
+    assert [json.loads(line) for line in out.getvalue().splitlines()] == [
+        {"id": None, "error": "Mnemos couldn't do that just now."}, {"id": 2, "result": "fine"}]
+
+
+# ---------- No Python error's name in a sentence ----------
+
+@pytest.mark.parametrize("command, request_", [
+    ("memories", {"limit": 10**30}), ("memories", {"offset": 10**30}), ("journal", {"last": 10**30}),
+    ("search", {"query": "ferry", "max_results": 10**30}),
+    ("notebook", {"part": "memories", "limit": 10**30}), ("notebook", {"part": "memories", "offset": 10**30}),
+])
+def test_an_absurd_number_is_refused_in_a_plain_sentence(notebook, command, request_):
+    db, _ = notebook
+    interface = _here(db)
+    try:
+        answer = _ask(interface, command, **request_)
+    finally:
+        interface.close()
+    key = next(k for k in request_ if k not in ("query", "part"))
+    assert answer == {"id": 1, "error": f'"{key}" takes a whole number no larger than 9,223,372,036,854,775,807.'}
+
+
+def test_the_largest_number_sqlite_holds_is_still_answered(notebook):
+    db, _ = notebook
+    most = 2**63 - 1
+    interface = _here(db)
+    try:
+        answers = [_ask(interface, "memories", limit=most, offset=most), _ask(interface, "journal", last=most),
+                   _ask(interface, "search", query="ferry", max_results=most)]
+    finally:
+        interface.close()
+    assert all("result" in answer for answer in answers), answers
+
+
+def test_a_file_that_isnt_a_memory_says_so_in_one_sentence_and_is_left_as_it_was(tmp_path):
+    db = tmp_path / "not-a-memory.db"
+    db.write_bytes(b"not sqlite at all, just words\n" * 50)
+    before = db.read_bytes()
+    interface = _here(db)
+    try:
+        answers = {command: _ask(interface, command, **request) for command, request in (
+            ("memories", {}), ("search", {"query": "x"}), ("journal", {}), ("notes", {}), ("summary", {}),
+            ("notebook", {"part": "life"}), ("notebook", {"part": "memories"}), ("notebook", {"part": "pulse"}),
+            ("note", {"text": "hi"}), ("reply", {"note_id": "n", "text": "hi"}),
+            ("correct", {"memory_id": "engram_01ABC0000000000000000000", "text": "w"}),
+            ("forget", {"memory_id": "engram_01ABC0000000000000000000"}))}
+    finally:
+        interface.close()
+    said = f"The file at {db} isn't a memory Mnemos can read."
+    assert {command: answer.get("error") for command, answer in answers.items()} == {
+        command: said for command in answers}
+    assert db.read_bytes() == before
+
+
+# ---------- Strict is exactly what was given ----------
+
+@pytest.mark.parametrize("flag, given, read", [
+    ("--agent-id", "!!!", "mnemos-agent"), ("--project-scope", "???", "global"),
+    ("--person-id", "Riley", "riley"), ("--agent-id", " nova", "nova"),
+])
+def test_strict_scope_refuses_a_value_mnemos_would_read_as_another(notebook, tmp_path, flag, given, read):
+    db, _ = notebook
+    scope = {"--db-path": str(db), "--agent-id": AGENT, "--person-id": "riley", "--project-scope": "demo", flag: given}
+    done = _interface(db, tmp_path, [{"id": 1, "command": "hello"}], "--strict-scope",
+                      scope=[part for pair in scope.items() for part in pair])
+    assert (done.returncode, done.stdout) == (2, "")
+    assert done.stderr.strip() == (f'--strict-scope uses each scope flag exactly as given, and {flag} "{given}" would '
+                                   f'be read as "{read}": give it as Mnemos keeps it, in lower-case letters, digits, '
+                                   '"-" and "_".')
+    # without --strict-scope, as before: read as Mnemos reads it
+    done = _interface(db, tmp_path, [{"id": 1, "command": "hello"}],
+                      scope=[part for pair in scope.items() for part in pair])
+    assert done.returncode == 0
