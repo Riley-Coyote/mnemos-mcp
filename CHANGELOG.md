@@ -30,6 +30,21 @@ differently, except that an unknown command's sentence now lists every command.
   environment or the config, or ends at once saying which flag is missing.
 - Reading still writes nothing: every table of the store and of the shared
   store is the same after each read, `notebook` and `summary` included.
+- **Nothing a host sends ends the process.** A line with a byte that isn't
+  UTF-8, an escape like `"\ud800"`, or 100,000 `[` in a row each ended it with a
+  Python traceback; each now gets one sentence, and the next line is answered.
+  Only a newline ends a request.
+- **Some error sentences changed** (valid requests answer exactly as before):
+  a number too large for SQLite (`limit`, `offset`, `last`, `max_results`) is
+  refused in a plain sentence, not "OverflowError: …"; a file that isn't a
+  memory says so, not "DatabaseError: file is not a database"; any other failure
+  says "Mnemos couldn't do that just now." with no Python error's name; NaN or
+  Infinity in a request is refused as not JSON; and an unknown command's
+  sentence lists every command.
+- **Nothing given is quietly changed.** Under `--strict-scope`, a scope value
+  Mnemos would read as another (`--agent-id "!!!"` as `mnemos-agent`) ends the
+  process at once, naming the flag; and `pulse` refuses a `since` that isn't a
+  time instead of reading it as none.
 
 ## 0.6.7 (2026-11-11)
 
