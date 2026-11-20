@@ -91,8 +91,38 @@ is given, made by the page's own code. Show what the page shows from it.
   a shared row's `author` and `model` (in `life.shared`). No other store is read.
   This process reads one mind only; there is no `minds` part.
 - **Sizes.** On a made-up store of 3,000 memories: `life` 8.7 KB, `memories`
-  5.3 MB (about 1.8 KB a memory), `pulse` 16 KB. Each answers in 0.12 s or less
+  5.3 MB (about 1.76 KB a memory), `pulse` 16 KB. Each answers in 0.12 s or less
   once the process is warm, and in about 0.3 s as the first request.
+
+### The memories, a page at a time
+
+A large memory makes a long line. `memories` takes an optional `limit` (1 or
+more) and `offset` (0 or more) to send it in pages:
+
+```json
+{"id": 5, "command": "notebook", "part": "memories", "limit": 500, "offset": 0}
+{"id": 5, "result": {"part": "memories",
+  "document": {"version": "b5499bd1028d", "made": "...", "memories": [... 500 ...], "recalled": [...]},
+  "page": {"offset": 0, "limit": 500, "total": 3000, "next": 500}}}
+```
+
+- With neither `limit` nor `offset`, the answer is the whole document, exactly
+  as before, with no `page`.
+- A page holds the memories from `offset` on, at most `limit` of them (with no
+  `limit`, all the rest), in the whole document's own order. `total` is how many
+  memories the whole holds, and `next` is the offset to ask for next, or null
+  after the last page.
+- `version` is the whole's, on every page. `recalled` (each time a memory came
+  back) comes whole on the page at offset 0 and empty on every other page.
+- To rebuild the whole: ask from offset 0, follow `next` until it is null, join
+  the pages' `memories` in order, and take `recalled` from the first page. If
+  any page's `version` differs from the first one's, the memories changed while
+  you read: start again from offset 0.
+- An `offset` past the last memory, or a `limit` or `offset` that isn't a
+  whole number in range, is refused in one sentence.
+- Each page is cut from a whole export, so paging keeps a line short; it does
+  not make the read cheaper. On 3,000 memories, pages of 500 were at most 1.5 MB
+  and took 0.2 to 0.4 s each on a busy machine.
 
 ## What each part counts: `summary`
 
