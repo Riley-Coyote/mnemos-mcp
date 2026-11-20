@@ -20,6 +20,8 @@ import pytest
 
 import mnemos.store.embedding_index as ei
 from mnemos.cli import main
+# Every command the interface answers, these and a host's (test_the_whole_notebook.py): an unknown one is told them all.
+from mnemos.interface.person import COMMANDS as ANSWERED
 from mnemos.simple_runtime import MnemosRuntime
 from tests.test_recall_by_meaning import _ConceptEmbedder
 
@@ -191,7 +193,7 @@ def test_every_refusal_is_one_plain_sentence_with_the_requests_id(tmp_path):
         {"id": None, "error": "A request is one JSON object on one line."},
         {"id": None, "error": "A request is one JSON object on one line."},
         {"id": 1, "error": 'There is no command "drop-everything" here; the commands are '
-                           f"{', '.join(COMMANDS)}."},
+                           f"{', '.join(ANSWERED)}."},
         {"id": 2, "error": '"limit" takes a whole number, 0 or more.'},
         {"id": 3, "error": '"state" is "active" or "dormant".'},
         {"id": 4, "error": '"query" takes text.'},
