@@ -1,0 +1,219 @@
+# The notebook for a host: `mnemos interface`
+
+An app the person uses (a host, such as Polyphonic or Ghost) can show the whole
+Mnemos notebook, and let the person do everything the notebook's own page lets
+them do, through one process it starts and keeps:
+
+```bash
+mnemos interface --db-path <store> --agent-id <agent> --person-id <person> \
+  --project-scope <project> [--as-person] [--strict-scope]
+```
+
+The host writes one JSON request a line on the process's stdin and reads one
+JSON answer a line on its stdout, in the same order:
+
+```json
+{"id": 7, "command": "summary"}
+{"id": 7, "result": {...}}
+{"id": 8, "error": "One plain sentence that says why."}
+```
+
+`id` is whatever the host sent (a number or a string), given back as it was.
+An answer has either `result` or `error`, never both. An error is one plain
+sentence, never a trace. The process ends when stdin closes. Times are ISO 8601,
+in UTC.
+
+## Start here: `hello`
+
+Ask it once, when the process starts, to learn what this Mnemos can do.
+
+```json
+{"id": 1, "command": "hello"}
+```
+```json
+{"id": 1, "result": {
+  "protocol": 1, "mnemos": "0.6.7", "schema": 19,
+  "commands": ["memories", "search", "correct", "forget", "journal", "notes", "reply", "note",
+               "hello", "notebook", "summary", "read", "hours", "shared"],
+  "parts": ["life", "memories", "pulse"],
+  "writes_as": "person", "strict_scope": true,
+  "scope": {"agent_id": "nova", "person_id": "riley", "project_scope": "demo",
+            "db_path": "/Users/you/.mnemos/nova.db", "held": true}}}
+```
+
+- `protocol` goes up only when a request or a result a host already reads
+  changes. A new command, or a new key in a result, leaves it where it is, so
+  read results by key and ignore keys you don't know.
+- `commands` is everything this build answers. An older Mnemos answers `hello`
+  with an error (`There is no command "hello" here; ...`): that is a Mnemos from
+  before this page, which answers only the first eight.
+- `schema` is the store schema this build writes.
+- `writes_as` is whose a correction or a forget will be: `person` or `agent`
+  (see `--as-person`).
+- `scope` is the one memory this process reads and writes, and `held` whether
+  its store is there yet. Nothing here ever makes a store.
+
+## The notebook: `notebook`
+
+Each part of the notebook, exactly what the notebook's own page (`mnemos log`)
+is given, made by the page's own code. Show what the page shows from it.
+
+| `part` | what it is | the page's file |
+|---|---|---|
+| `life` | who the mind is, its quiet hours and their schedule, its settings, the shared notebook, the journal, the notes, what it made, what its memory asks it, its memory's counts, its beliefs, the notes it left itself | `life.json` |
+| `memories` | every memory, whole, with how each is tied to the others and how often it came back | `memories.json` |
+| `pulse` | what came to the mind since `since` (with none, the last minute) | `pulse.json` |
+
+```json
+{"id": 2, "command": "notebook", "part": "life"}
+{"id": 2, "result": {"part": "life", "document": {...}, "pictures": {"week.png": "/Users/you/.mnemos/studio/nova/week.png"}}}
+
+{"id": 3, "command": "notebook", "part": "memories"}
+{"id": 3, "result": {"part": "memories", "document": {"version": "b5499bd1028d", "made": "...", "memories": [...], "recalled": [...]}}}
+
+{"id": 4, "command": "notebook", "part": "pulse", "since": "2026-11-20T09:00:00+00:00"}
+{"id": 4, "result": {"part": "pulse", "document": {"now": "...", "events": [{"key": "t1", "at": "...", "kind": "kept", "ids": ["engram_..."], "session": ""}]}}}
+```
+
+- `memories.version` changes only when the memories do, as on the page: read
+  `memories` again only then (`life.memory.version` says it too).
+- For `pulse`, ask next with the `now` the last answer gave as `since`. An
+  event's `key` stays the same each time it is read, so overlap is harmless.
+- **Pictures.** The page shows what the mind made from its studio. A host has
+  no web server, so `life` comes with `pictures`: for each studio item the page
+  shows as a picture, its `path` and the file to read. Only pictures, only from
+  inside this mind's own studio once links are followed, never a hidden file,
+  and none over 6 MB. Read the file yourself; it is never put inside a line.
+  The `picture` field inside the document is the page's own address for it and
+  means nothing to a host.
+- **Another mind's name.** Where the page says a memory was written "by a
+  colleague", the name comes from that memory's own `model` (in `memories`), or
+  a shared row's `author` and `model` (in `life.shared`). No other store is read.
+  This process reads one mind only; there is no `minds` part.
+- **Sizes.** On a made-up store of 3,000 memories: `life` 8.7 KB, `memories`
+  5.3 MB (about 1.8 KB a memory), `pulse` 16 KB. Each answers in 0.12 s or less
+  once the process is warm, and in about 0.3 s as the first request.
+
+## What each part counts: `summary`
+
+Cheap to ask every few seconds, to know whether to read again.
+
+```json
+{"id": 5, "command": "summary"}
+{"id": 5, "result": {
+  "missing": false,
+  "counts": {"memories": 2, "states": {"active": 2, "dormant": 0, "archived": 0},
+             "shared": 1, "beliefs": 0, "questions": 2, "answered": 0, "journal": 0,
+             "notes": 1, "replies": 0, "hours": 0, "made": 1, "carrying": 0},
+  "unread": 0, "waiting": 1, "change_token": "573b8bb7b7ca4602db18"}}
+```
+
+- The counts are read from the same documents `notebook` gives, so a host's
+  counts and the page's agree: `memories` and `states` (the memory), `shared`
+  (rows in the shared notebook), `beliefs`, `questions` (open) and `answered`,
+  `journal`, `notes` (the agent's notes for the person) and `replies` (the
+  person's), `hours` (quiet hours held on record), `made` (files in the studio),
+  `carrying` (the notes it left itself).
+- `unread`: the agent's notes the person hasn't read. `waiting`: the agent's
+  questions still waiting on the person (in each thread, the newest note, when
+  it is the agent's and ends with a question mark), as the page counts them.
+- `change_token` is the same while nothing the notebook shows has changed, and
+  different once anything has (a memory kept, a note read, a picture made, a
+  schedule changed). It is not a count and has no order: compare it for
+  equality only. The store's size is shown, so SQLite tidying its file can
+  change the token once with nothing else changed.
+- On 3,000 memories a summary takes about 0.13 s, warm.
+- `missing` is true while there is no store yet.
+
+## Reading the memory, journal and notes
+
+The person's commands from before, unchanged: each answers with what its one-shot
+`--json` command prints.
+
+| command | request | one-shot beside it |
+|---|---|---|
+| `memories` | `state` ("active" or "dormant"), `limit`, `offset` | `mnemos memories --json` |
+| `search` | `query`, `max_results` | `mnemos search --json` |
+| `journal` | `last` | `mnemos journal --json` |
+| `notes` | `unread` (true or false) | `mnemos notes --json` |
+
+## What the person can do
+
+Every act the notebook's page allows, but Jev's setting. Each runs through the
+page's own code, with its limits and its sentences.
+
+| command | request | result |
+|---|---|---|
+| `correct` | `memory_id`, `text` | `{"id": <new>, "replaces": <old>, "corrected": <time>}` |
+| `forget` | `memory_id` | `{"id", "state": "archived", "forgotten": <time>}` |
+| `reply` | `note_id`, `text` | the stored reply, as a `notes` item |
+| `note` | `text` | the stored note, as a `notes` item |
+| `read` | `note_ids`: a list of the agent's notes, 1 to 200 | the ids this marked read (one already read keeps its time) |
+| `hours` | `on` (true or false); with it on, `mine`, `ours`, `dream` (each `HH:MM`, or empty for its own default) | what the scheduler said |
+| `shared` | `action`: "add" (`text`), "correct" (`memory_id`, `text`) or "forget" (`memory_id`, `confirmed: true`) | what the shared notebook said |
+
+```json
+{"id": 6, "command": "read", "note_ids": ["a3de9e13-18a5-4bce-a87d-79ecce639b5a"]}
+{"id": 6, "result": ["a3de9e13-18a5-4bce-a87d-79ecce639b5a"]}
+
+{"id": 7, "command": "hours", "on": true, "mine": "07:15", "ours": "", "dream": "03:05"}
+{"id": 7, "result": "..."}
+
+{"id": 8, "command": "shared", "action": "add", "text": "Every agent: the kettle is new."}
+{"id": 8, "result": "Saved to shared memory. Every agent on this machine can read it.\nShared memory ID: shared_engram_..."}
+```
+
+- A reply or a note is the person's own words, kept exactly as given, at most
+  16,384 characters, and refused during one of the agent's quiet hours.
+- `hours` does what `mnemos daemon install --hours --write` (or `uninstall
+  --hours --write`) does for this scope: it writes and loads a real job in the
+  system's scheduler (launchd on a Mac). Inside Hermes it is refused, as on the
+  page.
+- Letting a shared memory go is asked twice: without `"confirmed": true` it is
+  refused. The shared notebook is the machine's, one for every agent, and its
+  writes here are always the person's.
+- **Jev is not here.** Its setting takes a key, and nothing in `mnemos
+  interface` takes, says or logs a key. Jev is set on the notebook's own page.
+  `life.jev` says whether it is on and whether a key is saved, never the key.
+
+## The two flags
+
+- `--as-person`: every write is the person's (a correction's words unsigned and
+  marked as theirs, a forget archived as theirs), whatever the shell it runs in
+  says. Without it, a correction or a forget from a process started inside an
+  agent's shell (one with `CLAUDECODE` or `AI_AGENT` set) is the agent's. (A
+  reply, a note, a note read and the shared notebook are always the person's.) A
+  host the person uses should pass it: an app started from a terminal Claude Code
+  opened would otherwise correct as the agent.
+- `--strict-scope`: the scope comes from the four flags and nowhere else. All
+  four of `--db-path`, `--agent-id`, `--person-id` and `--project-scope` must be
+  given; the environment (`MNEMOS_DB_PATH`, `MNEMOS_AGENT_ID`, ...) and
+  `~/.mnemos/config.json` are never asked. With any missing, the process reads
+  nothing, writes one sentence to stderr naming what's missing, and ends at once
+  with status 2. A host should pass it, so it never reads a memory it didn't
+  name.
+
+Without the flags, everything is as it was.
+
+## What never changes
+
+- The person's eight commands keep their requests and their results.
+- Reading writes nothing. No read, search included, wakes, strengthens, links,
+  marks read, schedules or writes anything, and none makes a store. A person
+  looking through the memory is not the agent remembering. (A store already in
+  use may have its `-wal` and `-shm` files beside it; those are SQLite's.)
+- Nothing is ever deleted: a forget archives.
+- One process, one memory. It never lists or reads another mind's store.
+
+## What a host must do itself
+
+- **Choose the store, and say whose it is.** Pass all four scope flags with
+  `--strict-scope`, and show the person which mind they are looking at
+  (`hello`'s `scope`, `life.identity`).
+- **Ask before it acts.** Every write here is the person's: a host sends one
+  only when the person asked for it, in its own interface. Turning the quiet
+  hours on installs a job on their machine; letting a memory go is asked twice.
+- **Read pictures from the paths given**, and only those.
+- **Keep the process for as long as it shows the notebook**, and close stdin to
+  end it. The meaning model loads once, in the background, as it starts; a
+  search waits for it, nothing else does.
