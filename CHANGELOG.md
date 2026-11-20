@@ -15,6 +15,9 @@ differently, except that an unknown command's sentence now lists every command.
 - **`notebook`** gives each part of the page (`life`, `memories`, `pulse`)
   exactly as the page is given it, made by the page's own code. `life` comes
   with each picture's file, inside the mind's own studio, never its bytes.
+  `memories` can come a page at a time (optional `limit` and `offset`, with a
+  `page` that gives the `total` and the `next` offset); asked for with neither,
+  it is the whole document, as before.
 - **`summary`** gives what each part counts, the notes not yet read, the
   questions waiting on the person, and a `change_token` that changes only when
   something shown does (0.13 s on 3,000 memories).
