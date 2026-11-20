@@ -337,6 +337,26 @@ def summary_of(life: Mapping[str, Any], memories: Mapping[str, Any]) -> dict[str
     }
 
 
+def _page(memories: Mapping[str, Any], limit: int | None, offset: int) -> dict[str, Any]:
+    """One page of the ``memories`` part: the document as a whole, with its
+    ``version`` and ``made``, holding only the memories from ``offset`` on, at
+    most ``limit`` of them (None: all the rest), in the whole's own order.
+    ``recalled`` comes whole on the page at offset 0 and empty on every
+    other, so the pages of one version, joined in order of offset, are the
+    whole. ``page`` says where this one sits: ``offset``, ``limit``, ``total``,
+    and ``next``, the offset to ask for next (None after the last)."""
+    every = list(memories.get("memories") or [])
+    total = len(every)
+    if offset and offset >= total:
+        raise Refused(f'"offset" is past the last memory: there are {total:,}, so it is 0 to {max(total - 1, 0):,}.')
+    shown = every[offset:] if limit is None else every[offset:offset + limit]
+    after = offset + len(shown)
+    document = {**memories, "memories": shown,
+                "recalled": list(memories.get("recalled") or []) if offset == 0 else []}
+    return {"part": "memories", "document": document,
+            "page": {"offset": offset, "limit": limit, "total": total, "next": after if after < total else None}}
+
+
 def _acted(answer: Mapping[str, Any]) -> Any:
     """What one of the page's acts answered (``{"result": ...}`` or
     ``{"error": one sentence}``), as the interface answers: the result, or
@@ -580,7 +600,9 @@ class Interface:
         the page's own code: ``life`` and ``memories`` by ``Exporter.export``,
         ``pulse`` by ``export.pulse``. ``life`` comes with ``pictures``: for
         each picture the page would show, the file itself, inside this mind's
-        studio, where a host with no web server can read it."""
+        studio, where a host with no web server can read it. ``memories``
+        takes an optional ``limit`` and ``offset`` (``_page``); with neither,
+        it is the whole document, as it always was."""
         part = request.get("part")
         if part not in PARTS:
             raise Refused('"part" is "life", "memories" or "pulse".')
@@ -590,9 +612,12 @@ class Interface:
             if since is not None and not isinstance(since, str):
                 raise Refused('"since" takes a time, in ISO 8601.')
             return {"part": part, "document": pulse(exporter, since)}
+        paged = part == "memories" and (request.get("limit") is not None or request.get("offset") is not None)
+        limit = _whole(request, "limit", None, least=1) if paged else None
+        offset = (_whole(request, "offset", 0, least=0) or 0) if paged else 0
         life, memories = exporter.export()
         if part == "memories":
-            return {"part": part, "document": memories}
+            return {"part": part, "document": memories} if not paged else _page(memories, limit, offset)
         root = exporter.studio_dir
         pictures: dict[str, str] = {}
         for item in life.get("studio") or []:
