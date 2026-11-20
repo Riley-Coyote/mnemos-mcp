@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import sqlite3
 import sys
 import threading
@@ -53,6 +54,8 @@ from ..store.embedding_index import EmbeddingIndex
 from ..store.sqlite_store import ReadOnlyEngramStore
 from .context_packet import lineage_supersedes
 
+logger = logging.getLogger(__name__)
+
 #: The states ``mnemos memories`` lists, and ``--state`` chooses from.
 STATES = ("active", "dormant")
 #: Who wrote a memory's words (its ``author_kind``), as the person's app is
@@ -75,6 +78,8 @@ PARTS = ("life", "memories", "pulse")
 SCOPE_FLAGS = {"db_path": "--db-path", "agent_id": "--agent-id",
                "person_id": "--person-id", "project_scope": "--project-scope"}
 _JOURNAL_LAST = 5
+#: The largest whole number a request may give: what SQLite can hold (a larger one failed in SQLite itself).
+MOST_WHOLE = 2**63 - 1
 
 
 class Refused(ValueError):
@@ -234,6 +239,8 @@ def _whole(request: Mapping[str, Any], key: str, default: int | None, *, least: 
         return default
     if isinstance(value, bool) or not isinstance(value, int) or value < least:
         raise Refused(f'"{key}" takes a whole number, {least} or more.')
+    if value > MOST_WHOLE:
+        raise Refused(f'"{key}" takes a whole number no larger than {MOST_WHOLE:,}.')
     return value
 
 
@@ -247,10 +254,52 @@ def _words(request: Mapping[str, Any], key: str) -> str:
     return value
 
 
-def _one_sentence(exc: BaseException) -> str:
-    """Something that went wrong, as one plain line."""
-    detail = " ".join(str(exc).split())[:240]
-    return f"Mnemos couldn't do that ({type(exc).__name__}{': ' + detail if detail else ''})."
+def _one_sentence(exc: BaseException, db_path: str = "") -> str:
+    """Something that went wrong, as one plain sentence, never a Python error's
+    name or words: a store that isn't a memory says so, anything else says
+    only that it couldn't be done (its detail is logged at debug level)."""
+    if isinstance(exc, sqlite3.DatabaseError) and any(
+            words in str(exc) for words in ("file is not a database", "malformed", "not a database")):
+        return f"The file at {db_path or 'this path'} isn't a memory Mnemos can read."
+    logger.debug("mnemos interface: a request failed", exc_info=exc)
+    return "Mnemos couldn't do that just now."
+
+
+#: What a request that can't be read at all is answered.
+NOT_A_REQUEST = "A request is one JSON object on one line."
+#: What a request holding text that isn't UTF-8 is answered: a stray byte, or a lone surrogate escape ("\\ud800").
+NOT_TEXT = ("A request is UTF-8 text, and this one holds something that isn't (a stray byte, "
+            "or an escape like \"\\ud800\" that stands for no character).")
+
+
+def _no_constant(name: str) -> None:
+    """NaN and Infinity aren't JSON, and would make an answer that isn't."""
+    raise ValueError(name)
+
+
+def _utf8(value: Any) -> bool:
+    """Whether ``value`` can be written out as UTF-8 JSON."""
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, UnicodeEncodeError, RecursionError):
+        return False
+    return True
+
+
+def answer_line(answer: Mapping[str, Any]) -> str:
+    """One answer as the one line written for it, always valid JSON: as
+    before for any answer that can be (the same bytes), else with what can't
+    be written escaped, and at worst the plain sentence that it couldn't be."""
+    for ascii_only in (False, True):
+        try:
+            line = json.dumps(answer, ensure_ascii=ascii_only, allow_nan=False)
+            line.encode("utf-8")
+            return line
+        except (ValueError, UnicodeEncodeError, RecursionError):
+            continue
+    request_id = answer.get("id")
+    return json.dumps({"id": request_id if _utf8(request_id) else None,
+                       "error": "Mnemos couldn't write that answer as JSON."})
 
 
 def missing_scope(flags: Mapping[str, str | None]) -> list[str]:
@@ -263,6 +312,23 @@ def strict_scope_sentence(missing: list[str]) -> str:
     """Why ``--strict-scope`` won't start, in one sentence."""
     return (f"--strict-scope takes the memory's scope from all four of {', '.join(SCOPE_FLAGS.values())}, "
             f"and never from the environment or the config; this is missing {', '.join(missing)}.")
+
+
+def strict_scope_problem(flags: Mapping[str, str | None]) -> str | None:
+    """Why ``--strict-scope`` won't start with these flags, in one sentence, or
+    None: a flag missing, or a scope value Mnemos would read as something else
+    (``--agent-id "!!!"`` is read as "mnemos-agent"). Strict is exactly what
+    was given."""
+    missing = missing_scope(flags)
+    if missing:
+        return strict_scope_sentence(missing)
+    resolved = resolve_scope(**{key: flags.get(key) for key in SCOPE_FLAGS})
+    for key, flag in SCOPE_FLAGS.items():
+        given, read = flags.get(key), getattr(resolved, key)
+        if given != read:
+            return (f'--strict-scope uses each scope flag exactly as given, and {flag} "{given}" would be read as '
+                    f'"{read}": give it as Mnemos keeps it, in lower-case letters, digits, "-" and "_".')
+    return None
 
 
 # ── What a host asks of the whole notebook ──
@@ -348,7 +414,8 @@ def _page(memories: Mapping[str, Any], limit: int | None, offset: int) -> dict[s
     every = list(memories.get("memories") or [])
     total = len(every)
     if offset and offset >= total:
-        raise Refused(f'"offset" is past the last memory: there are {total:,}, so it is 0 to {max(total - 1, 0):,}.')
+        raise Refused('"offset" is past the last memory: there are none yet, so it can only be 0.' if not total else
+                      f'"offset" is past the last memory: there are {total:,}, so it is 0 to {total - 1:,}.')
     shown = every[offset:] if limit is None else every[offset:offset + limit]
     after = offset + len(shown)
     document = {**memories, "memories": shown,
@@ -393,9 +460,9 @@ class Interface:
             "db_path": db_path, "agent_id": agent_id,
             "person_id": person_id, "project_scope": project_scope,
         }
-        missing = missing_scope(self._flags) if strict_scope else []
-        if missing:
-            raise Refused(strict_scope_sentence(missing))
+        problem = strict_scope_problem(self._flags) if strict_scope else None
+        if problem:
+            raise Refused(problem)
         self._strict = strict_scope
         self.scope = resolve_scope(**self._flags)
         self._exporter: Exporter | None = None
@@ -609,7 +676,7 @@ class Interface:
         exporter = self._notebook()
         if part == "pulse":
             since = request.get("since")
-            if since is not None and not isinstance(since, str):
+            if since is not None and (not isinstance(since, str) or when(since) is None):
                 raise Refused('"since" takes a time, in ISO 8601.')
             return {"part": part, "document": pulse(exporter, since)}
         paged = part == "memories" and (request.get("limit") is not None or request.get("offset") is not None)
@@ -662,12 +729,14 @@ class Interface:
         <what the command's one-shot --json prints>}``, or ``{"id": ...,
         "error": "<one plain sentence>"}``."""
         try:
-            request = json.loads(line)
-        except ValueError:
+            request = json.loads(line, parse_constant=_no_constant)
+        except (ValueError, RecursionError):  # not JSON, or nested past what Python can read
             request = None
         if not isinstance(request, dict):
-            return {"id": None, "error": "A request is one JSON object on one line."}
+            return {"id": None, "error": NOT_TEXT if not _utf8(line) else NOT_A_REQUEST}
         request_id = request.get("id")
+        if not _utf8(request):
+            return {"id": request_id if _utf8(request_id) else None, "error": NOT_TEXT}
         command = request.get("command")
         if command not in COMMANDS:
             return {
@@ -680,7 +749,7 @@ class Interface:
         except (Refused, NothingChanged) as exc:
             return {"id": request_id, "error": str(exc)}
         except Exception as exc:  # any other failure is the one plain line, never a trace
-            return {"id": request_id, "error": _one_sentence(exc)}
+            return {"id": request_id, "error": _one_sentence(exc, str(Path(self.scope.db_path).expanduser()))}
 
 
 def serve(
@@ -699,21 +768,30 @@ def serve(
     stdin = sys.stdin if stdin is None else stdin
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
-    missing = missing_scope(flags) if strict_scope else []
-    if missing:
-        print(strict_scope_sentence(missing), file=stderr, flush=True)
+    problem = strict_scope_problem(flags) if strict_scope else None
+    if problem:
+        print(problem, file=stderr, flush=True)
         return 2
-    for stream in (stdin, stdout):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8")
+    # A byte that isn't UTF-8 is read as itself (surrogateescape) and answered, never a failure to read; and only
+    # "\n" ends a request, so a stray "\r" inside one can't split it into two.
+    reconfigure = getattr(stdin, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="surrogateescape", newline="\n")
+    reconfigure = getattr(stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8")
     interface = Interface(**flags, person=True if as_person else None, strict_scope=strict_scope)
     interface.warm()
     try:
         for line in stdin:
             if not line.strip():
                 continue
-            stdout.write(json.dumps(interface.answer(line), ensure_ascii=False) + "\n")
+            try:
+                answer = interface.answer(line)
+            except Exception:  # nothing a host sends ends the process; only closing stdin does
+                logger.debug("mnemos interface: a request couldn't be answered", exc_info=True)
+                answer = {"id": None, "error": "Mnemos couldn't do that just now."}
+            stdout.write(answer_line(answer) + "\n")
             stdout.flush()
     finally:
         interface.close()
