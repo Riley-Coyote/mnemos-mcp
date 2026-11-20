@@ -112,6 +112,26 @@ def inside(root: Path, path: Path) -> bool:
         return False
 
 
+def studio_picture(root: Path | str, rel: str) -> str | None:
+    """The picture ``rel`` names in the studio at ``root``, as a file to read,
+    or None: only a picture (``PICTURES``), never a hidden file, only from
+    inside the studio once links are followed, and at most ``MOST_BYTES``.
+    What the page serves at ``data/studio/<rel>``, and what ``mnemos
+    interface`` gives a host in its place."""
+    if Path(rel).suffix.lower() not in PICTURES or any(part.startswith(".") for part in Path(rel).parts):
+        return None
+    studio = os.path.realpath(root)
+    path = os.path.realpath(os.path.join(studio, rel))
+    if not path.startswith(studio + os.sep):
+        return None
+    try:
+        if not os.path.isfile(path) or os.path.getsize(path) > MOST_BYTES:
+            return None
+    except OSError:
+        return None
+    return path
+
+
 def open_read_only(path: Path) -> sqlite3.Connection:
     """A connection that cannot write ``path``, and leaves nothing beside it.
 
