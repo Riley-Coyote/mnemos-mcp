@@ -30,7 +30,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import fcntl
 import json
-import math
 import os
 from pathlib import Path
 import re
@@ -613,24 +612,6 @@ def read_dirs() -> list[Path]:
     return folders
 
 
-def _above_zero(value, *, whole: bool):
-    """``value`` as a number above zero, a whole one when ``whole``, or None."""
-    if isinstance(value, bool):
-        return None
-    try:
-        if not whole:
-            number = float(value)
-            if not math.isfinite(number):
-                return None
-        elif isinstance(value, float):
-            number = int(value) if value.is_integer() else 0
-        else:
-            number = int(value)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    return number if number > 0 else None
-
-
 def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
            agent_id=None) -> tuple[float, int, str]:
     """What one hour may spend: ``(seconds, tokens, "")``, or with the third
@@ -640,36 +621,49 @@ def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
     (``mnemos life --max-minutes``, ``--max-tokens``); a host app's budget for
     the one hour it runs, MNEMOS_HOUR_MINUTES and MNEMOS_HOUR_TOKEN_CEILING;
     for minutes, what the person chose for this agent's hour (``agent_id``;
-    ``state.chosen_minutes``); Mnemos's config, ``life.minutes.<kind>`` and
-    ``life.token_ceiling.<kind>``; DEFAULT_MINUTES and DEFAULT_TOKEN_CEILING.
+    ``state.chosen_minutes``); Mnemos's config, ``life.minutes.<kind>``
+    (``state.configured_minutes``, which ``mnemos hours`` and the page show
+    too) and ``life.token_ceiling.<kind>``; DEFAULT_MINUTES and
+    DEFAULT_TOKEN_CEILING.
     A host app gives a new mind a gentler cap this way, and the defaults stay
     as they were. A setting that isn't a number above zero (a whole one, for
     tokens) runs no hour, rather than one on a budget nobody chose."""
     config = _life_config()
     wrong: list[str] = []
 
-    def first(passed, setting, key, default, unit, whole, chosen=None):
+    def first(passed, setting, key, default, unit, whole, chosen=None, configured=None):
         if passed is not None:
             return passed
         value, where = os.environ.get(setting, "").strip(), setting
         if not value and chosen is not None:
             return chosen
+        if not value and configured is not None:
+            return configured()
         if not value:
             section = config.get(key)
             value = section.get(kind) if isinstance(section, dict) else None
             where = f"life.{key}.{kind} in Mnemos's config"
             if value is None:
                 return default
-        number = _above_zero(value, whole=whole)
+        number = state.above_zero(value, whole=whole)
         if number is None:
             wrong.append(f"{where} needs {unit} above zero, not {value!r}.")
             return default
         return number
 
+    def configured_minutes():
+        try:
+            minutes = state.configured_minutes(kind)
+        except ValueError as exc:
+            wrong.append(str(exc))
+            return DEFAULT_MINUTES[kind]
+        return DEFAULT_MINUTES[kind] if minutes is None else minutes
+
     if max_seconds is None:
         max_seconds = first(max_minutes, MINUTES_SETTING, "minutes", DEFAULT_MINUTES[kind],
                             "a number of minutes", False,
-                            state.chosen_minutes(agent_id, kind) if agent_id else None) * 60
+                            state.chosen_minutes(agent_id, kind) if agent_id else None,
+                            configured_minutes) * 60
     max_tokens = first(max_tokens, TOKEN_CEILING_SETTING, "token_ceiling",
                        DEFAULT_TOKEN_CEILING[kind], "a whole number of tokens", True)
     return max_seconds, max_tokens, " ".join(wrong)

@@ -18,6 +18,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+import math
 import os
 from pathlib import Path
 import shlex
@@ -343,17 +344,72 @@ def _chosen_minutes(kept: dict, kind: str) -> int | None:
 def chosen_minutes(agent_id: str, kind: str) -> int | None:
     """The minutes the person chose for this hour, or None when they chose
     none or what is kept isn't a length an hour can have. ``hour_settings``
-    fills in the default; this says only what was chosen."""
+    fills in the rest; this says only what was chosen."""
     return _chosen_minutes(_kept(agent_id), kind)
+
+
+def above_zero(value, *, whole: bool):
+    """``value`` as a number above zero, a whole one when ``whole``, or None:
+    the rule for every length and ceiling an hour is given."""
+    if isinstance(value, bool):
+        return None
+    try:
+        if not whole:
+            number = float(value)
+            if not math.isfinite(number):
+                return None
+        elif isinstance(value, float):
+            number = int(value) if value.is_integer() else 0
+        else:
+            number = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if number > 0 else None
+
+
+def configured_minutes(kind: str) -> int | float | None:
+    """How long Mnemos's config says this hour may last, for every agent on
+    the machine (``life.minutes.<kind>`` in ``~/.mnemos/config.json``, read as
+    the hour's runner reads it), or None when it says nothing or can't be
+    read. Raises ValueError, in words, when it names something that isn't a
+    number of minutes above zero: the runner then runs no hour."""
+    try:
+        from ..config.loader import load_config
+
+        section = load_config().get("life")
+    except Exception:
+        return None
+    minutes = section.get("minutes") if isinstance(section, dict) else None
+    value = minutes.get(kind) if isinstance(minutes, dict) else None
+    if value is None:
+        return None
+    number = above_zero(value, whole=False)
+    if number is None:
+        raise ValueError(
+            f"life.minutes.{kind} in Mnemos's config needs a number of minutes above zero, not {value!r}."
+        )
+    return int(number) if number.is_integer() else number
+
+
+def _minutes(kept: dict, kind: str):
+    """How long the hour lasts: what the person chose, else what Mnemos's
+    config says, else the default."""
+    chosen = _chosen_minutes(kept, kind)
+    if chosen is not None:
+        return chosen
+    try:
+        configured = configured_minutes(kind)
+    except ValueError:
+        configured = None
+    return DEFAULT_MINUTES[kind] if configured is None else configured
 
 
 def _settings(kept: dict, kind: str, mine_scheduled) -> dict:
     recorded = _recorded(kept, kind)
     at = parse_clock(recorded.get("at")) or DEFAULT_AT[kind]
-    minutes = _chosen_minutes(kept, kind)
     return {
         "at": clock_text(at),
-        "minutes": DEFAULT_MINUTES[kind] if minutes is None else minutes,
+        "minutes": _minutes(kept, kind),
         "online": _online(kept, kind, mine_scheduled),
     }
 

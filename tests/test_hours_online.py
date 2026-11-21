@@ -315,6 +315,40 @@ def test_the_minutes_the_person_chose_are_read_in_one_place(home, monkeypatch):
     assert asked == [(AGENT, "ours")]
 
 
+def test_what_the_hours_show_is_what_they_run_with(home, launchd):
+    """`mnemos hours` and the page (``hours_now``) show the length the hour
+    runs with (``budget``): the person's, else the config's, else the default."""
+    from mnemos.life import budget
+
+    def shown():
+        return state.hours_now(AGENT)["mine"]["minutes"]
+
+    def runs():
+        seconds, _tokens, wrong = budget("mine", agent_id=AGENT)
+        return seconds / 60, wrong
+
+    config = home / ".mnemos" / "config.json"
+    config.write_text(json.dumps({"life": {"minutes": {"mine": 45}}}))
+    assert shown() == 45 and state.hour_settings(AGENT)["mine"]["minutes"] == 45
+    assert runs() == (45, "")
+    state.record_hour(AGENT, "mine", minutes=20)
+    assert shown() == 20 and runs() == (20, "")
+
+    (state.hours_dir(AGENT) / state.CHOICE_FILE).unlink()
+    for bad in ("soon", 0, -5, True):
+        config.write_text(json.dumps({"life": {"minutes": {"mine": bad}}}))
+        assert shown() == state.DEFAULT_MINUTES["mine"], bad
+        minutes, wrong = runs()
+        assert minutes == state.DEFAULT_MINUTES["mine"], bad
+        assert wrong == f"life.minutes.mine in Mnemos's config needs a number of minutes above zero, not {bad!r}."
+        with pytest.raises(ValueError):
+            state.configured_minutes("mine")
+    config.write_text(json.dumps({"life": {"minutes": {"mine": "30"}}}))
+    assert state.configured_minutes("mine") == 30 and shown() == 30 and runs() == (30, "")
+    config.write_text("{not json")
+    assert state.configured_minutes("mine") is None and shown() == state.DEFAULT_MINUTES["mine"]
+
+
 def test_the_persons_minutes_reach_the_hour_that_runs(db, monkeypatch):
     from mnemos import life
 
