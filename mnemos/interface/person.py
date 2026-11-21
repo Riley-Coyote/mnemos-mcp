@@ -6,7 +6,11 @@ and ``mnemos forget``, beside ``mnemos journal``, ``mnemos notes``, ``mnemos
 notes reply`` and ``mnemos notes write``. And ``mnemos interface``: one long-lived process that answers the
 same commands in the same shapes, one JSON request a line on stdin and one JSON
 line an answer on stdout, so the meaning model loads once rather than once a
-command (4.4 s on the maintainer's Mac, then about 14 ms a query).
+command (4.4 s on the maintainer's Mac, then about 14 ms a query). Beside
+them, the whole notebook for a host: ``hello``, each part of the notebook's
+page as the page is given it (``notebook``), what each part counts
+(``summary``), and the rest of what the person can do on that page (``read``,
+``hours``, ``shared``), each through the page's own code (docs/host-interface.md).
 
 Reading writes nothing and never makes a store. A person looking through the
 memory is not the agent remembering: nothing a search finds is woken,
@@ -22,7 +26,9 @@ Times are ISO 8601 in UTC (``utc_iso``).
 from __future__ import annotations
 
 import contextvars
+import hashlib
 import json
+import logging
 import sqlite3
 import sys
 import threading
@@ -32,7 +38,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from ..authorship import run_by_agent
-from ..companion.export import _Reading, open_read_only, when
+from ..companion.export import Exporter, _Reading, open_read_only, person_name, pulse, studio_picture, when
 from ..simple_runtime import (
     MnemosRuntime,
     NothingChanged,
@@ -49,6 +55,8 @@ from ..store.embedding_index import EmbeddingIndex
 from ..store.sqlite_store import ReadOnlyEngramStore
 from .context_packet import lineage_supersedes
 
+logger = logging.getLogger(__name__)
+
 #: The states ``mnemos memories`` lists, and ``--state`` chooses from.
 STATES = ("active", "dormant")
 #: Who wrote a memory's words (its ``author_kind``), as the person's app is
@@ -56,9 +64,23 @@ STATES = ("active", "dormant")
 #: templates ("system") and what was brought in from elsewhere ("import").
 #: Anything else (none, or a kind a newer Mnemos adds) is "unknown".
 AUTHORS = {"agent": "agent", "person": "person", "tool": "tool", "system": "tool", "import": "tool"}
-#: What ``mnemos interface`` answers.
-COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note")
+#: The version of what ``mnemos interface`` says, as ``hello`` tells a host. It goes up only when a request or a
+#: result a host already reads changes; a new command, or a new key in a result, leaves it where it is.
+PROTOCOL = 1
+#: What ``mnemos interface`` answers: the person's commands, then what a host asks of the whole notebook (``hello``,
+#: ``notebook``, ``summary``) and the rest of what the person can do on the notebook's own page (``read``, ``hours``,
+#: ``shared``). Jev's setting is left to the page: it takes a key, and nothing here takes, says or keeps one.
+COMMANDS = ("memories", "search", "correct", "forget", "journal", "notes", "reply", "note",
+            "hello", "notebook", "summary", "read", "hours", "shared")
+#: The parts of the notebook ``notebook`` gives: the page's own documents (``life.json``, ``memories.json``,
+#: ``pulse.json``), for the one mind this process was started for.
+PARTS = ("life", "memories", "pulse")
+#: The four scope flags ``--strict-scope`` asks for, all of them.
+SCOPE_FLAGS = {"db_path": "--db-path", "agent_id": "--agent-id",
+               "person_id": "--person-id", "project_scope": "--project-scope"}
 _JOURNAL_LAST = 5
+#: The largest whole number a request may give: what SQLite can hold (a larger one failed in SQLite itself).
+MOST_WHOLE = 2**63 - 1
 
 
 class Refused(ValueError):
@@ -218,6 +240,8 @@ def _whole(request: Mapping[str, Any], key: str, default: int | None, *, least: 
         return default
     if isinstance(value, bool) or not isinstance(value, int) or value < least:
         raise Refused(f'"{key}" takes a whole number, {least} or more.')
+    if value > MOST_WHOLE:
+        raise Refused(f'"{key}" takes a whole number no larger than {MOST_WHOLE:,}.')
     return value
 
 
@@ -231,10 +255,183 @@ def _words(request: Mapping[str, Any], key: str) -> str:
     return value
 
 
-def _one_sentence(exc: BaseException) -> str:
-    """Something that went wrong, as one plain line."""
-    detail = " ".join(str(exc).split())[:240]
-    return f"Mnemos couldn't do that ({type(exc).__name__}{': ' + detail if detail else ''})."
+def _one_sentence(exc: BaseException, db_path: str = "") -> str:
+    """Something that went wrong, as one plain sentence, never a Python error's
+    name or words: a store that isn't a memory says so, anything else says
+    only that it couldn't be done (its detail is logged at debug level)."""
+    if isinstance(exc, sqlite3.DatabaseError) and any(
+            words in str(exc) for words in ("file is not a database", "malformed", "not a database")):
+        return f"The file at {db_path or 'this path'} isn't a memory Mnemos can read."
+    logger.debug("mnemos interface: a request failed", exc_info=exc)
+    return "Mnemos couldn't do that just now."
+
+
+#: What a request that can't be read at all is answered.
+NOT_A_REQUEST = "A request is one JSON object on one line."
+#: What a request holding text that isn't UTF-8 is answered: a stray byte, or a lone surrogate escape ("\\ud800").
+NOT_TEXT = ("A request is UTF-8 text, and this one holds something that isn't (a stray byte, "
+            "or an escape like \"\\ud800\" that stands for no character).")
+
+
+def _no_constant(name: str) -> None:
+    """NaN and Infinity aren't JSON, and would make an answer that isn't."""
+    raise ValueError(name)
+
+
+def _utf8(value: Any) -> bool:
+    """Whether ``value`` can be written out as UTF-8 JSON."""
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False).encode("utf-8")
+    except (ValueError, UnicodeEncodeError, RecursionError):
+        return False
+    return True
+
+
+def answer_line(answer: Mapping[str, Any]) -> str:
+    """One answer as the one line written for it, always valid JSON: as
+    before for any answer that can be (the same bytes), else with what can't
+    be written escaped, and at worst the plain sentence that it couldn't be."""
+    for ascii_only in (False, True):
+        try:
+            line = json.dumps(answer, ensure_ascii=ascii_only, allow_nan=False)
+            line.encode("utf-8")
+            return line
+        except (ValueError, UnicodeEncodeError, RecursionError):
+            continue
+    request_id = answer.get("id")
+    return json.dumps({"id": request_id if _utf8(request_id) else None,
+                       "error": "Mnemos couldn't write that answer as JSON."})
+
+
+def missing_scope(flags: Mapping[str, str | None]) -> list[str]:
+    """The scope flags ``--strict-scope`` asks for that ``flags`` doesn't give
+    (None or blank), as the command line names them, in their order."""
+    return [flag for key, flag in SCOPE_FLAGS.items() if not (flags.get(key) or "").strip()]
+
+
+def strict_scope_sentence(missing: list[str]) -> str:
+    """Why ``--strict-scope`` won't start, in one sentence."""
+    return (f"--strict-scope takes the memory's scope from all four of {', '.join(SCOPE_FLAGS.values())}, "
+            f"and never from the environment or the config; this is missing {', '.join(missing)}.")
+
+
+def strict_scope_problem(flags: Mapping[str, str | None]) -> str | None:
+    """Why ``--strict-scope`` won't start with these flags, in one sentence, or
+    None: a flag missing, or a scope value Mnemos would read as something else
+    (``--agent-id "!!!"`` is read as "mnemos-agent"). Strict is exactly what
+    was given."""
+    missing = missing_scope(flags)
+    if missing:
+        return strict_scope_sentence(missing)
+    resolved = resolve_scope(**{key: flags.get(key) for key in SCOPE_FLAGS})
+    for key, flag in SCOPE_FLAGS.items():
+        given, read = flags.get(key), getattr(resolved, key)
+        if given != read:
+            return (f'--strict-scope uses each scope flag exactly as given, and {flag} "{given}" would be read as '
+                    f'"{read}": give it as Mnemos keeps it, in lower-case letters, digits, "-" and "_".')
+    return None
+
+
+# ── What a host asks of the whole notebook ──
+
+
+def waiting(notes: list[Mapping[str, Any]]) -> list[Mapping[str, Any]]:
+    """The agent's questions still waiting on the person, as the page counts
+    them (``waiting`` in ``page/shared/words.js``): in each thread of notes
+    (a note and the replies that answer it), the newest note, when it is the
+    agent's and ends with a question mark."""
+    by_id = {note["id"]: note for note in notes}
+
+    def root(note: Mapping[str, Any]) -> str:
+        current = note
+        for _ in range(50):
+            above = current.get("replyTo")
+            if not above or above not in by_id:
+                break
+            current = by_id[above]
+        return current["id"]
+
+    last: dict[str, Mapping[str, Any]] = {}
+    for note in notes:
+        thread, newest = root(note), last.get(root(note))
+        moment, then = when(note.get("at")), when(newest.get("at")) if newest else None
+        if newest is None or (moment is not None and then is not None and moment >= then):
+            last[thread] = note
+    return [note for note in last.values()
+            if note.get("author") == "agent" and (note.get("text") or "").strip().endswith("?")]
+
+
+def change_token(life: Mapping[str, Any], memories: Mapping[str, Any]) -> str:
+    """A stamp of everything the notebook shows (its two documents, less the
+    moment each was made): the same while nothing a host would show has
+    changed, and different once anything has."""
+    shown = {"life": {k: v for k, v in life.items() if k != "made"},
+             "memories": {k: v for k, v in memories.items() if k != "made"}}
+    digest = hashlib.sha256(json.dumps(shown, sort_keys=True, ensure_ascii=False,
+                                       separators=(",", ":")).encode("utf-8"))
+    return digest.hexdigest()[:20]
+
+
+def summary_of(life: Mapping[str, Any], memories: Mapping[str, Any]) -> dict[str, Any]:
+    """``summary``: what each part of the notebook counts, read from the very
+    documents its page is given, so a host's counts and the page's agree.
+    ``unread`` is the agent's notes the person hasn't read; ``waiting`` its
+    questions still waiting on them (``waiting``)."""
+    notes = life.get("notes") or []
+    theirs = [note for note in notes if note.get("author") == "agent"]
+    questions = life.get("questions") or {}
+    memory = life.get("memory") or {}
+    states = memory.get("states") or {}
+    return {
+        "missing": bool(life.get("missing")),
+        "counts": {
+            "memories": int(memory.get("count", 0)),
+            "states": {name: int(states.get(name, 0)) for name in ("active", "dormant", "archived")},
+            "shared": len((life.get("shared") or {}).get("rows") or []),
+            "beliefs": len(life.get("beliefs") or []),
+            "questions": int(questions.get("open", 0)),
+            "answered": len(questions.get("answered") or []),
+            "journal": len(life.get("journal") or []),
+            "notes": len(theirs),
+            "replies": len(notes) - len(theirs),
+            "hours": len(life.get("hours") or []),
+            "made": len(life.get("studio") or []),
+            "carrying": len(life.get("handoffs") or []),
+        },
+        "unread": sum(1 for note in theirs if not note.get("read")),
+        "waiting": len(waiting(notes)),
+        "change_token": change_token(life, memories),
+    }
+
+
+def _page(memories: Mapping[str, Any], limit: int | None, offset: int) -> dict[str, Any]:
+    """One page of the ``memories`` part: the document as a whole, with its
+    ``version`` and ``made``, holding only the memories from ``offset`` on, at
+    most ``limit`` of them (None: all the rest), in the whole's own order.
+    ``recalled`` comes whole on the page at offset 0 and empty on every
+    other, so the pages of one version, joined in order of offset, are the
+    whole. ``page`` says where this one sits: ``offset``, ``limit``, ``total``,
+    and ``next``, the offset to ask for next (None after the last)."""
+    every = list(memories.get("memories") or [])
+    total = len(every)
+    if offset and offset >= total:
+        raise Refused('"offset" is past the last memory: there are none yet, so it can only be 0.' if not total else
+                      f'"offset" is past the last memory: there are {total:,}, so it is 0 to {total - 1:,}.')
+    shown = every[offset:] if limit is None else every[offset:offset + limit]
+    after = offset + len(shown)
+    document = {**memories, "memories": shown,
+                "recalled": list(memories.get("recalled") or []) if offset == 0 else []}
+    return {"part": "memories", "document": document,
+            "page": {"offset": offset, "limit": limit, "total": total, "next": after if after < total else None}}
+
+
+def _acted(answer: Mapping[str, Any]) -> Any:
+    """What one of the page's acts answered (``{"result": ...}`` or
+    ``{"error": one sentence}``), as the interface answers: the result, or
+    the same sentence refused."""
+    if "result" in answer:
+        return answer["result"]
+    raise Refused(str(answer.get("error") or "That couldn't be done just now."))
 
 
 class Interface:
@@ -256,7 +453,7 @@ class Interface:
 
     def __init__(self, *, db_path: str | None = None, agent_id: str | None = None,
                  person_id: str | None = None, project_scope: str | None = None,
-                 person: bool | None = None) -> None:
+                 person: bool | None = None, strict_scope: bool = False) -> None:
         # Whose a correction or a forget is: the person's own app says so (``person=True``: the page someone clicked,
         # even when an agent's server is serving it); with None, as the command line decides, by the shell it runs in.
         self._person = person
@@ -264,7 +461,12 @@ class Interface:
             "db_path": db_path, "agent_id": agent_id,
             "person_id": person_id, "project_scope": project_scope,
         }
+        problem = strict_scope_problem(self._flags) if strict_scope else None
+        if problem:
+            raise Refused(problem)
+        self._strict = strict_scope
         self.scope = resolve_scope(**self._flags)
+        self._exporter: Exporter | None = None
         self._reader: MnemosRuntime | None = None
         # The meaning model, once loaded: an index of no store, only a backend.
         self._model: EmbeddingIndex | None = None
@@ -438,17 +640,109 @@ class Interface:
         finally:
             writer.close()
 
+    # What a host asks of the whole notebook, and the rest of what the person can do on its page.
+
+    def hello(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """What this Mnemos answers, asked once by a host: the protocol's
+        version, Mnemos's, the store schema this build writes, every command,
+        whose a write is, and the one memory this process reads."""
+        from ..package_version import mnemos_version
+        from ..store.sqlite_store import SCHEMA_VERSION
+
+        return {
+            "protocol": PROTOCOL,
+            "mnemos": mnemos_version(),
+            "schema": SCHEMA_VERSION,
+            "commands": list(COMMANDS),
+            "parts": list(PARTS),
+            "writes_as": "person" if self._as_person() else "agent",
+            "strict_scope": self._strict,
+            "scope": {**self._scope_args(), "db_path": str(Path(self.scope.db_path).expanduser()),
+                      "held": self._held()},
+        }
+
+    def _notebook(self) -> Exporter:
+        """The notebook's exporter for this process's one mind, kept as the
+        page's server keeps one, so a finished hour's record is read once."""
+        if self._exporter is None:
+            self._exporter = Exporter(self.scope, person_name())
+        return self._exporter
+
+    def notebook(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """One part of the notebook, exactly as its page is given it, made by
+        the page's own code: ``life`` and ``memories`` by ``Exporter.export``,
+        ``pulse`` by ``export.pulse``. ``life`` comes with ``pictures``: for
+        each picture the page would show, the file itself, inside this mind's
+        studio, where a host with no web server can read it. ``memories``
+        takes an optional ``limit`` and ``offset`` (``_page``); with neither,
+        it is the whole document, as it always was."""
+        part = request.get("part")
+        if part not in PARTS:
+            raise Refused('"part" is "life", "memories" or "pulse".')
+        exporter = self._notebook()
+        if part == "pulse":
+            since = request.get("since")
+            if since is not None and (not isinstance(since, str) or when(since) is None):
+                raise Refused('"since" takes a time, in ISO 8601.')
+            return {"part": part, "document": pulse(exporter, since)}
+        paged = part == "memories" and (request.get("limit") is not None or request.get("offset") is not None)
+        limit = _whole(request, "limit", None, least=1) if paged else None
+        offset = (_whole(request, "offset", 0, least=0) or 0) if paged else 0
+        life, memories = exporter.export()
+        if part == "memories":
+            return {"part": part, "document": memories} if not paged else _page(memories, limit, offset)
+        root = exporter.studio_dir
+        pictures: dict[str, str] = {}
+        for item in life.get("studio") or []:
+            found = studio_picture(root, item["path"]) if root is not None and item.get("picture") else None
+            if found is not None:
+                pictures[item["path"]] = found
+        return {"part": part, "document": life, "pictures": pictures}
+
+    def summary(self, request: Mapping[str, Any]) -> dict[str, Any]:
+        """What each part of the notebook counts, what waits on the person,
+        and a ``change_token`` that changes only when something shown does
+        (``summary_of``), from the page's own documents."""
+        return summary_of(*self._notebook().export())
+
+    def read(self, request: Mapping[str, Any]) -> Any:
+        """Mark the agent's notes read, as the page does when the person reads
+        them there: through the page's own act (``companion.server.read_notes``),
+        its limits and its sentences. Answers the ids this marked."""
+        from ..companion.server import read_notes
+
+        return _acted(read_notes(self.scope, request.get("note_ids")))
+
+    def hours(self, request: Mapping[str, Any]) -> Any:
+        """Turn the agent's quiet hours on, at the times given, or off, as the
+        page's Settings does (``companion.server.quiet_hours``): what `mnemos
+        daemon install --hours --write` or `uninstall --hours --write` does
+        for this scope. Answers what it said."""
+        from ..companion.server import quiet_hours
+
+        return _acted(quiet_hours(self.scope, request))
+
+    def shared(self, request: Mapping[str, Any]) -> Any:
+        """Add to the shared notebook, correct one of the person's own there,
+        or let one go (asked twice, ``"confirmed": true``), as the page does
+        (``shared_memory.notebook_act``), always as the person."""
+        from ..shared_memory import notebook_act
+
+        return _acted(notebook_act(request))
+
     def answer(self, line: str) -> dict[str, Any]:
         """The answer to one request line: ``{"id": <the request's>, "result":
         <what the command's one-shot --json prints>}``, or ``{"id": ...,
         "error": "<one plain sentence>"}``."""
         try:
-            request = json.loads(line)
-        except ValueError:
+            request = json.loads(line, parse_constant=_no_constant)
+        except (ValueError, RecursionError):  # not JSON, or nested past what Python can read
             request = None
         if not isinstance(request, dict):
-            return {"id": None, "error": "A request is one JSON object on one line."}
+            return {"id": None, "error": NOT_TEXT if not _utf8(line) else NOT_A_REQUEST}
         request_id = request.get("id")
+        if not _utf8(request):
+            return {"id": request_id if _utf8(request_id) else None, "error": NOT_TEXT}
         command = request.get("command")
         if command not in COMMANDS:
             return {
@@ -461,28 +755,49 @@ class Interface:
         except (Refused, NothingChanged) as exc:
             return {"id": request_id, "error": str(exc)}
         except Exception as exc:  # any other failure is the one plain line, never a trace
-            return {"id": request_id, "error": _one_sentence(exc)}
+            return {"id": request_id, "error": _one_sentence(exc, str(Path(self.scope.db_path).expanduser()))}
 
 
 def serve(
-    stdin: IO[str] | None = None, stdout: IO[str] | None = None, **flags: str | None,
+    stdin: IO[str] | None = None, stdout: IO[str] | None = None, *,
+    as_person: bool = False, strict_scope: bool = False, stderr: IO[str] | None = None,
+    **flags: str | None,
 ) -> int:
     """Run ``mnemos interface`` until stdin closes: read one JSON request a
     line and answer each with one JSON line, flushed at once. The meaning
-    model starts loading as it starts."""
+    model starts loading as it starts.
+
+    ``as_person``: every write is the person's, whatever the shell it runs in
+    says. ``strict_scope``: the scope comes from the four flags alone; with
+    any of them missing it reads nothing, says why in one sentence on stderr
+    and ends at once, with status 2."""
     stdin = sys.stdin if stdin is None else stdin
     stdout = sys.stdout if stdout is None else stdout
-    for stream in (stdin, stdout):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(encoding="utf-8")
-    interface = Interface(**flags)
+    stderr = sys.stderr if stderr is None else stderr
+    problem = strict_scope_problem(flags) if strict_scope else None
+    if problem:
+        print(problem, file=stderr, flush=True)
+        return 2
+    # A byte that isn't UTF-8 is read as itself (surrogateescape) and answered, never a failure to read; and only
+    # "\n" ends a request, so a stray "\r" inside one can't split it into two.
+    reconfigure = getattr(stdin, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="surrogateescape", newline="\n")
+    reconfigure = getattr(stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8")
+    interface = Interface(**flags, person=True if as_person else None, strict_scope=strict_scope)
     interface.warm()
     try:
         for line in stdin:
             if not line.strip():
                 continue
-            stdout.write(json.dumps(interface.answer(line), ensure_ascii=False) + "\n")
+            try:
+                answer = interface.answer(line)
+            except Exception:  # nothing a host sends ends the process; only closing stdin does
+                logger.debug("mnemos interface: a request couldn't be answered", exc_info=True)
+                answer = {"id": None, "error": "Mnemos couldn't do that just now."}
+            stdout.write(answer_line(answer) + "\n")
             stdout.flush()
     finally:
         interface.close()

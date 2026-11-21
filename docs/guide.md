@@ -551,7 +551,10 @@ mnemos interface                          # all of these for an app, one JSON li
   the answer, `{"id": 1, "result": ...}` with exactly what the one-shot
   `--json` prints, or `{"id": 1, "error": "..."}`. It loads the meaning model
   once, in the background as it starts, so a search answers in tens of
-  milliseconds once it has, and it ends when its input closes.
+  milliseconds once it has, and it ends when its input closes. For an app that
+  shows the whole notebook, it answers more (every part of the notebook's page,
+  its counts, and the rest of what the person can do there):
+  [docs/host-interface.md](host-interface.md).
 
 ### Simple Mode With Explicit Scope
 

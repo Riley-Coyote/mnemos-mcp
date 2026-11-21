@@ -2,18 +2,19 @@
 
 ## Unreleased
 
-Fixes inside Hermes: what Nous's review of the catalog entry asked for
-(NousResearch/hermes-agent#151540), and what three more reads of the plugin found after it. A
-few fixes reach every agent, listed under "Everywhere": a correction that names its memory by id,
-and the upkeep process. Nothing else changes outside Hermes; a read of every change against the
-release before it, run both ways, found nothing else.
+More fixes inside Hermes: the rest of what Nous's review of the catalog entry found
+(NousResearch/hermes-agent#151540), beyond the two 0.6.7 took, and what three more reads of the
+plugin found after it. A few fixes reach every agent, listed under "Everywhere": a correction
+that names its memory by id, and the upkeep process. Nothing else changes outside Hermes; a read
+of every change against the release before it, run both ways, found nothing else.
 
 ### Inside Hermes: what leaves, and whose it is
 
-- **The upkeep process is no longer handed Hermes's environment.** The upkeep a capture or the end
-  of a session starts runs in a process of its own, and it was given everything Hermes's process
-  holds: every provider's key, the bot tokens, all of it, for a process that uses one key at most.
-  Now it gets, each by name, what a process needs to run (the path, the home folder, the language),
+- **The upkeep process is handed only what it needs, each by name.** The upkeep a capture or the
+  end of a session starts runs in a process of its own. Until 0.6.7 it was given everything
+  Hermes's process holds; 0.6.7 kept back the keys, but still passed any name that began `MNEMOS_`
+  or `LC_` and didn't look like a key, and a proxy's address every time. Now it gets, each by name,
+  what a process needs to run (the path, the home folder, the language),
   Mnemos's own tuning numbers, and what was chosen for Mnemos, read through Hermes for the profile
   that is speaking: the chosen provider's one key, only when Mnemos may use a model
   (`deep_maintenance`), and Gemini's only when meaning search is set to it. No name goes because of
@@ -279,6 +280,67 @@ release before it, run both ways, found nothing else.
   given up, and the next save tries again.
 - **An empty `MNEMOS_EMBEDDING_MODEL` is no model named.** Set but empty, it asked Gemini for a
   model with no name; it is the default now, as when unset.
+
+### The whole notebook through `mnemos interface`
+
+An app the person uses can now show everything the notebook's own page shows,
+and do everything it does but set Jev, from the one process it already keeps
+(`docs/host-interface.md`). Nothing a host written for 0.6.7 sends answers
+differently, except that an unknown command's sentence now lists every command.
+
+- **`hello`** says what this Mnemos answers: the protocol's version (1),
+  Mnemos's, the store schema, every command, whose a write will be, and the one
+  memory the process reads.
+- **`notebook`** gives each part of the page (`life`, `memories`, `pulse`)
+  exactly as the page is given it, made by the page's own code. `life` comes
+  with each picture's file, inside the mind's own studio, never its bytes.
+  `memories` can come a page at a time (optional `limit` and `offset`, with a
+  `page` that gives the `total` and the `next` offset); asked for with neither,
+  it is the whole document, as before.
+- **`summary`** gives what each part counts, the notes not yet read, the
+  questions waiting on the person, and a `change_token` that changes only when
+  something shown does (0.13 s on 3,000 memories).
+- **`read`, `hours` and `shared`**: mark the agent's notes read, turn the quiet
+  hours on or off and at what times, and add to, correct or let go of the shared
+  notebook, each through the page's own code, with its limits and sentences. Jev
+  stays on the page: its setting takes a key, and the interface takes none.
+- **`--as-person`** makes every write the person's, whatever the shell says.
+  **`--strict-scope`** takes the scope from all four scope flags and never the
+  environment or the config, or ends at once saying which flag is missing.
+- Reading still writes nothing: every table of the store and of the shared
+  store is the same after each read, `notebook` and `summary` included.
+- **Nothing a host sends ends the process.** A line with a byte that isn't
+  UTF-8, an escape like `"\ud800"`, or 100,000 `[` in a row each ended it with a
+  Python traceback; each now gets one sentence, and the next line is answered.
+  Only a newline ends a request.
+- **Some error sentences changed** (valid requests answer exactly as before):
+  a number too large for SQLite (`limit`, `offset`, `last`, `max_results`) is
+  refused in a plain sentence, not "OverflowError: …"; a file that isn't a
+  memory says so, not "DatabaseError: file is not a database"; any other failure
+  says "Mnemos couldn't do that just now." with no Python error's name; NaN or
+  Infinity in a request is refused as not JSON; and an unknown command's
+  sentence lists every command.
+- **Nothing given is quietly changed.** Under `--strict-scope`, a scope value
+  Mnemos would read as another (`--agent-id "!!!"` as `mnemos-agent`) ends the
+  process at once, naming the flag; and `pulse` refuses a `since` that isn't a
+  time instead of reading it as none.
+
+## 0.6.7 (2026-11-11)
+
+What Hermes's review of 0.6.6 asked for, before its catalog lists Mnemos. Sessions keep the code they
+started with, so restart them after updating.
+
+- **Inside Hermes, the upkeep process gets only what it needs.** It was handed Hermes's whole
+  environment, every provider's key in it, and when one gateway served several profiles, a second
+  profile's upkeep ran on the first profile's provider and keys. Now the provider reads, through
+  `get_secret` and for the profile that is speaking, Mnemos's provider and model, the chosen
+  provider's key and no other, and Gemini's key only when meaning search uses Gemini, and hands the
+  process those, with what any process needs (where programs and home are, the language, a folder
+  for temporary files, proxies) and Mnemos's own settings, never a key.
+- **Hermes's memory-context tags are stripped in linear time.** The old pattern was quadratic on a
+  message with many `<` (4.6 s at 51 KB); it now matches Hermes's own bounded shape.
+- **The Hermes plugin needs 0.6.7** (`mnemos-continuity>=0.6.7,<0.7`), so what the catalog reviewed
+  and what Hermes installs stay close.
 
 ## 0.6.6 (2026-11-08)
 

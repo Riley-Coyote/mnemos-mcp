@@ -248,10 +248,20 @@ def main(argv: list[str] | None = None) -> int:
             "forget, journal, notes, reply or note; each answer is one line on stdout, "
             '{"id": ..., "result": ...} with what the one-shot --json command prints, or '
             '{"id": ..., "error": "<one sentence>"}. The meaning model loads once, in the '
-            "background, as it starts. It ends when stdin closes."
+            "background, as it starts. It ends when stdin closes. For a host, it also answers "
+            "hello, notebook, summary, read, hours and shared (docs/host-interface.md)."
         ),
     )
     _scope_options(p_interface)
+    p_interface.add_argument(
+        "--as-person", action="store_true",
+        help="Every write is the person's, whatever the shell it runs in says (CLAUDECODE, AI_AGENT)",
+    )
+    p_interface.add_argument(
+        "--strict-scope", action="store_true",
+        help="Take the scope from all four scope flags and never the environment or the config; "
+             "with any missing, end at once and say which",
+    )
 
     # ── consolidate ──
     p_cons = sub.add_parser("consolidate", help="Run a consolidation cycle")
@@ -2447,10 +2457,11 @@ def _cmd_interface(args: argparse.Namespace) -> int:
     (``interface.person.serve``)."""
     from .interface.person import serve
 
-    return serve(**{
-        key: getattr(args, key, None)
-        for key in ("db_path", "agent_id", "person_id", "project_scope")
-    })
+    return serve(
+        as_person=bool(getattr(args, "as_person", False)),
+        strict_scope=bool(getattr(args, "strict_scope", False)),
+        **{key: getattr(args, key, None) for key in ("db_path", "agent_id", "person_id", "project_scope")},
+    )
 
 
 def _cmd_consolidate(args: argparse.Namespace) -> int:

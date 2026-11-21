@@ -13,6 +13,7 @@ read, and a provider chosen there would have been sent the memory's words.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import types
 from pathlib import Path
@@ -57,6 +58,15 @@ def keys_all_around(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "agent", agent)
     monkeypatch.setitem(sys.modules, "agent.secret_scope", agent.secret_scope)
     return work
+
+
+def _keys_in(env: dict) -> list[str]:
+    """The names in ``env`` that hold a key, a token or a secret."""
+    return sorted(
+        name for name in env
+        if name != simple_runtime._SECRETS_FROM_HOST_ENV
+        and any(word in name for word in ("KEY", "TOKEN", "SECRET"))
+    )
 
 
 def _start(tmp_path: Path) -> MnemosMemoryProviderCore:
@@ -133,6 +143,9 @@ def test_the_upkeep_process_keeps_the_rules_and_the_providers_choice(keys_all_ar
         def poll(self):
             return 0
 
+    # Keys Hermes's own process holds, which aren't this profile's to give.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key-hermes-itself-uses")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "key-of-another-profile")
     provider = _start(tmp_path)
     monkeypatch.setattr(simple_runtime.subprocess, "Popen", Child)
     monkeypatch.setattr(simple_runtime, "_upkeep_inline", lambda: False)
@@ -143,6 +156,8 @@ def test_the_upkeep_process_keeps_the_rules_and_the_providers_choice(keys_all_ar
     command, options = started[-1]
     assert command[-1] == "0", "the upkeep may use a model the provider doesn't"
     assert options["env"][simple_runtime._SECRETS_FROM_HOST_ENV] == "1"
+    handed = _keys_in(options["env"])
+    assert handed == [], f"no provider is chosen, yet the upkeep was handed {handed}"
 
     # And the process, told so, keeps the rules: no file, no model the capture's process didn't use.
     made = []

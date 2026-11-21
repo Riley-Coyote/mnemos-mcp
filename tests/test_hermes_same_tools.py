@@ -769,13 +769,14 @@ def test_what_hermes_fenced_still_comes_off_what_the_agent_writes(tmp_path):
 
 @pytest.mark.parametrize("pasted", [
     "<" * 51_000,
+    "<" * 51_000 + " memory-context",
     "< " * 25_500,
     "<" + " " * 51_000,
     "</" * 25_500,
     "<memory-context>" * 3_187,
     "<div class='row'><span>cell</span><a href='#'>more</a></div>\n" * 850,
     "#" + " " * 51_000,
-], ids=["angle-brackets", "brackets-and-spaces", "a-bracket-then-spaces", "closing-brackets",
+], ids=["angle-brackets", "brackets-then-the-tags-name", "brackets-and-spaces", "a-bracket-then-spaces", "closing-brackets",
         "fences-never-closed", "a-page-of-markup", "a-heading-of-spaces"])
 def test_a_long_paste_of_markup_is_cleaned_at_once(pasted):
     """The pattern that took the fence off tried every ``<`` against all that
