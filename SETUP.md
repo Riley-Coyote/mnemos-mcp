@@ -289,8 +289,8 @@ Setup turns none of them on and asks nothing. They're off until you choose
 them, one at a time. In Claude Code, and inside Hermes, the agent walks you
 through each in its next session and sets up only the ones you want. Its own
 hour and our hour stay offline unless you let them go online; a dream never
-goes online. To see them, or choose them yourself, use the Settings on the
-agent's page, or:
+goes online. To see them, or choose them yourself in Claude Code, use the
+Settings on the agent's page, or:
 
 ```bash
 mnemos hours                                # each hour as it is
@@ -299,6 +299,12 @@ mnemos hours on ours --online --write       # let one go online (never the dream
 mnemos hours off dream --write              # one off; upkeep stays
 mnemos hours off all --write                # all off
 ```
+
+Inside Hermes the hours are Hermes's own scheduled jobs, which the agent makes
+and changes when you ask it; there `mnemos hours` and the page's Settings show
+them but don't change them. They run on the model Hermes is set to use, not on
+your Claude plan, and the `hermes cron create` lines for making them yourself
+are in [hermes-plugin/README.md](hermes-plugin/README.md).
 
 They need the `claude` command. Its location, and Mnemos's, are written into
 the jobs when you install them, because a background job doesn't get your

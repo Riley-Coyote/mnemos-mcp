@@ -113,12 +113,17 @@ a link or a belief, and none of its words are kept.
 The quiet hours are the agent's time between sessions: up to an hour a day of
 its own, half an hour for the day's work, skipped on a day with none, and a
 short dream each night. They're off until you choose them, one by one. Setup
-turns none on and asks nothing; the agent's first session (or its next one, if
-it already had Mnemos) tells you what each is and what it costs, and sets up
-only the ones you want. Each has its own switch, start time and length
-(`mnemos hours`, or the Settings on the agent's page). Your choices are kept in
-`~/.mnemos/hours/<agent>/choice.json`. An app
-that runs Mnemos for you may turn them on.
+turns none on and asks nothing. In Claude Code and inside Hermes, the agent's
+first session (or its next one, if it already had Mnemos) tells you what each
+is and what it costs, and sets up only the ones you want; with any other agent,
+you see and choose them on the agent's page or with `mnemos hours`. Each has
+its own switch, start time and length (`mnemos hours`, or the Settings on the
+agent's page). Inside Hermes the agent makes and changes them, as Hermes's own
+scheduled jobs that run on the model Hermes is set to use, not on your Claude
+plan: there `mnemos hours` and the page show them but don't change them, and
+the `hermes cron create` lines are in `hermes-plugin/README.md`. Your choices
+are kept in `~/.mnemos/hours/<agent>/choice.json`. An app that runs Mnemos for
+you may turn them on.
 
 **Offline unless you choose.** Its own hour and our hour go online only when
 you turn that on for that hour (`mnemos hours on mine --online --write`); a
@@ -174,15 +179,17 @@ where that session goes:
 | Hermes | the same, in a session its own cron starts | the provider Hermes is set to use | only the hours you chose for the agent to make, or if you ran `connect hermes --hours --write` |
 | OpenClaw | the same, in a turn its own cron starts | the provider OpenClaw is set to use | only if you ran `connect openclaw --hours --write` |
 
-Such an hour is not walled in the way Claude Code's is: the agent has its usual
-tools, and the prompt asks it to keep to what the hour is for (a dream: no
-files, no shell, no web). Inside Hermes the agent makes each hour you choose
-with Hermes's own scheduler, and lists the tools the job may use
-(`enabled_toolsets`): its memory's, the day's conversations for our hour, and
-the web only for an hour you chose to have online. Hermes itself holds the job
-to that list. Jobs made in a terminal (`connect hermes --hours --write`, or
-`hermes cron create`) aren't limited that way: they run with every tool Hermes
-gives its scheduled jobs. Each cron job's reply goes nowhere: Hermes
+Inside Hermes the agent makes each hour you choose with Hermes's own
+scheduler, and lists the tools the job may use (`enabled_toolsets`): its
+memory's, the day's conversations for our hour, and the web only for an hour
+you chose to have online. Hermes itself holds the job to that list.
+
+A Hermes job made in a terminal (`connect hermes --hours --write`, or `hermes
+cron create`), OpenClaw's jobs, and an hour handed to an agent in its own
+session aren't limited that way, nor walled in the way Claude Code's hours
+are: the agent has its usual tools (for a scheduled job, every tool its
+scheduler gives one), and the prompt asks it to keep to what the hour is for (a
+dream: no files, no shell, no web). Each cron job's reply goes nowhere: Hermes
 `--deliver local` keeps it on this machine, and OpenClaw `--no-deliver` sends it
 to no chat or channel. Turn them off with `mnemos connect <agent> --no-hours
 --write`; `mnemos uninstall --write` removes the jobs too.

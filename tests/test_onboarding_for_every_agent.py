@@ -638,3 +638,26 @@ def test_the_page_says_no_hour_has_run_rather_than_none_scheduled():
     log = (Path(__file__).resolve().parent.parent / "mnemos" / "companion" / "page" / "log" / "log.js").read_text()
     assert "· no quiet hour has run yet`" in log
     assert "no quiet hours yet" not in log
+
+
+@pytest.mark.parametrize("declared,place", [("claude-code", "claude-code"), ("hermes", "hermes"), ("codex", None)])
+def test_a_declared_harness_gets_its_own_place(declared, place, monkeypatch, tmp_path):
+    """Only a runtime declared "hermes" is Hermes's own provider; one declared
+    "claude-code" is Claude Code's, never Hermes's (it was, on 09e6aa4)."""
+    monkeypatch.delenv("CLAUDECODE", raising=False)
+    monkeypatch.delenv("MNEMOS_HARNESS", raising=False)
+    runtime = MnemosRuntime(db_path=str(tmp_path / "p.db"), agent_id="p", harness=declared,
+                            use_dedicated_model=False)
+    try:
+        assert runtime._hours_place() == place
+    finally:
+        runtime.close()
+
+
+def test_connect_hermes_hours_preview_hint_keeps_every_flag(capsys, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(_hermes_home()))
+    db = str(Path.home() / "leo.db")
+    assert main(["connect", "hermes", "--hours", "--agent-id", "leo", "--db-path", db]) == 0
+    out = capsys.readouterr().out
+    hint = next(line for line in out.splitlines() if line.startswith("Re-run with --write"))
+    assert hint == f"Re-run with --write to do it: mnemos connect hermes --db-path {db} --agent-id leo --hours --write"

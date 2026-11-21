@@ -3487,8 +3487,10 @@ class MnemosRuntime:
         through its provider: the agent makes each with Hermes's own tool and
         keeps the choice with ``mnemos_hour``), or None for every other agent,
         whose words are as they were."""
-        if hours_walked_through(self.harness, inside_hermes=True):
-            return "hermes"
+        # Only a runtime declared "hermes" is Hermes's own provider; any other
+        # declaration is identified below like everything else.
+        if (self.harness or "").strip().lower() == "hermes":
+            return "hermes" if hours_walked_through("hermes", inside_hermes=True) else None
         try:
             from .setup import harnesses
 

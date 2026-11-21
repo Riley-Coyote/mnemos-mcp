@@ -361,7 +361,7 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
     if not write:
         _gaps(h, st)
         _say()
-        _say(f"Re-run with --write to do it: mnemos connect {h.key} --write")
+        _say(f"Re-run with --write to do it: {_rerun(h, args)}")
         return 0
     if not cn.on_this_machine(h) and h.key != "hermes":
         _say(f"`{h.command}` isn't on this machine's PATH, so I won't write for it. "
@@ -382,6 +382,25 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
     for line in h.then:
         _say(f"Then: {line}")
     return 1 if failed else 0
+
+
+def _rerun(h: hs.Harness, args: argparse.Namespace) -> str:
+    """The command that was run, with --write: every flag given kept, the
+    hours' and the scope's among them, so running it does what the preview
+    said."""
+    words = ["mnemos", "connect", h.key]
+    for flag in ("--db-path", "--agent-id", "--person-id", "--project-scope"):
+        value = getattr(args, flag[2:].replace("-", "_"), None)
+        if value is not None:
+            words += [flag, str(value)]
+    if getattr(args, "name", "mnemos") not in (None, "mnemos"):
+        words += ["--name", args.name]
+    if getattr(args, "profile", None):
+        words += ["--profile", args.profile]
+    for flag in ("--no-prompt", "--no-upkeep", "--hours", "--no-hours", "--agent-safe"):
+        if getattr(args, flag[2:].replace("-", "_"), False):
+            words.append(flag)
+    return shlex.join([*words, "--write"])
 
 
 def _gaps(h: hs.Harness, st: cn.Status) -> None:
