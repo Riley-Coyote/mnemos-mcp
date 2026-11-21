@@ -658,6 +658,9 @@ class Exporter:
                 "minutes": round((end - start).total_seconds() / 60, 1) if start and end else None,
                 "model": model, "modelName": display_name(model) if model else "",
                 "tokens": r.get("tokens"), "waiting": r.get("waiting"),
+                # whether the hour had the web, and the searches and pages it
+                # read, as the hour recorded them (None for older hours)
+                "online": r.get("online"), "web": r.get("web"),
                 # only the row check (by hour id) answers "did this hour write
                 # to the real memory"; the first hours were checked by hashing
                 # the whole file, which any other session writing at the time

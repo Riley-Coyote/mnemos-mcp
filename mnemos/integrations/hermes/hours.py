@@ -135,6 +135,63 @@ def jobs() -> list[dict[str, str]]:
     ]
 
 
+def _clock(schedule: Any) -> str:
+    """When a job runs: ``HH:MM`` for a daily cron (``M H * * *``), else its
+    expression (or how Hermes shows it) as written."""
+    if not isinstance(schedule, dict):
+        return "" if schedule is None else str(schedule)
+    expr = str(schedule.get("expr") or "").strip()
+    fields = expr.split()
+    if (schedule.get("kind") == "cron" and len(fields) == 5 and fields[2:] == ["*", "*", "*"]
+            and fields[0].isdigit() and fields[1].isdigit()
+            and int(fields[0]) < 60 and int(fields[1]) < 24):
+        return f"{int(fields[1]):02d}:{int(fields[0]):02d}"
+    return expr or str(schedule.get("display") or "")
+
+
+def _runs(job: dict) -> bool:
+    """Whether Hermes's scheduler may fire the job, by its own rule
+    (``cron/jobs.py`` ``is_job_runnable``): enabled, and no pause marker."""
+    paused = str(job.get("state") or "").strip() == "paused" or bool(job.get("paused_at"))
+    return bool(job.get("enabled", True)) and not paused
+
+
+def _as_scheduled(kind: str, job: dict) -> dict[str, Any]:
+    toolsets = job.get("enabled_toolsets")
+    named = [str(name).strip() for name in toolsets] if isinstance(toolsets, list) else None
+    return {
+        "at": _clock(job.get("schedule")),
+        "on": _runs(job),
+        # A job with no toolsets of its own (one made in a terminal) runs
+        # with every tool Hermes gives its scheduled jobs, the web among them.
+        "online": named is None or "web" in named,
+        # Its tools are its own list, and its memory's tools are in it.
+        "limited": named is not None and "memory" in named,
+        "made_by": "agent" if str(job.get("prompt") or "").strip() == JOB_PROMPT.format(kind=kind)
+        else "terminal",
+    }
+
+
+def scheduled_in_hermes() -> dict[str, dict[str, Any] | None] | None:
+    """Each quiet hour as Hermes has it scheduled now, from the active
+    profile's own jobs file: inside Hermes the job is the truth about an hour
+    (a person can pause or delete it there), not what Mnemos recorded of the
+    choice. Per kind, the job named ``mnemos-hour-<kind>``, or None for a kind
+    without one: ``at``, ``on``, ``online``, ``limited`` and ``made_by``
+    (``agent`` when its prompt is ``JOB_PROMPT``'s, else ``terminal``). Of
+    several jobs of one name, the first that runs. None when the file is
+    missing or can't be read, so a caller can say it can't tell."""
+    jobs = agent_hours.hermes_jobs()
+    if jobs is None:
+        return None
+    found: dict[str, dict[str, Any] | None] = {}
+    for kind in KINDS:
+        named = [job for job in jobs if str(job.get("name") or "").strip() == agent_hours.job_name(kind)]
+        job = next((job for job in named if _runs(job)), named[0] if named else None)
+        found[kind] = _as_scheduled(kind, job) if job is not None else None
+    return found
+
+
 def cron_create_line(job: dict[str, str]) -> str:
     """The job as the person makes it in a terminal (hermes_cli/subcommands/cron.py)."""
     return shlex.join(["hermes", "cron", "create", "--name", job["name"], "--deliver", job["deliver"],

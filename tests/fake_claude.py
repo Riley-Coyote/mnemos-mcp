@@ -113,6 +113,25 @@ else:
             store.close()
         assistant()
         emit({'type': 'result', 'is_error': False, 'session_id': 'fake-session', 'usage': usage})
+    elif scenario == 'web':
+        # An hour that searched twice and read three pages; one message comes
+        # twice in the stream, as a message's blocks can.
+        def calls(message_id, *blocks):
+            emit({'type': 'assistant', 'message': {
+                'id': message_id, 'model': model, 'usage': usage, 'content': list(blocks)}})
+
+        def use(call, name, **given):
+            return {'type': 'tool_use', 'id': call, 'name': name, 'input': given}
+
+        calls('w1', {'type': 'text', 'text': 'Looking.'}, use('t1', 'WebSearch', query='tide tables Lisbon'))
+        calls('w2', use('t2', 'WebFetch', url='https://example.org/tides', prompt='When is high tide?'))
+        calls('w2', use('t2', 'WebFetch', url='https://example.org/tides', prompt='When is high tide?'))
+        calls('w3', use('t3', 'Read', file_path='notes.md'),
+              use('t4', 'WebSearch', query='moon phase November 2026'))
+        calls('w4', use('t5', 'WebFetch', url='https://example.org/moon'),
+              use('t6', 'WebFetch', url='https://example.net/' + 'x' * 400))
+        entry()
+        emit({'type': 'result', 'is_error': False, 'session_id': 'fake-session', 'usage': usage})
     elif scenario == 'garbage':
         emit({'type': 'assistant', 'message': {}})
         emit({'type': 'assistant'})

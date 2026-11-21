@@ -43,7 +43,8 @@ import threading
 
 from .core.engram import _gen_ulid
 from .cue import local_day
-from .setup.state import DEFAULT_MINUTES, HOUR_KINDS, hours_dir
+from .setup import state
+from .setup.state import DEFAULT_MINUTES, HOUR_KINDS, ONLINE_KINDS, hours_dir
 from .simple_scope import named_in_the_environment, resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
@@ -62,17 +63,28 @@ CAPTURE_LINES = 30
 QUESTION_LINES = 5
 LINE_CHARS = 160
 WORDS_FILE = {"mine": "my-hour.md", "ours": "our-hour.md", "dream": "dream.md"}
+# What each hour has offline (``hour_tools``): the own hour and our hour get
+# the web as well only when the person turned it on for that hour.
 TOOLS = {
     "ours": "Read,Write,Edit,Glob,Grep",
-    "mine": "Read,Write,Edit,Glob,Grep,Bash,WebSearch,WebFetch",
+    "mine": "Read,Write,Edit,Glob,Grep,Bash",
     # A dream is inward: no file, no shell, no web, only its memory's own tools.
     "dream": "",
 }
 ALLOW = {
     "ours": ("mcp__mnemos",),
-    "mine": ("mcp__mnemos", "Bash", "WebSearch", "WebFetch"),
+    "mine": ("mcp__mnemos", "Bash"),
     "dream": ("mcp__mnemos",),
 }
+WEB_TOOLS = ("WebSearch", "WebFetch")
+# The line an hour's prompt gets after its own words, online or not. A dream
+# is never online, and is told nothing new.
+ONLINE_LINE = "In this hour you can search and read the web. The person sees every page you read."
+OFFLINE_LINE = "You can't go online in this hour: the person has the internet off for it."
+# What an hour's record keeps of the web it used (``_watch``): each search and
+# each page, in order, at most this many of each, each cut to this length.
+WEB_ITEMS = 50
+WEB_ITEM_CHARS = 300
 # Of its memory's tools, what a dream leaves alone: it is for no one else, so it
 # leaves no note and opens no page, and it writes no handoff over the thread its
 # sessions keep.
@@ -281,9 +293,14 @@ def _gather(kind, path, since, scope, model=HOUR_MODEL):
         store.close()
 
 
-def _prompt(kind, agent_id, since, handoffs, captures, questions, latest):
+def _prompt(kind, agent_id, since, handoffs, captures, questions, latest, online=None):
+    """The prompt of an own hour or our hour: the agent's words for it, a line
+    saying whether it can go online (``online``; None says nothing, as a
+    hand-off doesn't, its tools being the agent's own), and what's waiting."""
     words_path = studio_dir(agent_id) / "words" / WORDS_FILE[kind]
     words = words_path.read_text().rstrip() if words_path.exists() else BOOTSTRAP[kind]
+    if online is not None:
+        words += "\n\n" + (ONLINE_LINE if online else OFFLINE_LINE)
     sections = ["What's waiting"]
     for title, items, limit in (("Handoffs", handoffs, HANDOFF_LINES),
                                 ("Captures", captures, CAPTURE_LINES)):
@@ -527,9 +544,10 @@ def _dream_prompt(agent_id, material) -> str:
     return words + "\n\n---\n\n" + "\n\n".join(sections)
 
 
-def _prepare(kind, store, since, scope, model, agent_id, records):
+def _prepare(kind, store, since, scope, model, agent_id, records, online=None):
     """An hour's prompt, what was waiting for it, why it would skip (``""`` when
-    it wouldn't), and the questions a dream is given (``[]`` for the others)."""
+    it wouldn't), and the questions a dream is given (``[]`` for the others).
+    ``online`` is whether an own hour or our hour has the web (``_prompt``)."""
     if kind == "dream":
         material = _dream_material(store, since, scope, model, _said_in_dreams(records))
         waiting = {key: len(material[key]) for key in ("fading", "facts", "returning", "reaffirm", "new", "rhymes")}
@@ -544,7 +562,7 @@ def _prepare(kind, store, since, scope, model, agent_id, records):
     waiting = {"handoffs": len(handoffs), "captures": len(captures), "questions": len(questions)}
     skip = (f"No handoffs or captures since {_minute(since)}."
             if kind == "ours" and not handoffs and not captures else "")
-    return _prompt(kind, agent_id, since, handoffs, captures, questions, latest), waiting, skip, []
+    return _prompt(kind, agent_id, since, handoffs, captures, questions, latest, online), waiting, skip, []
 
 
 def _there(path) -> bool:
@@ -613,25 +631,39 @@ def _above_zero(value, *, whole: bool):
     return number if number > 0 else None
 
 
-def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None) -> tuple[float, int, str]:
+def _chosen_minutes(agent_id, kind):
+    """The minutes the person chose for this hour (``mnemos hours on HOUR
+    --minutes N``, the page's Settings), or None when they chose none: only
+    what was recorded, not the default ``state.hour_settings`` fills in."""
+    if not agent_id:
+        return None
+    minutes = state._recorded(state._kept(agent_id), kind).get("minutes")
+    return minutes if state._minutes_ok(minutes) else None
+
+
+def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
+           agent_id=None) -> tuple[float, int, str]:
     """What one hour may spend: ``(seconds, tokens, "")``, or with the third
     saying why no hour can run.
 
     Each comes from the first of these that sets it: what the caller passes
     (``mnemos life --max-minutes``, ``--max-tokens``); a host app's budget for
     the one hour it runs, MNEMOS_HOUR_MINUTES and MNEMOS_HOUR_TOKEN_CEILING;
-    Mnemos's config, ``life.minutes.<kind>`` and ``life.token_ceiling.<kind>``;
-    DEFAULT_MINUTES and DEFAULT_TOKEN_CEILING. A host app gives a new mind a
-    gentler cap this way, and the defaults stay as they were. A setting that
-    isn't a number above zero (a whole one, for tokens) runs no hour, rather
-    than one on a budget nobody chose."""
+    for minutes, what the person chose for this agent's hour (``agent_id``;
+    ``_chosen_minutes``); Mnemos's config, ``life.minutes.<kind>`` and
+    ``life.token_ceiling.<kind>``; DEFAULT_MINUTES and DEFAULT_TOKEN_CEILING.
+    A host app gives a new mind a gentler cap this way, and the defaults stay
+    as they were. A setting that isn't a number above zero (a whole one, for
+    tokens) runs no hour, rather than one on a budget nobody chose."""
     config = _life_config()
     wrong: list[str] = []
 
-    def first(passed, setting, key, default, unit, whole):
+    def first(passed, setting, key, default, unit, whole, chosen=None):
         if passed is not None:
             return passed
         value, where = os.environ.get(setting, "").strip(), setting
+        if not value and chosen is not None:
+            return chosen
         if not value:
             section = config.get(key)
             value = section.get(kind) if isinstance(section, dict) else None
@@ -646,10 +678,35 @@ def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None) -> tupl
 
     if max_seconds is None:
         max_seconds = first(max_minutes, MINUTES_SETTING, "minutes", DEFAULT_MINUTES[kind],
-                            "a number of minutes", False) * 60
+                            "a number of minutes", False, _chosen_minutes(agent_id, kind)) * 60
     max_tokens = first(max_tokens, TOKEN_CEILING_SETTING, "token_ceiling",
                        DEFAULT_TOKEN_CEILING[kind], "a whole number of tokens", True)
     return max_seconds, max_tokens, " ".join(wrong)
+
+
+def hour_online(agent_id, kind) -> bool:
+    """Whether this hour has the web: the person turned it on for it
+    (``state.hour_online``, which keeps an own hour set up before the setting
+    existed as it was). Read when the hour starts, so a change applies at the
+    next one. A dream never; and when it can't be told, not."""
+    if kind not in ONLINE_KINDS:
+        return False
+    try:
+        return bool(state.hour_online(agent_id, kind))
+    except Exception:
+        return False
+
+
+def hour_tools(kind, online) -> tuple[str, tuple[str, ...]]:
+    """The tools an hour has (``--tools``) and the ones allowed without asking
+    (every one but those Claude Code allows anyway, or ``--permission-prompts
+    none`` would deny it): ``TOOLS`` and ``ALLOW``, with the web when it is
+    online."""
+    named, allowed = TOOLS[kind], ALLOW[kind]
+    if online and kind in ONLINE_KINDS:
+        named = ",".join([*named.split(","), *WEB_TOOLS]) if named else ",".join(WEB_TOOLS)
+        allowed = (*allowed, *WEB_TOOLS)
+    return named, allowed
 
 
 def _studio_settings(studio: Path) -> list[Path]:
@@ -675,8 +732,10 @@ def _set_aside(studio: Path, folder: Path):
         yield str(path)
 
 
-def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL):
+def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model=HOUR_MODEL,
+                       online=False):
     folders = read_dirs()
+    named, allowed = hour_tools(kind, online)
     mcp = {"mcpServers": {"mnemos": {
         "type": "stdio", "command": mnemos_bin,
         "args": ["--db-path", str(store), "--agent-id", scope["agent_id"],
@@ -720,7 +779,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
         "hooks": {"SessionStart": [{"matcher": "*", "hooks": [{
             "type": "command", "command": hook, "timeout": 15,
         }]}]},
-        "permissions": {"defaultMode": "acceptEdits", "allow": list(ALLOW[kind]), "deny": deny},
+        "permissions": {"defaultMode": "acceptEdits", "allow": list(allowed), "deny": deny},
         "sandbox": {"enabled": True, "autoAllowBashIfSandboxed": True,
                     "allowUnsandboxedCommands": False},
     }
@@ -730,7 +789,7 @@ def _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_b
     # config, as Mnemos's model does (mnemos/llm.py). The wake still comes
     # from Mnemos's own hook, in this file.
     cmd = [claude_bin, "--model", model, "--restricted",
-           "--tools", TOOLS[kind],
+           "--tools", named,
            "--setting-sources", "project",
            "--strict-mcp-config", "--mcp-config", str(folder / "mcp.json"),
            "--settings", str(folder / "settings.json"),
@@ -749,8 +808,33 @@ def _tokens(usages):
     )}
 
 
+def _web_used(blocks, web, seen) -> None:
+    """Add to ``web`` the searches and pages among these content blocks: each
+    WebSearch's query and WebFetch's address, once per call (``seen``, the
+    calls' ids: a message can come again in the stream), in order, at most
+    WEB_ITEMS of each, each at most WEB_ITEM_CHARS."""
+    for block in blocks if isinstance(blocks, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        into, field = {"WebSearch": ("searched", "query"), "WebFetch": ("read", "url")}.get(
+            block.get("name"), (None, None))
+        if into is None:
+            continue
+        call = block.get("id")
+        if call is not None:
+            if call in seen:
+                continue
+            seen.add(call)
+        given = block.get("input")
+        value = given.get(field) if isinstance(given, dict) else None
+        if isinstance(value, str) and value.strip() and len(web[into]) < WEB_ITEMS:
+            web[into].append(value.strip()[:WEB_ITEM_CHARS])
+
+
 def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_MODEL):
     usage_by_id = {}
+    web = {"searched": [], "read": []}
+    web_calls: set = set()
     result = None
     model = ""
     seen_model = None
@@ -805,6 +889,7 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
                             and message_model != hour):
                         seen_model = message_model
                         stop("guard")
+                    _web_used(message.get("content"), web, web_calls)
                     usage_key = message.get("id") or event.get("uuid")
                     if usage_key:
                         usage_by_id[usage_key] = message.get("usage") or {}
@@ -842,10 +927,13 @@ def _watch(cmd, studio, env, folder, prompt, max_seconds, max_tokens, hour=HOUR_
         status, reason = "failed", "claude ended without a result."
     if status == "done" and not reason and last_synthetic:
         reason = "Claude Code said: " + _line(last_synthetic)
-    return {
+    outcome = {
         "model": model, "status": status, "reason": reason, "tokens": tokens,
         "session_id": result.get("session_id", "") if result is not None else "",
-    }, seen_model is not None
+    }
+    if web["searched"] or web["read"]:
+        outcome["web"] = web
+    return outcome, seen_model is not None
 
 
 def _answered(store, ids) -> list[str]:
@@ -959,6 +1047,7 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         return {"kind": kind, "id": "", "status": "failed", "reason": refusal}
     max_seconds, max_tokens, unbudgeted = budget(
         kind, max_minutes=max_minutes, max_tokens=max_tokens, max_seconds=max_seconds,
+        agent_id=resolved.agent_id,
     )
     if dry_run:
         if unbudgeted:
@@ -968,8 +1057,10 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         records = _records(records_path)
         since = since_for(kind, records)
         model, why = hour_model(live, scope)
+        online = hour_online(resolved.agent_id, kind)
         prompt, waiting, skip, said = _prepare(kind, live, since, scope, model or HOUR_MODEL,
-                                               resolved.agent_id, records)
+                                               resolved.agent_id, records,
+                                               online if kind in ONLINE_KINDS else None)
         skip = why or skip
         claude_bin = os.environ.get("MNEMOS_CLAUDE_BIN") or shutil.which("claude")
         mnemos_bin = os.environ.get("MNEMOS_LIFE_MNEMOS_BIN") or shutil.which("mnemos")
@@ -978,9 +1069,17 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         folder = hours / "dry-run"
         store = folder / "store.db" if store_copy else live
         mcp, settings, cmd = _files_and_command(kind, "dry-run", folder, store, scope, claude_bin, mnemos_bin,
-                                                model or HOUR_MODEL)
+                                                model or HOUR_MODEL, online)
+        named, _allowed = hour_tools(kind, online)
         print(f"Dry run · {kind} hour · nothing will run", file=out)
         print(f"Model: {model or '(none: ' + why + ')'}", file=out)
+        print("Online: " + (
+            "never (a dream reaches nothing but its memory)" if kind not in ONLINE_KINDS
+            else "yes: it can search and read the web" if online
+            else "no: the internet is off for this hour"
+        ), file=out)
+        print("Tools: " + (", ".join(named.split(",")) + ", and its memory's own" if named
+                           else "only its memory's own"), file=out)
         print(f"Store: {live} ({'a copy would be used' if store_copy else 'live'})", file=out)
         print(f"Since: {_minute(since)}", file=out)
         if skip:
@@ -991,15 +1090,19 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
         print("\n── command ──\n" + shlex.join(cmd), file=out)
         print("\n── mcp.json ──\n" + json.dumps(mcp, indent=2), file=out)
         print("\n── settings.json ──\n" + json.dumps(settings, indent=2), file=out)
-        return {"dry_run": True, "kind": kind, "skip": skip, "prompt": prompt, "waiting": waiting}
+        return {"dry_run": True, "kind": kind, "skip": skip, "prompt": prompt, "waiting": waiting,
+                "online": online}
 
     hour_id = _gen_ulid()
     folder = hours / hour_id
+    # ``online``: whether the hour was given the web; ``web`` comes when it
+    # used it (``_watch``).
     record = {
         "id": hour_id, "kind": kind, "started_at": started_at, "ended_at": "", "model": "",
         "status": "", "reason": "", "tokens": None, "journal_ids": [], "note_ids": [],
         "store": "copy" if store_copy else "live", "session_id": "", "since": "",
         "waiting": {"handoffs": 0, "captures": 0, "questions": 0}, "discarded_ids": [],
+        "online": False,
     }
     if store_copy:
         record["live_store_untouched"] = None
@@ -1043,7 +1146,10 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 record.update(status="skipped", reason=why)
                 return record
             record["model"] = model
-            prompt, waiting, skip, said = _prepare(kind, store, since, scope, model, resolved.agent_id, records)
+            online = hour_online(resolved.agent_id, kind)
+            record["online"] = online
+            prompt, waiting, skip, said = _prepare(kind, store, since, scope, model, resolved.agent_id, records,
+                                                   online if kind in ONLINE_KINDS else None)
             record["waiting"] = waiting
             if kind == "dream":
                 record["said"] = said
@@ -1056,7 +1162,8 @@ def run_hour(kind: str, *, db_path: str | None = None, agent_id: str | None = No
                 record.update(status="failed", reason="The claude command wasn't found." if not claude_bin else "The mnemos command wasn't found.")
                 return record
             folder.mkdir(exist_ok=True)
-            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin, model)
+            mcp, settings, cmd = _files_and_command(kind, hour_id, folder, store, scope, claude_bin, mnemos_bin,
+                                                    model, online)
             (folder / "prompt.md").write_text(prompt)
             (folder / "mcp.json").write_text(json.dumps(mcp, indent=2))
             (folder / "settings.json").write_text(json.dumps(settings, indent=2))

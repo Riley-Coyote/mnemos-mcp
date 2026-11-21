@@ -141,10 +141,14 @@ def test_a_hand_off_needs_no_claude(db, home, monkeypatch):
 
 
 def test_a_hand_off_is_the_prompt_the_hour_would_get_after_a_fence(db):
-    from mnemos.life import HANDOFF_KEPT, run_hour
+    from mnemos.life import HANDOFF_KEPT, OFFLINE_LINE, run_hour
 
     work(db)
     wanted = run_hour("ours", db_path=str(db), **SCOPE, dry_run=True, out=io.StringIO())["prompt"]
+    # All but the line saying whether a walled-in hour can go online: a
+    # hand-off is taken with the agent's own tools, and says nothing of it.
+    assert "\n\n" + OFFLINE_LINE + "\n\n" in wanted
+    wanted = wanted.replace("\n\n" + OFFLINE_LINE, "", 1)
 
     record, printed = hand(db)
 

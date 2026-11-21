@@ -19,7 +19,7 @@ SCOPE = {'agent_id': 'claude-code', 'person_id': 'user', 'project_scope': 'globa
 ROOT = Path(__file__).resolve().parents[1]
 RECORD_KEYS = ['id', 'kind', 'started_at', 'ended_at', 'model', 'status', 'reason',
                'tokens', 'journal_ids', 'note_ids', 'store', 'session_id', 'since',
-               'waiting', 'discarded_ids']
+               'waiting', 'discarded_ids', 'online']
 
 
 @pytest.fixture(autouse=True)
@@ -90,7 +90,8 @@ def test_dry_run_prints_words_and_whats_waiting(db, home):
     assert 'Captures since' not in printed
     handoff = rows(db, "SELECT id FROM hypomnema_entries WHERE entry_kind='handoff'")[0]
     assert f"[{handoff['id']}]" in record['prompt']
-    assert record['prompt'].startswith('My own words.\n\n---\n\n')
+    # After its own words, the line saying it can't go online (QH-2).
+    assert record['prompt'].startswith('My own words.\n\n' + life.OFFLINE_LINE + '\n\n---\n\n')
     assert '--fallback-model' not in printed
     assert not life.hours_dir('claude-code').exists()
 

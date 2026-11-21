@@ -72,20 +72,27 @@ def message(kind: str, mnemos: str, flags: list[str], key: str = "") -> str:
     return words
 
 
-def _hermes_prompts() -> dict[str, str]:
-    """What Hermes' jobs say, by name, from its own file; nothing if it can't be read."""
+def hermes_jobs() -> list[dict] | None:
+    """The scheduled jobs of the active Hermes profile, as its own file holds
+    them (``cron/jobs.json``: ``{"jobs": [...]}``, or a bare list, as Hermes
+    reads it), or None when there is no such file or it can't be read."""
     from ..integrations.hermes.scope import default_hermes_home
 
     try:
         data = json.loads((default_hermes_home() / "cron" / "jobs.json").read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return {}
+        return None
     jobs = data.get("jobs") if isinstance(data, dict) else data
     if not isinstance(jobs, list):
-        return {}
+        return None
+    return [job for job in jobs if isinstance(job, dict)]
+
+
+def _hermes_prompts() -> dict[str, str]:
+    """What Hermes' jobs say, by name, from its own file; nothing if it can't be read."""
     return {
         str(job.get("name")): str(job.get("prompt") or "")
-        for job in jobs if isinstance(job, dict)
+        for job in hermes_jobs() or []
     }
 
 
