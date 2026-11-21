@@ -434,7 +434,9 @@ def hours_now(agent_id: str) -> dict[str, dict]:
     """Each hour as it is on this machine now: ``{kind: {"on": bool, "at":
     "HH:MM", "minutes": n, "online": bool}}``. ``on`` is whether its job is
     scheduled; ``at`` is when it runs when it is (read from the job), else
-    the time it would start at."""
+    the time it would start at. An hour that's off says what it would be if
+    turned on: offline, since turning one on from off keeps it offline unless
+    the person asks (``hour_online`` and what's kept don't change)."""
     from . import scheduler
 
     kept = _kept(agent_id)
@@ -456,6 +458,8 @@ def hours_now(agent_id: str) -> dict[str, dict]:
         hour = _settings(kept, kind, lambda: on["mine"])
         if when[kind]:
             hour["at"] = clock_text(when[kind])
+        if not on[kind]:
+            hour["online"] = False
         now[kind] = {"on": on[kind], **hour}
     return now
 
