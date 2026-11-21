@@ -1975,11 +1975,76 @@ def _named_hours(words: list[str]) -> tuple[list[str], str | None]:
     return [kind for kind in _state.HOUR_KINDS if kind in named], None
 
 
+_IN_HERMES = "Hermes runs these as its own scheduled jobs. To change them, ask the agent in Hermes."
+
+
+def _hermes_home_for(args: argparse.Namespace) -> Path | None:
+    """The Hermes home whose agent this command's memory is, when it is one
+    (``hermes.scope.hermes_home_for_store``) and Claude Code doesn't wake it
+    too: then its quiet hours are Hermes's own jobs, not this machine's
+    scheduler's. None otherwise, or when it can't be told."""
+    try:
+        from .integrations.hermes.scope import hermes_home_for_store
+
+        db_path = _cli_scope(args).db_path
+        home = hermes_home_for_store(db_path)
+        if home is None or _state.wake_hook(str(db_path)):
+            return None
+        return home
+    except Exception:
+        return None
+
+
+def _hours_in_hermes(args: argparse.Namespace, home: Path) -> int:
+    """The hours of an agent that lives in Hermes, as Hermes has them
+    (``scheduled_in_hermes``, for that agent's own home), only to read."""
+    from .integrations.hermes.hours import scheduled_in_hermes
+    from .integrations.hermes.scope import running_for_home
+
+    agent_id = _cli_scope(args).agent_id
+    try:
+        with running_for_home(home):
+            jobs = scheduled_in_hermes()
+    except Exception:
+        jobs = None
+    if getattr(args, "json", False):
+        print(json.dumps({"agent_id": agent_id, "where": "hermes", "hermes_home": str(home),
+                          "hours": jobs}, indent=2))
+        return 0
+    print(f"Quiet hours for {agent_id}, as Hermes has them ({home}):")
+    for kind in _state.HOUR_KINDS:
+        if jobs is None:
+            said = "can't tell: Hermes's scheduled jobs can't be read"
+        elif jobs.get(kind) is None:
+            said = "off  (no job for it)"
+        else:
+            job = jobs[kind]
+            at = str(job.get("at") or "")
+            when = f"daily at {at}" if _state.parse_clock(at) else f"on the schedule {at}"
+            # As the job is: a job made in a terminal has every Hermes tool,
+            # the web among them, a dream's too.
+            said = f"{'on' if job.get('on') else 'off':<5}{when}, "
+            said += "online" if job.get("online") else "offline"
+            if not job.get("limited"):
+                said += ", with every Hermes tool"
+            if not job.get("on"):
+                said += " (its job is paused)"
+        print(f"  {HOUR_NAMES[kind]:<14}{said}")
+    print()
+    print(_IN_HERMES)
+    return 0
+
+
 def _cmd_hours(args: argparse.Namespace) -> int:
     """``mnemos hours``: each quiet hour as it is, and ``on``, ``off`` and
     ``keep`` to change them one by one. Without ``--write`` they say what
     would change and change nothing."""
     command = getattr(args, "hours_command", None)
+    hermes = _hermes_home_for(args)
+    if hermes is not None:
+        if command is not None:
+            return _refuse(_IN_HERMES)
+        return _hours_in_hermes(args, hermes)
     if command is None:
         report = _hours_report(args)
         if getattr(args, "json", False):

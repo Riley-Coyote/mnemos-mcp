@@ -112,6 +112,33 @@ def profile_store(hermes_home: str | Path) -> str:
     return str(Path.home() / ".mnemos" / f"{profile_agent_id(hermes_home)}.db")
 
 
+def hermes_home_for_store(db_path: str | Path) -> Path | None:
+    """The Hermes home whose agent keeps its memory in ``db_path``, or None
+    when none does. A home's agent is the one whose ``mnemos.json`` names the
+    store (``connect hermes`` and the install inside Hermes both write it
+    there), or, when it names none, the one whose own folder keeps it
+    (``<home>/mnemos/mnemos.db``, where such a home's memory is). Every home
+    this machine shows is looked at (``known_hermes_homes``); nothing is
+    written, and a home whose settings can't be read counts as naming none."""
+
+    from .installer import known_hermes_homes
+
+    try:
+        wanted = Path(db_path).expanduser().resolve()
+    except (OSError, RuntimeError):
+        return None
+    for home in known_hermes_homes():
+        try:
+            named = HermesMnemosConfig.load(home).db_path or ""
+            named = named.replace("$HERMES_HOME", str(home)).replace("${HERMES_HOME}", str(home))
+            kept = Path(named).expanduser() if named else home / "mnemos" / "mnemos.db"
+            if kept.resolve() == wanted:
+                return home
+        except (OSError, RuntimeError, ValueError):
+            continue
+    return None
+
+
 def config_copied_from_elsewhere(hermes_home: str | Path) -> bool:
     """Whether this home's ``mnemos.json`` was written for another home that is still
     there, so it, and the server in its config, came with a copied profile. A home
