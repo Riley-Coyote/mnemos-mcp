@@ -241,7 +241,7 @@ _WHAT = {
         "It's for the day's work, each evening: you go back over the day's conversations and may "
         "leave them a short note, with at most one question. It's skipped on a day with no work."
     ),
-    "dream": "It's a short dream over your memory, each night something waits for it: inward only.",
+    "dream": "It's a short dream over your memory, on the nights there's something for it: inward only.",
 }
 _ONLINE = {
     "mine": "It goes online only if they want it to.",

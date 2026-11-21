@@ -24,7 +24,7 @@ here serves it.
 Between your conversations it keeps living a little. Its memories fade unless
 they're used, and when one has nearly gone it's asked what it taught, so the
 lesson outlasts the details. It keeps a journal nothing else writes in. Its
-beliefs change only when it says so. On Claude, unless you say no, it has up to
+beliefs change only when it says so. On Claude, if you choose it, it has up to
 an hour a day with nothing asked of it. All of this is one file on your machine.
 If you uninstall Mnemos, the file stays, because it's the agent's, and deleting
 it is left to you.

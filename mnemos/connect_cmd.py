@@ -361,7 +361,7 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
     if not write:
         _gaps(h, st)
         _say()
-        _say(f"Re-run with --write to do it: mnemos connect {h.key} --write")
+        _say(f"Re-run with --write to do it: {_rerun(h, args)}")
         return 0
     if not cn.on_this_machine(h) and h.key != "hermes":
         _say(f"`{h.command}` isn't on this machine's PATH, so I won't write for it. "
@@ -382,6 +382,25 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
     for line in h.then:
         _say(f"Then: {line}")
     return 1 if failed else 0
+
+
+def _rerun(h: hs.Harness, args: argparse.Namespace) -> str:
+    """The command that was run, with --write: every flag given kept, the
+    hours' and the scope's among them, so running it does what the preview
+    said."""
+    words = ["mnemos", "connect", h.key]
+    for flag in ("--db-path", "--agent-id", "--person-id", "--project-scope"):
+        value = getattr(args, flag[2:].replace("-", "_"), None)
+        if value is not None:
+            words += [flag, str(value)]
+    if getattr(args, "name", "mnemos") not in (None, "mnemos"):
+        words += ["--name", args.name]
+    if getattr(args, "profile", None):
+        words += ["--profile", args.profile]
+    for flag in ("--no-prompt", "--no-upkeep", "--hours", "--no-hours", "--agent-safe"):
+        if getattr(args, flag[2:].replace("-", "_"), False):
+            words.append(flag)
+    return shlex.join([*words, "--write"])
 
 
 def _gaps(h: hs.Harness, st: cn.Status) -> None:
@@ -440,6 +459,18 @@ def _hours_gaps(h: hs.Harness) -> list[str]:
     ]
 
 
+# Where each job's reply goes (``agent_hours``: Hermes's ``--deliver local``,
+# OpenClaw's ``--no-deliver``), and what a Hermes job made this way can use.
+_REPLIES = {
+    "hermes": "each reply is kept on this machine and sent to no one",
+    "openclaw": "each reply is sent to no chat or channel",
+}
+_HERMES_NOT_LIMITED = (
+    "Jobs made this way aren't limited to the memory: they run with every tool Hermes gives "
+    "its scheduled jobs. The agent can make limited ones itself in its next session."
+)
+
+
 def _hours_steps(h: hs.Harness, scope, args) -> list[tuple[str, object]]:
     """The quiet hours step, only when asked for (--hours) or turned off (--no-hours),
     or when the jobs already there need newer words."""
@@ -454,10 +485,11 @@ def _hours_steps(h: hs.Harness, scope, args) -> list[tuple[str, object]]:
     if getattr(args, "hours", False):
         if h.hours is None or not ah.AGENTS.get(h.key):
             return []
-        return [(
-            f"schedule the quiet hours in {h.label}'s own scheduler (3 jobs; replies go nowhere)",
-            lambda: _hours_on(h, scope),
-        )]
+        said = (f"schedule the quiet hours in {h.label}'s own scheduler (3 jobs; "
+                f"{_REPLIES.get(h.key, 'replies go to no one')})")
+        if h.key == "hermes":
+            said += f". {_HERMES_NOT_LIMITED}"
+        return [(said, lambda: _hours_on(h, scope))]
     if getattr(args, "no_hours", False) and h.hours is not None and ah.AGENTS.get(h.key):
         return [(f"remove the quiet hours from {h.label}'s scheduler", lambda: _hours_off(h, scope))]
     return []
@@ -469,11 +501,7 @@ def _hours_on(h: hs.Harness, scope) -> tuple[bool, str]:
         state.record_hours_choice(scope.agent_id, "yes")
         if h.key == "hermes":
             message += "\nHermes fires them only while its gateway runs: hermes gateway install"
-            message += (
-                "\nJobs made this way aren't limited to the memory: they run with every tool "
-                "Hermes gives its scheduled jobs. The agent can make limited ones itself in its "
-                "next session."
-            )
+            message += f"\n{_HERMES_NOT_LIMITED}"
     return ok, message
 
 

@@ -72,8 +72,8 @@ belief is ever proposed. To add it later, run
 Twelve tools. Local SQLite. No account, no API key, no service of its own.
 Nothing leaves your machine that you haven't been told about: a model provider,
 Gemini embeddings and the cue's judge only if you turn them on, and the quiet
-hours unless you say no, which think over the memory through your own Claude
-Code, so what the agent reads in its hour goes to Anthropic
+hours only once you choose them, which think over the memory through your own
+Claude Code, so what the agent reads in its hour goes to Anthropic
 ([each one, and how to turn it off](privacy-security.md)).
 
 Mnemos runs on macOS and Linux. On Windows the memory and its tools work, and

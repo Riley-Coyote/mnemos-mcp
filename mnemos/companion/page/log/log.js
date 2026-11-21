@@ -33,7 +33,7 @@ function head() {
   dot.classList.toggle('cold', !h || k < 0.1);
   dot.style.setProperty('--k', String(h ? Math.max(0, Math.min(1, k)) : 0));
   if (!h) {
-    $('state').innerHTML = `${plural(life.memory.count, 'memory', 'memories')} · no quiet hours yet`;
+    $('state').innerHTML = `${plural(life.memory.count, 'memory', 'memories')} · no quiet hour has run yet`;
   } else {
     const end = at(h.end), stale = Date.now() - end.getTime() > 26 * 36e5;
     $('state').innerHTML = `<b>${tempWord(k, h)}</b> · ${(KIND[h.kind] || esc(h.kind)).toLowerCase()} ended ${ago(Date.now() - end.getTime())}${h.practice ? ' · practice' : ''}${stale ? ' · no hour since' : ''}`;

@@ -554,3 +554,34 @@ def test_mnemos_log_sees_the_hours_setup_schedules(monkeypatch, os_scheduler, cl
         ("mine", {"Hour": 7, "Minute": 30}, True),
         ("ours", {"Hour": 19, "Minute": 0}, True),
     ]
+
+
+# ── Only where the agent walks them through does setup say it will (QH-7) ──
+
+
+DESKTOP_LINE = (
+    "Quiet hours: off. They're the agent's own time between sessions; to see them or choose "
+    "them: the Settings on the agent's page, or mnemos --agent-id nova hours"
+)
+
+
+def test_claude_desktop_is_not_promised_a_walk_through(launchd, claude, monkeypatch, capsys):
+    """Claude Desktop's agent never walks its person through the hours
+    (``hours_walked_through``, which the onboarding asks too), so setup
+    doesn't say it will: it says where to see and choose them."""
+    monkeypatch.setattr(cli.sys, "platform", "darwin")
+    assert main(["mcp", "install", "claude", "--agent-id", "nova", "--write"]) == 0
+
+    out = capsys.readouterr().out
+    assert DESKTOP_LINE + "\n" in out, out
+    assert "next session" not in out and "If you're an agent" not in out
+    assert not HOURS & launchd.loaded
+
+
+def test_who_is_walked_through_is_one_answer():
+    from mnemos.simple_runtime import hours_walked_through
+
+    assert hours_walked_through("claude-code")
+    assert hours_walked_through("hermes", inside_hermes=True)
+    for key in ("claude-desktop", "codex", "grok", "gemini", "openclaw", "hermes", "", None):
+        assert not hours_walked_through(key), key
