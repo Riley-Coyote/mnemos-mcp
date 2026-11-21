@@ -141,8 +141,10 @@ def test_it_is_offered_and_says_when_to_take_it(tmp_path):
         (tool,) = [t for t in provider.get_tool_schemas() if t["name"] == "mnemos_hour"]
     finally:
         provider.shutdown()
-    assert tool["parameters"]["required"] == ["kind"]
+    # kind takes an hour; chosen (QH-3) keeps the hours the person chose instead.
+    assert "required" not in tool["parameters"]
     assert tool["parameters"]["properties"]["kind"]["enum"] == list(KINDS)
+    assert tool["parameters"]["properties"]["chosen"]["type"] == "array"
     said = " ".join(tool["description"].split())
     assert "quiet-hour job" in said and "when the person asks" in said
     assert "never on your own initiative" in said.lower()

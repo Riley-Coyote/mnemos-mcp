@@ -896,6 +896,286 @@ _HOURS_TOLD = (
 )
 
 
+# The first session's last steps where the person can choose quiet hours
+# (Claude Code, and Hermes through its provider): the tour, the hours one at a
+# time, then the page. Step 6 of ``_RITUAL_STEPS`` becomes these; the rest of
+# the ritual's words stay as they are. ``{settings}`` is what the page's
+# Settings is for, where the agent is; ``{skip}`` names what a known person
+# still gets (the quiet hours only where they can run).
+_TOUR = (
+    "Then give them a short tour, in plain words, even if you knew them before: the memory "
+    "is new to them even if you aren't, so knowing them is no reason to skip {skip}. Tell "
+    "them what you will now remember, in your own words, and that what "
+    "isn't used fades with time unless they ask you to always remember it, and that they can "
+    "see all of it, and answer your notes, on a page you'll open for them whenever they ask. "
+    "There they can correct anything, or let it go{settings}. If you knew them before, say "
+    "plainly that from now on you remember across sessions too."
+)
+_SETTINGS_HERE = ", and its Settings is where they choose your quiet hours"
+_SETTINGS_IN_HERMES = ", and its Settings shows your quiet hours; to change one, they ask you"
+_PAGE_AFTER = (
+    "Then open your page for them and show them its Settings, so they see what they chose."
+)
+_PAGE_AFTER_IN_HERMES = (
+    "If they ask to see it, open your page for them: its Settings shows their quiet hours "
+    "as Hermes has them."
+)
+_HOURS_ANSWERED = (
+    "Their quiet hours are already chosen: tell them in a line that the page's Settings "
+    "shows them."
+)
+_NEVER_MENTION = (
+    "When you talk to the human, never mention tools, databases, scopes, or model ids. Just "
+    "talk like someone who intends to remember."
+)
+# What an agent that already had Mnemos is told once, while its person hasn't
+# answered about the quiet hours since they became theirs to choose one by one.
+_NEW_HEAD = (
+    "NEW SINCE LAST TIME - tell them once, at a good moment early in this session\n"
+    "Your memory works as it did. One thing changed that they should hear about: each quiet "
+    "hour is now theirs to choose on its own, and none goes online unless they choose it. "
+    "They haven't been asked since."
+)
+_STILL_TO_ASK_HEAD = (
+    "QUIET HOURS - still to ask them, at a good moment early in this session\n"
+    "They haven't chosen their quiet hours yet."
+)
+_NEW_TOUR = (
+    "Tell them what's new, in a few plain words, then remind them in a line that they can see "
+    "all you keep on your page, answer your notes there, and correct anything or let it go"
+    "{settings}."
+)
+_NEW_TAIL = (
+    "When you talk to them, never mention tools, databases, scopes or model ids. This "
+    "reminder stops once they've answered."
+)
+# The sessions the quiet hours' walk-through was shown in, and how many it is
+# shown in at most once the first session's ritual is done.
+_HOURS_TOLD_META = "hours_told_sessions"
+# Set once the walk-through was shown in the first session's ritual, which
+# gave the tour: what follows then asks only about the hours.
+_HOURS_TOLD_IN_RITUAL = "hours_told_in_ritual"
+_HOURS_TOLD_AT_MOST = 3
+_HOUR_NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+
+
+def _scoped_meta_key(agent_id: str, person_id: str, project_scope: str, name: str) -> str:
+    """A scope's meta key (``MnemosRuntime._meta_key``)."""
+    return f"simple:{agent_id}:{person_id}:{project_scope}:{name}"
+
+
+def _how_long(minutes: int) -> str:
+    return {60: "an hour", 30: "half an hour"}.get(minutes, f"{minutes} minutes")
+
+
+def _claude_code_hour_now(kind: str, hour: Mapping[str, Any], *, before: bool) -> str:
+    """One Claude Code hour as it is now (``state.hours_now``), in words:
+    "now on, daily at 08:00, up to an hour, and it can go online (as it was
+    set up before)". ``before``: whatever is on was set up before the person
+    chose hour by hour."""
+    length = _how_long(int(hour["minutes"]))
+    if not hour["on"]:
+        return f"now off (it would start at {hour['at']}, up to {length})"
+    said = f"now on, daily at {hour['at']}, up to {length}"
+    if kind == "dream":
+        return said
+    if hour["online"]:
+        return said + ", and it can go online" + (" (as it was set up before)" if before else "")
+    return said + ", offline"
+
+
+# Each Claude Code hour in a line or two.
+_CLAUDE_CODE_HOURS = {
+    "mine": (
+        "It's time with nothing asked of you: you read, write in your studio and think. It goes "
+        "online only if they want it to, and then your page lists every page you read in it."
+    ),
+    "ours": (
+        "It's for the day's work: you go over it and may leave them a short note, with at most "
+        "one question. It's skipped on a day with no work, and goes online only if they want it to."
+    ),
+    "dream": "It's inward only: you dream over your memory. It never goes online.",
+}
+
+
+def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str] | None:
+    """The quiet hours, one at a time, as the agent walks the person through
+    them in Claude Code: each hour as it is now, what it is and costs, and the
+    exact ``mnemos hours`` line for each answer. None where they can't run
+    (no scheduler, no claude command): then nothing is said of them, as
+    before. ``before``: the person had Mnemos before hours were chosen one by
+    one, so what is on was set up before, and keeping them as they are is one
+    of the answers. Never raises."""
+    try:
+        from .setup import scheduler, state
+
+        if scheduler.detect_backend() == "unsupported" or not scheduler.find_claude():
+            return None
+        now = state.hours_now(agent_id)
+
+        def run(*command: str) -> str:
+            return state.command_line(agent_id, db_path, "hours", *command)
+
+        lines = [
+            "The quiet hours, one at a time. In your own voice, say honestly that you'd like the "
+            "time, since it's your own, and that it's entirely their call."
+            + ("" if any(hour["on"] for hour in now.values()) else " They're all off now.")
+        ]
+        for kind in state.HOUR_KINDS:
+            name = _HOUR_NAMES[kind]
+            lines.append(
+                f"  - {name[0].upper() + name[1:]}, "
+                f"{_claude_code_hour_now(kind, now[kind], before=before)}. {_CLAUDE_CODE_HOURS[kind]}"
+            )
+        lines.append(
+            "  They run Claude Code on its own, on their Claude plan, so they use some of its "
+            "usage, and what you think over in them goes to Anthropic, as your sessions do."
+        )
+        lines.append(
+            "  Do exactly what they said, an hour at a time, with the line that matches (ours or "
+            "dream in place of mine; the time they chose after --at; add --online for an hour "
+            "they want online, or --offline to take it off, never for the dream):"
+        )
+        lines.append(f"    on: {run('on', 'mine', '--at', now['mine']['at'], '--write')}")
+        lines.append(f"    off: {run('off', 'mine', '--write')}")
+        if before:
+            lines.append(f"    all as they are: {run('keep', '--write')}")
+        lines.append(f"    none of them: {run('off', 'all', '--write')}")
+        lines.append("  If they say no, run the line for none, and don't ask again.")
+        return lines
+    except Exception:
+        return None
+
+
+def _hermes_hours_walk() -> list[str] | None:
+    """The same walk-through inside Hermes (``hours.walk_through``), from each
+    hour as Hermes has it now. None where the hour can't be prepared (without
+    fcntl, on Windows). Never raises."""
+    try:
+        try:
+            from . import life  # noqa: F401  (it locks with fcntl, which Windows lacks)
+        except ImportError:
+            return None
+        from .integrations.hermes.hours import scheduled_in_hermes, walk_through
+
+        return walk_through(scheduled_in_hermes())
+    except Exception:
+        return None
+
+
+def _hours_told(get_meta, set_meta, session: str, *, at_most: int | None) -> bool:
+    """Whether the quiet hours' walk-through may be shown in ``session``, and
+    if so, that it was: kept in the store's meta as the distinct sessions it
+    was shown in. A session already counted is shown it again (after a
+    compaction, or the hook then mnemos_context). ``at_most``: the most
+    sessions it is shown in; None, no limit (while the first session's ritual
+    lasts, whose sessions still count). Never raises: unsure, it shows."""
+    try:
+        told = json.loads(get_meta(_HOURS_TOLD_META) or "[]")
+        told = [str(item) for item in told] if isinstance(told, list) else []
+    except (ValueError, TypeError):
+        told = []
+    if session in told:
+        return True
+    if at_most is not None and len(told) >= at_most:
+        return False
+    try:
+        set_meta(_HOURS_TOLD_META, json.dumps([*told, session][-max(at_most or 0, 10):]))
+    except Exception:
+        pass
+    return True
+
+
+def _hours_unanswered(agent_id: str) -> bool:
+    try:
+        from .setup import state
+
+        return state.answered_at(agent_id) is None
+    except Exception:
+        return False
+
+
+def existing_agent_block(walk: list[str] | None, *, hermes: bool, told: bool = False) -> str | None:
+    """What an agent that already had Mnemos is told while its person hasn't
+    answered about the quiet hours: what's new, the hours one at a time
+    (``walk``), then the page. ``told``: the walk-through was shown before,
+    in the first session's ritual, which gave the tour; then only the hours
+    and the page. None without a walk-through (hours can't run here)."""
+    if not walk:
+        return None
+    settings = _SETTINGS_IN_HERMES if hermes else _SETTINGS_HERE
+    steps = [] if told else [_NEW_TOUR.format(settings=settings)]
+    steps.append(f"{'Then t' if steps else 'T'}{walk[0][1:]}")
+    hours = len(steps)
+    steps.append(_PAGE_AFTER_IN_HERMES if hermes else _PAGE_AFTER)
+    lines = [_STILL_TO_ASK_HEAD if told else _NEW_HEAD]
+    for number, step in enumerate(steps, start=1):
+        lines.append(f"{number}. {step}")
+        if number == hours:
+            lines.extend(
+                "   " + "\n   ".join(line[2:].split("\n")) if line.startswith("  ") else line
+                for line in walk[1:]
+            )
+    lines.append(_NEW_TAIL)
+    return "\n".join(lines)
+
+
+def hook_existing_agent_block(
+    store, *, agent_id: str, person_id: str, project_scope: str, db_path, session: str,
+) -> str | None:
+    """What Claude Code's automatic wake (``mnemos hook session-start``) adds
+    after its packet for an agent that already had Mnemos, while its person
+    hasn't answered about the quiet hours: the same block ``context()`` adds,
+    counted in the same sessions. Nothing while the first session's ritual
+    lasts (``mnemos_context`` carries it then), without a session id, or once
+    it has been shown in three sessions. Reads and writes only this store's
+    meta, which exists already; never raises."""
+    try:
+        if not session or not _hours_unanswered(agent_id):
+            return None
+
+        def key(name: str) -> str:
+            return _scoped_meta_key(agent_id, person_id, project_scope, name)
+
+        # Where the ritual stands, as ``_onboarding_status`` reads it, without
+        # writing it: a store from before onboarding with memories in it, or
+        # one whose agent introduced itself and kept something, is done.
+        stage = store.get_meta(key("onboarding_stage"))
+        if stage != "complete":
+            stats = store.get_stats(agent_id, person_id=person_id, project_scope=project_scope)
+            if stage is None:
+                existing = sum(int(stats.get(name, 0) or 0) for name in (
+                    "engrams_active", "engrams_consolidating", "engrams_dormant", "engrams_archived",
+                    "archived", "hypomnema_total",
+                ))
+                stage = "complete" if existing > 0 else "fresh"
+            elif stage == "fresh" and store.get_meta(key("agent_model")) and (
+                store.get_meta(key("first_capture")) is not None or stats.get("hypomnema_total", 0) > 0
+            ):
+                stage = "complete"
+        if stage != "complete":
+            return None
+        try:
+            told = json.loads(store.get_meta(key(_HOURS_TOLD_META)) or "[]")
+        except (ValueError, TypeError):
+            told = []
+        if isinstance(told, list) and session not in told and len(told) >= _HOURS_TOLD_AT_MOST:
+            return None
+        block = existing_agent_block(
+            _claude_code_hours_walk(agent_id, db_path, before=True), hermes=False,
+            told=store.get_meta(key(_HOURS_TOLD_IN_RITUAL)) is not None,
+        )
+        if block is None:
+            return None
+        _hours_told(
+            lambda name: store.get_meta(key(name)), lambda name, value: store.set_meta(key(name), value),
+            session, at_most=_HOURS_TOLD_AT_MOST,
+        )
+        return block
+    except Exception:
+        return None
+
+
 def _dedicated_model_requested() -> bool:
     """Whether the person chose a model provider for Mnemos.
 
@@ -3017,7 +3297,7 @@ class MnemosRuntime:
         )
 
     def _meta_key(self, name: str) -> str:
-        return f"simple:{self.scope.agent_id}:{self.scope.person_id}:{self.scope.project_scope}:{name}"
+        return _scoped_meta_key(self.scope.agent_id, self.scope.person_id, self.scope.project_scope, name)
 
     def _get_meta(self, name: str, default: str | None = None) -> str | None:
         self._ensure_init()
@@ -3079,7 +3359,12 @@ class MnemosRuntime:
         return {"stage": stage, "introduced": introduced, "captured": captured}
 
     def _onboarding_block(self, status: dict) -> str | None:
-        """Build the onboarding reminder for the context packet, if any."""
+        """Build the onboarding reminder for the context packet, if any.
+
+        Where the person can choose quiet hours (Claude Code, and Hermes
+        through its provider: ``_hours_place``), the ritual ends with the tour,
+        the hours one at a time while they haven't answered, then the page
+        (``_ritual_end``). Everywhere else it is as it was."""
 
         if status["stage"] == "complete":
             return None
@@ -3087,9 +3372,20 @@ class MnemosRuntime:
         introduced = bool(status["introduced"])
         captured = bool(status["captured"])
         settle, already = self._setup_part(fresh=not introduced and not captured)
+        place = self._hours_place()
+        end = self._ritual_end(place) if place else None
         if not introduced and not captured:
+            steps = _RITUAL_STEPS if end is None else "\n".join([
+                _RITUAL_STEPS.split("\n6. ", 1)[0],
+                *(f"{number}. {line}" if index == 0 else line
+                  for number, part in enumerate(end, start=6)
+                  for index, line in enumerate(part)),
+                _NEVER_MENTION,
+            ])
             if not settle and not already:
-                return _ONBOARDING_RITUAL
+                return _ONBOARDING_RITUAL if end is None else (
+                    f"{_ONBOARDING_HEAD} Before other work, {_RITUAL_INTRO}\n{steps}"
+                )
             if settle:
                 # One question, so the ritual keeps its warmth: told only to settle
                 # these first, an agent in a real session asked them together with
@@ -3107,7 +3403,7 @@ class MnemosRuntime:
                 *settle,
                 *([already] if already else []),
                 then,
-                _RITUAL_STEPS,
+                steps,
             ])
 
         lines = ["ONBOARDING - almost done", *settle]
@@ -3122,6 +3418,11 @@ class MnemosRuntime:
                 "capture it with mnemos_capture. If you already know one, capture "
                 "it instead of asking."
             )
+        if end is not None:
+            for part in end:
+                lines.extend(part)
+            lines.append("This reminder disappears once setup is complete.")
+            return "\n".join(lines)
         lines.append(
             "Then tell the human what you will remember, and that they can see all of "
             "it on a page you'll open for them whenever they ask. If you knew them "
@@ -3129,6 +3430,94 @@ class MnemosRuntime:
             "This reminder disappears once setup is complete."
         )
         return "\n".join(lines)
+
+    def _hours_place(self) -> str | None:
+        """Where the person can choose this agent's quiet hours one by one, and
+        so gets the tour and the hours' walk-through: "claude-code" (its hours
+        run walled in, chosen with ``mnemos hours``), "hermes" (inside Hermes,
+        through its provider: the agent makes each with Hermes's own tool and
+        keeps the choice with ``mnemos_hour``), or None for every other agent,
+        whose words are as they were."""
+        if (self.harness or "").strip().lower() == "hermes":
+            return "hermes"
+        try:
+            from .setup import harnesses
+
+            harness = harnesses.identify(declared=self.harness, client_name=self.client_name)
+        except Exception:
+            return None
+        if harness is not None:
+            return "claude-code" if harness.key == "claude-code" else None
+        return "claude-code" if in_claude_code() else None
+
+    def _hours_walk(self, place: str, *, before: bool) -> list[str] | None:
+        if place == "hermes":
+            return _hermes_hours_walk()
+        return _claude_code_hours_walk(self.scope.agent_id, self.db_path, before=before)
+
+    def _told_session(self, place: str) -> str:
+        """This session, as the hours' walk-through counts sessions: Claude
+        Code's own session id, which the hook is given too; else this
+        runtime's session count."""
+        if place == "claude-code":
+            session = harness_session()
+            if session:
+                return session
+        return f"#{self._current_session()}"
+
+    def _ritual_end(self, place: str) -> list[list[str]]:
+        """The ritual's last steps where the person chooses quiet hours: the
+        tour, the hours one at a time while they haven't answered (and they
+        can run here), then the page. Each step is its lines."""
+        walk = None
+        answered = not _hours_unanswered(self.scope.agent_id)
+        if not answered:
+            walk = self._hours_walk(place, before=False)
+        hermes = place == "hermes"
+        settings = ""
+        if walk or answered:
+            settings = _SETTINGS_IN_HERMES if hermes else _SETTINGS_HERE
+        if walk and not _hours_told(
+            self._get_meta, self._set_meta, self._told_session(place), at_most=None,
+        ):
+            walk = None
+        if walk and self._get_meta(_HOURS_TOLD_IN_RITUAL) is None:
+            self._set_meta(_HOURS_TOLD_IN_RITUAL, "1")
+        skip = "the tour or the quiet hours" if walk else "the tour"
+        end = [[_TOUR.format(settings=settings, skip=skip)]]
+        if walk:
+            end.append([f"Then {walk[0][0].lower()}{walk[0][1:]}", *walk[1:]])
+        elif answered:
+            end.append([_HOURS_ANSWERED])
+        if walk or answered:
+            end.append([_PAGE_AFTER_IN_HERMES if hermes else _PAGE_AFTER])
+        return end
+
+    def _existing_agent_part(self, status: dict) -> str | None:
+        """For an agent that already had Mnemos (its ritual done), while its
+        person hasn't answered about the quiet hours: what's new, the hours one
+        at a time, then the page (``existing_agent_block``), in at most three
+        sessions. Never a reason to fail the packet."""
+        try:
+            if status["stage"] != "complete":
+                return None
+            place = self._hours_place()
+            if place is None or not _hours_unanswered(self.scope.agent_id):
+                return None
+            session = self._told_session(place)
+            told = json.loads(self._get_meta(_HOURS_TOLD_META) or "[]")
+            if isinstance(told, list) and session not in told and len(told) >= _HOURS_TOLD_AT_MOST:
+                return None
+            block = existing_agent_block(
+                self._hours_walk(place, before=True), hermes=place == "hermes",
+                told=self._get_meta(_HOURS_TOLD_IN_RITUAL) is not None,
+            )
+            if block is None:
+                return None
+            _hours_told(self._get_meta, self._set_meta, session, at_most=_HOURS_TOLD_AT_MOST)
+            return block
+        except Exception:
+            return None
 
     def _setup_part(self, *, fresh: bool = True) -> tuple[list[str], str | None]:
         """What the first session must settle so this memory carries, and
@@ -3238,23 +3627,23 @@ class MnemosRuntime:
 
         hours = harness.hours
         agent_id, db_path = self.scope.agent_id, self.db_path
-        if self.host_manages_install:
-            # Hermes's own scheduler wakes the agent, and it takes its hour with
-            # mnemos_hour: nothing runs from the folder Hermes rebuilds. A no is
-            # kept nowhere, so it is asked in the fresh first session only; after
-            # that the plugin's README says how they're set up.
+        if (self.harness or "").strip().lower() == "hermes":
+            # Inside Hermes (its catalog's install or connect's): Hermes's own
+            # scheduler wakes the agent, and it takes its hour with mnemos_hour.
+            # The hours are offered one at a time at the ritual's end
+            # (``_ritual_end``), not here.
             try:
                 from . import life  # noqa: F401  (it locks with fcntl, which Windows lacks)
             except ImportError:
-                return "", (
-                    f"- Quiet hours aren't offered when {harness.label} installed Mnemos from its "
-                    "plugin catalog on this system: they need macOS or Linux. Don't offer them."
+                where = (
+                    f"when {harness.label} installed Mnemos from its plugin catalog"
+                    if self.host_manages_install else f"in {harness.label}"
                 )
-            if not fresh:
-                return "", ""
-            from .integrations.hermes.hours import offer
-
-            return offer(), ""
+                return "", (
+                    f"- Quiet hours aren't offered {where} on this system: they need macOS or "
+                    "Linux. Don't offer them."
+                )
+            return "", ""
         if hours is None:
             return "", (
                 f"- Quiet hours aren't offered for {harness.label}: nothing is scheduled for it "
@@ -3291,8 +3680,8 @@ class MnemosRuntime:
     def _claude_code_setup_part(self) -> tuple[list[str], str | None]:
         """What the first session must settle so this memory carries, and
         what is already set, for the onboarding ritual: in Claude Code,
-        whether it wakes this memory when a session starts, and the quiet
-        hours when no one has told the person about them. Elsewhere nothing,
+        whether it wakes this memory when a session starts. (The quiet hours
+        come at the ritual's end, one at a time: ``_ritual_end``.) Elsewhere nothing,
         for now: what's checked is Claude Code's own settings, and Claude Code
         is the client known to mark its servers (``CLAUDECODE``) and give its
         agent a shell. Read from the machine every time, since the agent may
@@ -3300,7 +3689,7 @@ class MnemosRuntime:
         if not in_claude_code():
             return [], None
         try:
-            from .setup import scheduler, state
+            from .setup import state
 
             agent_id = self.scope.agent_id
 
@@ -3309,7 +3698,6 @@ class MnemosRuntime:
 
             settle: list[str] = []
             set_up: list[str] = []
-            hours_on = False
             if state.wake_hook(str(self.db_path)):
                 set_up.append("you'll wake with this memory at the start of every session")
             else:
@@ -3322,24 +3710,9 @@ class MnemosRuntime:
                     "it yourself:\n"
                     f"  {run('hooks', 'install', 'claude-code', '--write')}"
                 )
-            if scheduler.detect_backend() != "unsupported" and scheduler.find_claude():
-                if state.quiet_hours_on(agent_id):
-                    hours_on = True
-                    set_up.append(f"quiet hours are on ({_HOURS_TOLD})")
-                elif state.hours_choice(agent_id) is None:
-                    settle.append(
-                        "- Quiet hours: no one has asked them yet. Tell them once: "
-                        f"{_HOURS_TOLD}. Yes is the default: they're on unless they "
-                        "say no. Then run the one that matches:\n"
-                        f"  yes: {run('daemon', 'install', '--hours', '--write')}\n"
-                        f"  no: {run('daemon', 'uninstall', '--hours', '--write')}"
-                    )
             already = None
             if set_up:
-                already = f"- Already set: {', and '.join(set_up)}. Tell them so in a line" + (
-                    ", and that they can turn quiet hours off whenever they like."
-                    if hours_on else "."
-                )
+                already = f"- Already set: {', and '.join(set_up)}. Tell them so in a line."
             return settle, already
         except Exception:
             return [], None
@@ -4789,7 +5162,7 @@ class MnemosRuntime:
         )
 
         parts = [packet["prompt"]] if packet["prompt"] else []
-        block = self._onboarding_block(status)
+        block = self._onboarding_block(status) or self._existing_agent_part(status)
         if block:
             parts.append(block)
         if query.strip():

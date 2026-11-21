@@ -469,6 +469,11 @@ def _hours_on(h: hs.Harness, scope) -> tuple[bool, str]:
         state.record_hours_choice(scope.agent_id, "yes")
         if h.key == "hermes":
             message += "\nHermes fires them only while its gateway runs: hermes gateway install"
+            message += (
+                "\nJobs made this way aren't limited to the memory: they run with every tool "
+                "Hermes gives its scheduled jobs. The agent can make limited ones itself in its "
+                "next session."
+            )
     return ok, message
 
 

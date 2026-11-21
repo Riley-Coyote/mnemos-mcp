@@ -1,12 +1,13 @@
 """The first session makes sure memory carries (0.5.0).
 
 Someone who sets Mnemos up through their agent, or adds only its server, can
-end up with memory that doesn't load by itself and with quiet hours no one
-asked them about. So in Claude Code the first session starts by settling
-both, from what is really on the machine: the agent offers to set up its
-wake and runs setup itself with a yes, asks once about the quiet hours (yes
-by default), and says in a line what is already on. Then the get-to-know-you
-ritual, as before. Outside Claude Code the ritual is exactly what it was.
+end up with memory that doesn't load by itself. So in Claude Code the first
+session starts by settling that, from what is really on the machine: the agent
+offers to set up its wake and runs setup itself with a yes, and says in a line
+what is already on. Then the get-to-know-you ritual, which ends (since QH-3)
+with a tour, the quiet hours one at a time (all off until the person chooses
+one, each with its own ``mnemos hours`` line), and the page. Outside Claude
+Code the ritual is exactly what it was.
 
 Setup keeps the person's answer about the quiet hours, so the first session
 doesn't ask again what setup already asked; without a terminal, setup hands
@@ -33,7 +34,7 @@ MNEMOS = "/opt/mnemos/bin/mnemos"
 OPUS = "claude-opus-5-5"
 FIRST_QUESTION = "1. Ask what they would like you to call them."
 NO_WAKE = "You won't wake with this memory by yourself yet"
-HOURS_QUESTION = "Quiet hours: no one has asked them yet."
+HOURS_QUESTION = "Then the quiet hours, one at a time."
 HOURS_LABELS = {f"com.mnemos.nova.{name}" for name in ("hour-mine", "hour-ours")}
 
 
@@ -105,21 +106,28 @@ def _as_the_agent_runs(command: str) -> int:
 # ── What the first session settles ──
 
 
-def test_a_first_session_with_nothing_set_settles_the_wake_and_the_hours_first(
+def test_a_first_session_settles_the_wake_first_and_ends_with_the_hours_one_by_one(
     claude_code, launchd, claude
 ):
     packet = _packet()
 
     wake = _command("hooks", "install", "claude-code", "--write")
-    yes = _command("daemon", "install", "--hours", "--write")
-    no = _command("daemon", "uninstall", "--hours", "--write")
     assert NO_WAKE in packet and f"\n  {wake}\n" in packet, packet
     assert HOURS_QUESTION in packet, packet
-    assert f"\n  yes: {yes}\n" in packet and f"\n  no: {no}\n" in packet, packet
+    for line in (
+        f"on: {_command('hours', 'on', 'mine', '--at', '08:00', '--write')}",
+        f"off: {_command('hours', 'off', 'mine', '--write')}",
+        f"none of them: {_command('hours', 'off', 'all', '--write')}",
+    ):
+        assert f"\n    {line}\n" in packet, packet
+    assert "daemon install --hours" not in packet, "nothing turns all three on at once"
+    assert "They're all off now." in packet
     assert "use some of its usage" in packet and "goes to Anthropic" in packet
-    assert "Yes is the default: they're on unless they say no." in packet
-    # Settled before the first question of the ritual, which still follows whole.
-    assert packet.index(NO_WAKE) < packet.index(HOURS_QUESTION) < packet.index(FIRST_QUESTION)
+    assert "Yes is the default" not in packet and "on unless they say no" not in packet
+    # The wake is settled before the ritual; the hours come at its end, after
+    # the tour, and the page after them.
+    assert (packet.index(NO_WAKE) < packet.index(FIRST_QUESTION) < packet.index("6. Then give them a short tour")
+            < packet.index("7. " + HOURS_QUESTION) < packet.index("8. Then open your page"))
     assert "5. Call mnemos_introduce" in packet
 
 
@@ -147,40 +155,41 @@ def test_a_wake_for_another_agents_memory_does_not_count(claude_code, launchd, n
     assert NO_WAKE in _packet("nova")
 
 
-def test_the_agents_yes_to_the_hours_schedules_them_and_the_session_says_so(
+def test_the_agents_yes_to_one_hour_schedules_only_it_and_is_not_asked_again(
     claude_code, launchd, claude, capsys
 ):
-    yes = _command("daemon", "install", "--hours", "--write")
+    packet = _packet()
+    yes = next(line.split("on: ", 1)[1] for line in packet.splitlines() if line.strip().startswith("on: "))
     assert _as_the_agent_runs(yes) == 0
     capsys.readouterr()
 
-    assert HOURS_LABELS <= launchd.loaded
-    assert state.hours_choice("nova") == "yes"
+    assert "com.mnemos.nova.hour-mine" in launchd.loaded
+    assert "com.mnemos.nova.hour-ours" not in launchd.loaded
+    assert state.hours_choice("nova") == "yes" and state.answered_at("nova")
     packet = _packet()
     assert HOURS_QUESTION not in packet
-    assert "- Already set: quiet hours are on (" in packet
-    assert "they can turn quiet hours off whenever they like." in packet
+    assert "Their quiet hours are already chosen" in packet
 
 
 def test_the_agents_no_to_the_hours_is_kept_and_never_asked_again(
     claude_code, launchd, claude, capsys
 ):
-    no = _command("daemon", "uninstall", "--hours", "--write")
+    no = _command("hours", "off", "all", "--write")
     assert _as_the_agent_runs(no) == 0
     capsys.readouterr()
 
     assert not HOURS_LABELS & launchd.loaded
-    assert state.hours_choice("nova") == "no"
+    assert state.hours_choice("nova") == "no" and state.answered_at("nova")
     packet = _packet()
     assert HOURS_QUESTION not in packet
     assert "quiet hours" not in packet.lower().split(FIRST_QUESTION.lower())[0]
 
 
 def test_a_preview_keeps_no_answer(claude_code, launchd, claude, capsys):
-    assert main(["daemon", "uninstall", "--agent-id", "nova", "--hours"]) == 0
-    assert main(["daemon", "install", "--agent-id", "nova", "--hours"]) == 0
+    assert main(["hours", "--agent-id", "nova", "off", "all"]) == 0
+    assert main(["hours", "--agent-id", "nova", "on", "mine"]) == 0
     capsys.readouterr()
-    assert state.hours_choice("nova") is None
+    assert state.hours_choice("nova") is None and state.answered_at("nova") is None
     assert HOURS_QUESTION in _packet()
 
 
@@ -236,7 +245,10 @@ def test_the_setup_part_never_costs_the_packet(claude_code, launchd, claude, mon
         raise RuntimeError("settings unreadable")
 
     monkeypatch.setattr(state, "wake_hook", broken)
-    assert _packet() == _ONBOARDING_RITUAL
+    packet = _packet()
+    assert NO_WAKE not in packet and "Already set" not in packet
+    assert packet.startswith("ONBOARDING - first session with a fresh memory"), packet
+    assert FIRST_QUESTION in packet and HOURS_QUESTION in packet
 
 
 def test_an_unfinished_ritual_still_carries_what_is_left_to_settle(claude_code, launchd, claude):
@@ -248,10 +260,12 @@ def test_an_unfinished_ritual_still_carries_what_is_left_to_settle(claude_code, 
 
     packet = _packet()
     left = packet.split("ONBOARDING - almost done\n", 1)[1]
-    assert left.index(NO_WAKE) < left.index(HOURS_QUESTION) < left.index("Call mnemos_introduce")
+    assert left.index(NO_WAKE) < left.index("Call mnemos_introduce") < left.index(HOURS_QUESTION)
 
 
 def test_a_finished_ritual_brings_no_setup_at_all(claude_code, launchd, claude):
+    """Only the quiet hours, while no one has answered about them
+    (tests/test_onboarding_for_every_agent.py)."""
     runtime = _runtime()
     try:
         runtime.introduce(OPUS)
@@ -261,7 +275,7 @@ def test_a_finished_ritual_brings_no_setup_at_all(claude_code, launchd, claude):
 
     packet = _packet()
     assert "ONBOARDING" not in packet
-    assert NO_WAKE not in packet and HOURS_QUESTION not in packet
+    assert NO_WAKE not in packet and FIRST_QUESTION not in packet
 
 
 # ── What setup keeps, and hands to the agent ──
@@ -278,8 +292,8 @@ def test_without_a_terminal_setup_leaves_the_hours_to_the_first_session(claude_c
     assert _claude_code_setup() == 0
     out = capsys.readouterr().out
 
-    assert "Quiet hours: off. They're time between sessions that's the agent's own" in out
-    assert "it will tell you about them in its first session and set up only the ones you want" in out
+    assert "Quiet hours: off. They're the agent's own time between sessions" in out
+    assert "in its next session it will tell you about them and set up only the ones you want" in out
     assert "If you're an agent setting Mnemos up for someone: don't turn them on now." in out
     assert "yes is the default" not in out and "on unless they say no" not in out
     assert not HOURS_LABELS & launchd.loaded, "nothing is scheduled before anyone chooses it"

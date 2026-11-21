@@ -72,11 +72,20 @@ journal and leaves you its questions. One is its own, each morning at 8; one is 
 day's work, each evening at 7, when there was some; and one is a short dream over its
 memory, each night at 3:30, when something waits for it.
 
-They're off until you say yes. The agent asks you once, in its first session, and with your
-yes it makes three of Hermes's scheduled jobs with Hermes's own scheduling tool. Each job
-wakes the agent and asks it to call `mnemos_hour`, which hands it the hour. Nothing is
-scheduled outside Hermes, and no job names a path. It asks in that first session only,
-and keeps no answer: later, these lines are how they're made. To make them yourself:
+They're off until you choose them, one at a time. In its next session the agent walks you
+through each one: what it is, what it costs, and whether it may go online (your own hour and
+our hour only; the dream never does). For each one you want, it makes one of Hermes's
+scheduled jobs with Hermes's own scheduling tool, and lists the tools the job may use:
+its memory's (and, for our hour, the day's conversations), the web only where you chose it,
+and no MCP server. Hermes itself holds the job to that list. Each job wakes the agent and
+asks it to call `mnemos_hour`, which hands it the hour. Nothing is scheduled outside Hermes,
+and no job names a path. The agent keeps your answer, so it doesn't ask again; to change
+an hour later, ask it. Jobs it finds already there it describes as they are, and offers to
+remake one that isn't limited to its memory.
+
+If the agent can't reach that tool, these lines make the jobs in a terminal. Jobs made this
+way aren't limited to the memory: they run with every tool Hermes gives its scheduled jobs,
+the web among them.
 
 ```bash
 hermes cron create --name mnemos-hour-mine --deliver local '0 8 * * *' 'This is your quiet hour. Call mnemos_hour with kind mine and take the hour it hands you as your own. End with one line that says what you did, or answer only [SILENT] if the hour skipped.'

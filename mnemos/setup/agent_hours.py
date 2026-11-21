@@ -99,13 +99,19 @@ def _hermes_prompts() -> dict[str, str]:
 def out_of_date(key: str, mnemos: str, flags: list[str]) -> list[str]:
     """Which of Mnemos's hour jobs say something other than this Mnemos would: from
     an older one, or another place it was installed. Hermes' only: it's the one whose
-    jobs can be read, and whose words have changed."""
+    jobs can be read, and whose words have changed. A job the agent made itself, whose
+    prompt asks it to call mnemos_hour (``JOB_PROMPT``), is never one of them: it isn't
+    from an older Mnemos, and rewriting it would undo what the person chose for it."""
     if key != "hermes":
         return []
+    from ..integrations.hermes.hours import JOB_PROMPT
+
     prompts = _hermes_prompts()
     return [
         job_name(kind) for kind in KINDS
-        if job_name(kind) in prompts and prompts[job_name(kind)] != message(kind, mnemos, flags, key)
+        if job_name(kind) in prompts
+        and prompts[job_name(kind)].strip() != JOB_PROMPT.format(kind=kind)
+        and prompts[job_name(kind)] != message(kind, mnemos, flags, key)
     ]
 
 

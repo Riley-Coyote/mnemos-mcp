@@ -299,13 +299,15 @@ def _scope_namespace(db: Path):
 # ── Quiet hours: off until chosen, and setup asks nothing ──
 
 
+# "Next session" (QH-3): true for a fresh memory, one added to an agent that
+# already knows the person, and an agent that already had Mnemos.
 OFF_LINE = (
-    "Quiet hours: off. They're time between sessions that's the agent's own; it will tell "
-    "you about them in its first session and set up only the ones you want. To see them "
-    "now: mnemos --agent-id nova hours"
+    "Quiet hours: off. They're the agent's own time between sessions; in its next session "
+    "it will tell you about them and set up only the ones you want. To see them now: "
+    "mnemos --agent-id nova hours"
 )
 AGENT_LINE = (
-    "  If you're an agent setting Mnemos up for someone: don't turn them on now. Your first "
+    "  If you're an agent setting Mnemos up for someone: don't turn them on now. Your next "
     "session with this memory walks them through each one."
 )
 
@@ -328,7 +330,7 @@ def test_at_a_terminal_setup_asks_nothing_and_schedules_no_hour(tmp_path, launch
 
 def test_without_a_terminal_setup_tells_the_agent_not_to_turn_them_on(tmp_path, launchd, claude, capsys):
     """An agent setting Mnemos up for someone runs without a terminal: the
-    hours are left for the agent's first session to walk the person through
+    hours are left for the agent's next session to walk the person through
     (tests/test_memory_carries_from_the_first_session.py)."""
     assert _claude_code(tmp_path) == 0
 
