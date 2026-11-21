@@ -220,14 +220,18 @@ _SYSTEM_PATH = ("/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin")
 
 def hour_environment(
     *, claude_bin: str, mnemos_command: str, config_dir: str | None = None,
+    path: str | None = None,
 ) -> dict[str, str]:
     """What a quiet hour needs from its environment when no shell made it:
     a PATH holding the folder the claude command is in (an npm claude needs
     the node beside it), and both commands' absolute paths, which the runner
     reads before any PATH lookup (``MNEMOS_CLAUDE_BIN``,
     ``MNEMOS_LIFE_MNEMOS_BIN``). ``config_dir`` is the Claude login the hours
-    use (``CLAUDE_CONFIG_DIR``), when the person set one."""
-    folders = dict.fromkeys([str(Path(claude_bin).parent), *_SYSTEM_PATH])
+    use (``CLAUDE_CONFIG_DIR``), when the person set one. ``path`` is a PATH
+    the agent's other background jobs run with (``background_mnemos``): its
+    folders come after claude's, before the system's."""
+    carried = [folder for folder in (path or "").split(os.pathsep) if folder]
+    folders = dict.fromkeys([str(Path(claude_bin).parent), *carried, *_SYSTEM_PATH])
     environment = {
         "PATH": os.pathsep.join(folders),
         "MNEMOS_CLAUDE_BIN": claude_bin,
@@ -674,8 +678,13 @@ def plan(
     backend: str | None = None,
     hours: list[SchedulerJob] | None = None,
     hour_env: Mapping[str, str] | None = None,
+    hours_mnemos: str | None = None,
 ) -> dict:
     """Describe exactly what an install would do, without doing any of it.
+
+    The hours run ``hours_mnemos`` when it is given (the program this
+    agent's upkeep runs, ``background_mnemos``), else ``mnemos_command``,
+    as the upkeep does.
 
     ``entries`` are the upkeep jobs. ``hours`` are the quiet hours' entries,
     at ``hours``' times (their own by default), whether or not this install
@@ -701,8 +710,9 @@ def plan(
     home_env = home_environment()
 
     entries = [_entry(job, environment=home_env or None, **common) for job in selected]
+    hour_common = {**common, "mnemos_command": hours_mnemos or mnemos_command}
     hour_entries = [
-        _entry(job, environment={**(hour_env or {}), **home_env} or None, **common)
+        _entry(job, environment={**(hour_env or {}), **home_env} or None, **hour_common)
         for job in (hours if hours is not None else hour_jobs())
     ]
 
@@ -780,3 +790,94 @@ def installed_daily_at(blueprint: dict, entry: dict, crontab: str = "") -> tuple
     except (OSError, ValueError, KeyError, TypeError, StopIteration, plistlib.InvalidFileException):
         return None
     return None
+
+
+def _environment_line(value: str) -> tuple[str, str] | None:
+    """``KEY=VALUE`` from one systemd ``Environment=`` value, as
+    ``_systemd_value`` wrote it."""
+    try:
+        words = shlex.split(value)
+    except ValueError:
+        return None
+    if len(words) != 1 or "=" not in words[0]:
+        return None
+    key, _, found = words[0].replace("%%", "%").partition("=")
+    return key, found
+
+
+_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def installed_command(blueprint: dict, entry: dict, crontab: str = "") -> tuple[list[str], dict[str, str]] | None:
+    """The argv an installed job runs and the environment it sets, read from
+    what the install wrote (the plist, the service unit, or the crontab
+    line), or None when it can't be read."""
+    backend = blueprint["backend"]
+    try:
+        if backend == "launchd":
+            job = plistlib.loads(entry["path"].read_bytes())
+            argv = [str(word) for word in job.get("ProgramArguments") or []]
+            environment = job.get("EnvironmentVariables") or {}
+            return (argv, {str(k): str(v) for k, v in environment.items()}) if argv else None
+        if backend == "systemd":
+            service = next(path for path in entry["units"] if str(path).endswith(".service"))
+            argv: list[str] = []
+            environment: dict[str, str] = {}
+            for line in Path(service).read_text().splitlines():
+                if line.startswith("ExecStart="):
+                    argv = shlex.split(line.partition("=")[2])
+                elif line.startswith("Environment="):
+                    pair = _environment_line(line.partition("=")[2])
+                    if pair:
+                        environment[pair[0]] = pair[1]
+            return (argv, environment) if argv else None
+        for line in crontab.splitlines():
+            if not cron_marks(line, blueprint["agent_id"], entry["job"].name):
+                continue
+            command = line.rsplit(CRON_MARKER, 1)[0].split(None, 5)[5]
+            words = shlex.split(command, comments=False)
+            if ">>" in words:
+                words = words[:words.index(">>")]
+            if len(words) >= 3 and words[0] == "cd" and words[2] == "&&":
+                words = words[3:]
+            environment = {}
+            while words and _ASSIGNMENT.match(words[0]):
+                key, _, found = words.pop(0).partition("=")
+                environment[key] = found
+            return (words, environment) if words else None
+    except (OSError, ValueError, KeyError, TypeError, IndexError, StopIteration,
+            plistlib.InvalidFileException):
+        return None
+    return None
+
+
+def background_mnemos(agent_id: str, *, backend: str | None = None) -> dict | None:
+    """Which mnemos runs this agent's background jobs: the program its upkeep
+    job (``maintain``) runs, when that job is scheduled and the program is
+    there and can run, with the environment that job sets
+    (``{"command", "environment"}``). None otherwise, and then a job runs
+    the mnemos that scheduled it.
+
+    A person may have more than one Mnemos installed (a copy kept for the
+    scheduler, and another their sessions run; pipx and uv; an old path and a
+    new one). Without this, changing an hour from a session would rewrite
+    its job to run the session's copy, not the one the rest of its jobs run.
+    """
+    from .state import scheduled
+
+    backend = backend or detect_backend()
+    if backend == "unsupported":
+        return None
+    crontab = read_crontab() if backend == "crontab" else ""
+    blueprint = plan(agent_id=agent_id, mnemos_command="mnemos", has_model=False, backend=backend)
+    entry = next((e for e in blueprint["entries"] if e["job"].name == "maintain"), None)
+    if entry is None or not scheduled(agent_id, entry["job"], backend, crontab):
+        return None
+    found = installed_command(blueprint, entry, crontab)
+    if not found:
+        return None
+    argv, environment = found
+    program = argv[0]
+    if not (os.path.isabs(program) and os.path.isfile(program) and os.access(program, os.X_OK)):
+        return None
+    return {"command": program, "environment": environment}

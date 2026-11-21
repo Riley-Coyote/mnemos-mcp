@@ -1372,13 +1372,15 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     hour_plan = None
     if hours and command in ("install", "uninstall"):
         # All three, through the one way the hours change (``_hours_plan``):
-        # each at the time given, else the time it has.
+        # each at the time given, else the time it has. Install schedules the
+        # upkeep again with this mnemos, so the hours run this one too: the
+        # same program as the upkeep, as it is once this is done.
         on = command == "install"
         hour_plan = _hours_plan(
             args, {kind: on for kind in _state.HOUR_KINDS},
             at={kind: when for kind, when in zip(_state.HOUR_KINDS, (mine_at, ours_at, dream_at))
                 if when},
-            refresh=on,
+            refresh=on, follow_upkeep=not on,
         )
     blueprint = hour_plan["blueprint"] if hour_plan and "blueprint" in hour_plan else _blueprint(args)
     backend = blueprint["backend"]
@@ -1408,25 +1410,30 @@ def _blueprint(
     ours_at: tuple[int, int] | None = None,
     dream_at: tuple[int, int] | None = None,
     backend: str | None = None,
+    jobs_mnemos: dict | None = None,
 ) -> dict:
     """What would be scheduled for this command's scope (``scheduler.plan``).
 
     With ``hours``, the quiet hours' environment is found now, the claude
     command and the Claude login, because a job started in the background
     finds neither. Without a claude command they can't be scheduled
-    (``hours_ready`` is false)."""
+    (``hours_ready`` is false). The hours run the mnemos in ``jobs_mnemos``
+    (``scheduler.background_mnemos``) when it is given, with the PATH it
+    carries; else this command's own, as the upkeep does."""
     from .setup import scheduler
 
     scope = _cli_scope(args)
     mnemos_command = _mnemos_command()
+    hours_mnemos = (jobs_mnemos or {}).get("command") or mnemos_command
     hour_env = None
     if hours:
         claude = scheduler.find_claude()
         if claude:
             hour_env = scheduler.hour_environment(
                 claude_bin=claude,
-                mnemos_command=mnemos_command,
+                mnemos_command=hours_mnemos,
                 config_dir=os.environ.get("CLAUDE_CONFIG_DIR") or None,
+                path=((jobs_mnemos or {}).get("environment") or {}).get("PATH"),
             )
     return scheduler.plan(
         agent_id=scope.agent_id,
@@ -1435,6 +1442,7 @@ def _blueprint(
         hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at, dream_at=dream_at),
         hour_env=hour_env,
         backend=backend,
+        hours_mnemos=hours_mnemos,
     )
 
 
@@ -1729,10 +1737,18 @@ def _hours_plan(
     minutes: dict[str, int] | None = None,
     online: dict[str, bool] | None = None,
     refresh: bool = False,
+    follow_upkeep: bool = True,
 ) -> dict:
     """What turning the hours in ``turn`` on (True) or off (False) would do
     for this command's scope, doing none of it. Hours not in ``turn`` are
     left exactly as they are.
+
+    An hour's job runs the same mnemos as this agent's upkeep job, when that
+    one is scheduled and its program can run (``scheduler.background_mnemos``),
+    so an hour changed from a session that runs another copy of Mnemos still
+    runs the copy the rest of its jobs run; else the mnemos running this.
+    ``follow_upkeep`` is false only where this same command schedules the
+    upkeep again with the mnemos running it (``daemon install --hours``).
 
     An hour turned on starts at ``at``'s time for it, else the time it is
     scheduled at now, else the time remembered for it, else its default. Its
@@ -1775,6 +1791,8 @@ def _hours_plan(
         args, hours=any(step.get("reschedule") for step in steps.values()),
         mine_at=times.get("mine"), ours_at=times.get("ours"), dream_at=times.get("dream"),
         backend=backend,
+        jobs_mnemos=scheduler.background_mnemos(scope.agent_id, backend=backend)
+        if follow_upkeep else None,
     )
     crontab = _read_crontab_safe() if backend == "crontab" else ""
     entries = {entry["job"].name.removeprefix("hour-"): entry for entry in blueprint["hours"]}
