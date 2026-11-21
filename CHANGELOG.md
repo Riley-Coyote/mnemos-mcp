@@ -2,11 +2,61 @@
 
 ## Unreleased
 
-More fixes inside Hermes: the rest of what Nous's review of the catalog entry found
-(NousResearch/hermes-agent#151540), beyond the two 0.6.7 took, and what three more reads of the
-plugin found after it. A few fixes reach every agent, listed under "Everywhere": a correction
-that names its memory by id, and the upkeep process. Nothing else changes outside Hermes; a read
-of every change against the release before it, run both ways, found nothing else.
+Quiet hours are off until you choose them, one at a time, and an hour goes online only if you
+let it. Every agent's first session now shows its person around, and an agent that already had
+Mnemos tells them what's new. Then more fixes inside Hermes: the rest of what Nous's review of the
+catalog entry found (NousResearch/hermes-agent#151540), beyond the two 0.6.7 took, and what three
+more reads of the plugin found after it. A few of those reach every agent, listed under
+"Everywhere": a correction that names its memory by id, and the upkeep process. Beyond those, the
+Hermes fixes change nothing outside Hermes; a read of every change against the release before
+it, run both ways, found nothing else.
+
+### Quiet hours, chosen one by one
+
+- **Off until you choose them.** Setup no longer asks about the quiet hours or turns any on. It
+  says in one line whether they're on, and in its next session the agent tells you about each and
+  sets up only the ones you want. Through 0.6.7 a terminal's question turned all three on with
+  Enter, an agent running setup was told yes was the default, and since 0.6.1 `mnemos connect
+  claude-code` ended with two lines that contradicted each other. Hours already on stay on, at
+  their times. An app that sets Mnemos up and counts on the hours being on turns them on itself:
+  `mnemos hours on all --write`, or `mnemos daemon install --hours --write` as before.
+- **Each hour on its own.** `mnemos hours` shows each one: on or off, when, for how long, online
+  or not. `mnemos hours on|off HOUR [--at HH:MM] [--minutes N] [--online|--offline] --write`
+  changes one at a time (HOUR is mine, ours, dream or all); without `--write` it says what would
+  change and changes nothing, and `mnemos hours keep --write` keeps them as they are. The page's
+  Settings has a row for each, with its own switch, its start, its length and, for the own hour
+  and our hour, whether it may go online; Save changes only what you changed. Through 0.6.7 one
+  switch turned all three on or off, and changing one time scheduled all three again. `mnemos
+  daemon install --hours` now keeps the times the hours have instead of resetting them, and the
+  length shown is the length an hour runs for, `life.minutes.<kind>` in Mnemos's config included.
+- **Offline unless you choose.** The own hour and our hour can search and read the web only when
+  you turn that on for that hour; a dream never can. Through 0.6.7 the own hour could always
+  search the web and read any page (its shell can't reach the network). An own hour scheduled
+  before this release keeps the web it had while it stays scheduled; turned off and on again, it's
+  offline until you choose. Each hour is told in a line whether it can go online, its record lists
+  every search it made and every page it read, and the page's Hours tab shows them. `mnemos life
+  --dry-run` says whether an hour would be online, and with which tools.
+- **Every agent's first session shows its person around.** It ends with a short tour: what the
+  agent will remember and how, that what isn't used fades unless they ask it to always remember,
+  and the page where they can see all of it, answer its notes, and correct anything or let it go.
+  An agent that already knew the person gives the same tour: the memory is new to them. Where
+  Mnemos sets the hours (Claude Code, and inside Hermes), the quiet hours follow, one at a time,
+  each as it is now and the choice entirely theirs, then the page. The agent is told to say it
+  would like the time only if it would.
+- **An agent that already had Mnemos tells its person what's new**, in its wake and in
+  `mnemos_context`, with each hour as it is now, until they answer or it has been shown in three
+  sessions. A no to the quiet hours from before this release counts as the answer: they aren't
+  asked again.
+- **Inside Hermes, each hour the agent makes is limited to its memory.** It makes the hours the
+  person wants with Hermes's own `cronjob_manage`, each job naming the tools it may use
+  (`enabled_toolsets`: the memory's, the day's conversations for our hour, and the web only where
+  chosen), so Hermes itself holds the hour to them, and it keeps the answer with `mnemos_hour`'s
+  new `chosen`. A job it finds that isn't limited, such as one made with `hermes cron create`,
+  which runs with every tool Hermes gives a scheduled job, the web among them, is described as it
+  is, and the agent offers to remake it limited. `mnemos connect hermes` no longer rewrites a job
+  the agent made, and its `--hours` says its jobs aren't limited to the memory. The page's
+  Settings shows each hour as Hermes has it, only to read, and its Jev panel, which can't apply
+  there, is gone.
 
 ### Inside Hermes: what leaves, and whose it is
 
@@ -108,14 +158,13 @@ of every change against the release before it, run both ways, found nothing else
   model. It is for a quiet-hour job, or for when
   the person asks for it; where the hour can't be prepared (Windows) it says so and changes
   nothing, and where it can't be handed (a store locked or damaged) it says why in a sentence of
-  its own. A catalog install's first session no longer says quiet hours aren't offered: the agent
-  asks the person once, in that first session only (a no is kept nowhere), what they are, what
-  they cost and where what it reads goes, and with a yes makes three Hermes scheduled jobs with
-  Hermes's own `cronjob_manage`, which it is told to look for behind Hermes's tool search, where
-  Hermes keeps it by default (or gives the person the three `hermes cron create` lines in the
-  README). They run at the usual hours, only while Hermes's
-  gateway runs, and each is saved and sent to nobody. Mnemos makes no job itself. They need macOS
-  or Linux: on Windows the first session says they aren't offered.
+  its own. A catalog install's first session no longer says quiet hours aren't offered: it offers
+  them one at a time, as under "Quiet hours, chosen one by one" above, and the agent makes the
+  ones the person wants with Hermes's own `cronjob_manage`, which it is told to look for behind
+  Hermes's tool search, where Hermes keeps it by default (or gives the person the `hermes cron
+  create` lines in the README). They run only while Hermes's gateway runs, and each is saved and
+  sent to nobody. Mnemos makes no job itself. They need macOS or Linux: on Windows the first
+  session says they aren't offered.
 - **A long paste of markup no longer holds up recall.** The pattern that takes Hermes's
   `<memory-context>` off a message tried every `<` against everything after it: 51,000 characters
   of them took 3.7 seconds, on every message, while Hermes waited for its recall. It's one pass
@@ -300,8 +349,9 @@ differently, except that an unknown command's sentence now lists every command.
 - **`summary`** gives what each part counts, the notes not yet read, the
   questions waiting on the person, and a `change_token` that changes only when
   something shown does (0.13 s on 3,000 memories).
-- **`read`, `hours` and `shared`**: mark the agent's notes read, turn the quiet
-  hours on or off and at what times, and add to, correct or let go of the shared
+- **`read`, `hours` and `shared`**: mark the agent's notes read, set each quiet
+  hour on its own (on or off, when, for how long, and whether it may go online; the
+  older request for all three still works), and add to, correct or let go of the shared
   notebook, each through the page's own code, with its limits and sentences. Jev
   stays on the page: its setting takes a key, and the interface takes none.
 - **`--as-person`** makes every write the person's, whatever the shell says.
