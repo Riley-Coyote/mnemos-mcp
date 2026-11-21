@@ -335,13 +335,25 @@ def hour_settings(agent_id: str) -> dict[str, dict]:
     return {kind: _settings(kept, kind, mine_scheduled) for kind in HOUR_KINDS}
 
 
+def _chosen_minutes(kept: dict, kind: str) -> int | None:
+    minutes = _recorded(kept, kind).get("minutes")
+    return minutes if _minutes_ok(minutes) else None
+
+
+def chosen_minutes(agent_id: str, kind: str) -> int | None:
+    """The minutes the person chose for this hour, or None when they chose
+    none or what is kept isn't a length an hour can have. ``hour_settings``
+    fills in the default; this says only what was chosen."""
+    return _chosen_minutes(_kept(agent_id), kind)
+
+
 def _settings(kept: dict, kind: str, mine_scheduled) -> dict:
     recorded = _recorded(kept, kind)
     at = parse_clock(recorded.get("at")) or DEFAULT_AT[kind]
-    minutes = recorded.get("minutes")
+    minutes = _chosen_minutes(kept, kind)
     return {
         "at": clock_text(at),
-        "minutes": minutes if _minutes_ok(minutes) else DEFAULT_MINUTES[kind],
+        "minutes": DEFAULT_MINUTES[kind] if minutes is None else minutes,
         "online": _online(kept, kind, mine_scheduled),
     }
 

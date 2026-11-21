@@ -293,6 +293,28 @@ def test_an_hours_minutes_come_first_from_what_is_passed_then_down(db, home, mon
     assert budget("ours", agent_id=AGENT)[0] / 60 == state.DEFAULT_MINUTES["ours"]
 
 
+def test_the_minutes_the_person_chose_are_read_in_one_place(home, monkeypatch):
+    from mnemos import life
+
+    assert state.chosen_minutes(AGENT, "mine") is None
+    assert state.hour_settings(AGENT)["mine"]["minutes"] == state.DEFAULT_MINUTES["mine"]
+    state.record_hour(AGENT, "mine", minutes=25)
+    assert state.chosen_minutes(AGENT, "mine") == 25
+    assert state.chosen_minutes(AGENT, "ours") is None
+    assert state.hour_settings(AGENT)["mine"]["minutes"] == 25
+    # A length no hour can have, written by hand, is no choice.
+    for bad in (500, 0, "25", 25.0, True, None):
+        (state.hours_dir(AGENT) / state.CHOICE_FILE).write_text(
+            json.dumps({"hours": {"mine": {"minutes": bad}}}))
+        assert state.chosen_minutes(AGENT, "mine") is None, bad
+        assert state.hour_settings(AGENT)["mine"]["minutes"] == state.DEFAULT_MINUTES["mine"], bad
+    # And the budget asks the public reader, nothing else.
+    asked = []
+    monkeypatch.setattr(state, "chosen_minutes", lambda agent_id, kind: asked.append((agent_id, kind)) or 12)
+    assert life.budget("ours", agent_id=AGENT)[0] / 60 == 12
+    assert asked == [(AGENT, "ours")]
+
+
 def test_the_persons_minutes_reach_the_hour_that_runs(db, monkeypatch):
     from mnemos import life
 

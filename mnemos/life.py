@@ -631,16 +631,6 @@ def _above_zero(value, *, whole: bool):
     return number if number > 0 else None
 
 
-def _chosen_minutes(agent_id, kind):
-    """The minutes the person chose for this hour (``mnemos hours on HOUR
-    --minutes N``, the page's Settings), or None when they chose none: only
-    what was recorded, not the default ``state.hour_settings`` fills in."""
-    if not agent_id:
-        return None
-    minutes = state._recorded(state._kept(agent_id), kind).get("minutes")
-    return minutes if state._minutes_ok(minutes) else None
-
-
 def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
            agent_id=None) -> tuple[float, int, str]:
     """What one hour may spend: ``(seconds, tokens, "")``, or with the third
@@ -650,7 +640,7 @@ def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
     (``mnemos life --max-minutes``, ``--max-tokens``); a host app's budget for
     the one hour it runs, MNEMOS_HOUR_MINUTES and MNEMOS_HOUR_TOKEN_CEILING;
     for minutes, what the person chose for this agent's hour (``agent_id``;
-    ``_chosen_minutes``); Mnemos's config, ``life.minutes.<kind>`` and
+    ``state.chosen_minutes``); Mnemos's config, ``life.minutes.<kind>`` and
     ``life.token_ceiling.<kind>``; DEFAULT_MINUTES and DEFAULT_TOKEN_CEILING.
     A host app gives a new mind a gentler cap this way, and the defaults stay
     as they were. A setting that isn't a number above zero (a whole one, for
@@ -678,7 +668,8 @@ def budget(kind, *, max_minutes=None, max_tokens=None, max_seconds=None,
 
     if max_seconds is None:
         max_seconds = first(max_minutes, MINUTES_SETTING, "minutes", DEFAULT_MINUTES[kind],
-                            "a number of minutes", False, _chosen_minutes(agent_id, kind)) * 60
+                            "a number of minutes", False,
+                            state.chosen_minutes(agent_id, kind) if agent_id else None) * 60
     max_tokens = first(max_tokens, TOKEN_CEILING_SETTING, "token_ceiling",
                        DEFAULT_TOKEN_CEILING[kind], "a whole number of tokens", True)
     return max_seconds, max_tokens, " ".join(wrong)
