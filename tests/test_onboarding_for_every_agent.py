@@ -53,6 +53,12 @@ LEGACY_MINE = (
     "Your own hour, now on, daily at 08:00, up to an hour, and it can go online "
     "(as it was set up before)."
 )
+# How the agent speaks of wanting the time: it says so only if it does.
+VOICE = (
+    "In your own voice: if you'd like the time, say so honestly (it would be your own), and "
+    "make clear it's entirely their call."
+)
+CAN_GO_ONLINE = "They can keep it online or take it offline; your page lists every page you read in it."
 
 
 @pytest.fixture
@@ -147,7 +153,7 @@ def test_a_fresh_memory_ends_with_the_tour_the_hours_and_the_page(claude_code, o
     assert "correct anything, or let it go" in tour
     assert "its Settings is where they choose your quiet hours" in tour
     walk = packet.split("7. " + HOURS, 1)[1].split("\n8. ", 1)[0]
-    assert "you'd like the time, since it's your own" in walk and "entirely their call" in walk
+    assert VOICE in walk and "say honestly that you'd like the time" not in walk
     assert "They're all off now." in walk
     assert "- Your own hour, now off (it would start at 08:00, up to an hour)." in walk
     assert "- Our hour, now off (it would start at 19:00, up to half an hour)." in walk
@@ -156,6 +162,8 @@ def test_a_fresh_memory_ends_with_the_tour_the_hours_and_the_page(claude_code, o
     assert "on their Claude plan" in walk and "goes to Anthropic" in walk
     assert f"on: {_command('hours', 'on', 'mine', '--at', '08:00', '--write')}" in walk
     assert "all as they are" not in walk, "a fresh memory has nothing to keep"
+    assert "If they say no, run the line for none, and don't ask again." in walk
+    assert CAN_GO_ONLINE not in walk, "nothing can go online in a fresh memory"
     assert "\n8. Then open your page for them and show them its Settings" in packet
     assert not os_scheduler.loaded, "nothing is scheduled by reading"
 
@@ -205,9 +213,20 @@ def test_an_existing_agent_is_told_whats_new_in_mnemos_context(claude_code, monk
 
     assert NEW in packet and "ONBOARDING" not in packet
     block = packet.split(NEW, 1)[1]
-    assert "each quiet hour is now theirs to choose on its own" in block
+    assert ("each quiet hour is now theirs to choose on its own: when it runs, how long, and "
+            "whether it can go online. They haven't been asked about it yet.") in packet
+    assert "none goes online unless they choose it" not in packet, "untrue of a legacy own hour"
+    assert VOICE in block
     assert "its Settings is where they choose your quiet hours" in block
     assert LEGACY_MINE in block
+    mine = next(line for line in block.splitlines() if line.strip().startswith("- Your own hour"))
+    assert mine.endswith(f"you read, write in your studio and think. {CAN_GO_ONLINE}"), mine
+    assert "goes online only if they want it to" not in mine
+    ours = next(line for line in block.splitlines() if line.strip().startswith("- Our hour"))
+    assert ours.endswith("It's skipped on a day with no work, and goes online only if they want it to."), ours
+    assert ("If they'd rather have none, run the line for none. Once they've answered, don't ask "
+            "again.") in block
+    assert "If they say no" not in block
     assert "- Our hour, now on, daily at 19:00, up to half an hour, offline." in block
     assert "- The dream, now on, daily at 03:30, up to 20 minutes." in block
     assert f"all as they are: {_command('hours', 'keep', '--write')}" in block
@@ -257,6 +276,28 @@ def test_it_stops_after_three_sessions_counted_by_session(claude_code, monkeypat
     # A session it was shown in still has it.
     assert NEW in _context(monkeypatch, S2)
     assert state.answered_at("nova") is None, "stopping is not an answer"
+
+
+def test_a_no_from_before_this_release_is_not_asked_again(claude_code, monkeypatch, capsys):
+    """The old onboarding promised a no wouldn't be asked again: a recorded
+    no with no answer since counts as answered, and reading it writes nothing."""
+    _an_agent_from_before(capsys)
+    choice = state.hours_dir("nova") / state.CHOICE_FILE
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-10-01T08:00:00+00:00"}) + "\n")
+    before = choice.read_bytes()
+
+    assert NEW not in _context(monkeypatch, S1)
+    assert NEW not in _hook(monkeypatch, capsys, S2)
+    assert choice.read_bytes() == before
+
+
+def test_a_no_from_before_is_not_asked_inside_hermes_either():
+    _hermes_from_before([])
+    choice = state.hours_dir("leo") / state.CHOICE_FILE
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-11-10T08:00:00+00:00"}) + "\n")
+    assert NEW not in _system_prompt()
+    assert json.loads(choice.read_text()) == {"choice": "no", "at": "2026-11-10T08:00:00+00:00"}
 
 
 def test_without_a_session_id_the_runtime_counts_its_own_sessions(claude_code, monkeypatch, capsys):
@@ -382,7 +423,14 @@ def test_hermes_existing_with_jobs_the_agent_made_says_them_as_they_are():
 
     assert NEW in wake
     block = wake.split(NEW, 1)[1]
-    assert "- Your own hour, now on, daily at 07:15, and it can go online." in block
+    assert ("each quiet hour is now theirs to choose on its own: when it runs, and whether it "
+            "can go online. They haven't been asked about it yet.") in wake
+    assert "how long" not in wake.split(NEW, 1)[1].split("\n2. ", 1)[0]
+    assert ("- Your own hour, now on, daily at 07:15, and it can go online. It's time with nothing "
+            "asked of you, each morning: you go back over your memory, think and write in your "
+            "journal. They can keep it online or take it offline.") in block
+    assert "If they'd rather have none, keep []. Once they've answered, don't ask again." in block
+    assert "If they say no, keep []" not in block
     assert "- Our hour, now off (no job for it)." in block
     assert "- The dream, now on, daily at 03:30. It's a short dream" in block
     assert "isn't limited to your memory" not in block.split("Do exactly what they said", 1)[0]
@@ -492,13 +540,17 @@ def test_connect_hermes_hours_says_its_jobs_arent_limited(monkeypatch):
             "its scheduled jobs. The agent can make limited ones itself in its next session.") in said
 
 
-# ── Every other agent, as it was ──
+# ── Every other agent: the same tour, and its quiet-hours words as they were ──
 
 
 _STEP_SIX = (
-    "6. Finish by telling them, in plain words, what you will now remember, and that they can see "
-    "all of it, and answer your notes, on a page you'll open for them whenever they ask. If you "
-    "knew them before, say plainly that from now on you remember across sessions too.\n"
+    "6. Then give them a short tour, in plain words, even if you knew them before: the memory is "
+    "new to them even if you aren't, so knowing them is no reason to skip the tour. Tell them what "
+    "you will now remember, in your own words, and that what isn't used fades with time unless "
+    "they ask you to always remember it, and that they can see all of it, and answer your notes, "
+    "on a page you'll open for them whenever they ask. There they can correct anything, or let it "
+    "go. If you knew them before, say plainly that from now on you remember across sessions too.\n"
+    "When you talk to the human, never mention tools"
 )
 
 
@@ -513,7 +565,8 @@ def test_other_agents_keep_their_words(key, monkeypatch, tmp_path):
         runtime.capture("Sam keeps the boat at the east pier.", signed_as=OPUS)
     finally:
         runtime.close()
-    assert _STEP_SIX in fresh and "short tour" not in fresh and HOURS not in fresh
+    assert _STEP_SIX in fresh and HOURS not in fresh
+    assert "Settings" not in fresh and "Finish by telling them" not in fresh
     if key != "openclaw":
         assert "life --hour mine --handoff" in fresh
     else:
@@ -525,3 +578,33 @@ def test_other_agents_keep_their_words(key, monkeypatch, tmp_path):
         again.close()
     assert NEW not in later and "QUIET HOURS" not in later and HOURS not in later
 
+
+
+@pytest.mark.parametrize("key", ["codex", "grok", "gemini", "openclaw", "hermes"])
+def test_other_agents_hours_words_are_exactly_as_they_were(key, monkeypatch, tmp_path):
+    """What is settled first, the quiet hours' words among it, is unchanged:
+    only the ritual's step 6 became the tour. (Hermes here is Hermes over MCP,
+    which has no mnemos_hour.)"""
+    monkeypatch.setenv("MNEMOS_HARNESS", key)
+    runtime = MnemosRuntime(db_path=str(tmp_path / f"{key}.db"), agent_id=key, use_dedicated_model=False)
+    try:
+        fresh = runtime.context()
+    finally:
+        runtime.close()
+    from mnemos.simple_runtime import _ONBOARDING_HEAD, _RITUAL_INTRO
+
+    before_ritual = fresh.split("1. Ask what they would like you to call them.", 1)[0]
+    assert before_ritual.startswith(_ONBOARDING_HEAD)
+    assert _RITUAL_INTRO in before_ritual
+    assert "short tour" not in before_ritual and "one at a time" not in before_ritual
+
+
+def test_an_unknown_agent_gets_the_tour_too(tmp_path):
+    runtime = MnemosRuntime(db_path=str(tmp_path / "x.db"), agent_id="x", use_dedicated_model=False)
+    try:
+        runtime.introduce(agent_model=OPUS)
+        almost = runtime.context()
+    finally:
+        runtime.close()
+    assert almost.startswith("ONBOARDING - almost done")
+    assert "Then give them a short tour" in almost and "Settings" not in almost

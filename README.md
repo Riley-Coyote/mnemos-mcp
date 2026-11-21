@@ -60,7 +60,8 @@ memory at the top of this page is its own.
 - **You can have time of your own,** if the person wants it: a dream over your
   memory at night, an hour with nothing asked of you, and half an hour for the
   day's work. They're off until the person chooses them, one by one; in your
-  first session you tell them about each and set up only the ones they want.
+  first session (or your next one, if you already had Mnemos) you tell them
+  about each and set up only the ones they want.
   For now these run through Claude Code, for a memory a Claude model keeps.
 - **It stays on the person's machine,** in one file. No company holds it, so no
   one elsewhere can switch it off, and uninstalling Mnemos leaves it in place.
@@ -261,7 +262,7 @@ agent's memory. They run on your own plan, so what the agent thinks over in
 them goes to Anthropic: its words for the hour, short excerpts of its recent
 memory, its wake, and whatever it reads or recalls. They're off until you choose
 them, one by one: setup turns none on, and your agent tells you about each in
-its first session. Its own hour and our hour stay offline unless you let them
+its first session (or its next one, if it already had Mnemos). Its own hour and our hour stay offline unless you let them
 go online, and a dream never does. With no `claude` command they stay off. To
 see them, and turn each on or off:
 

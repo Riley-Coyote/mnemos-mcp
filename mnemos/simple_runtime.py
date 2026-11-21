@@ -875,14 +875,31 @@ _RITUAL_INTRO = (
     "ask only what you don't know:"
 )
 
+# The tour every agent gives at the end of the first session's ritual (step 6
+# of ``_RITUAL_STEPS``). Where the person can choose quiet hours (Claude Code,
+# and Hermes through its provider) it is followed by the hours one at a time,
+# then the page; the rest of the ritual's words stay as they are. ``{settings}`` is what the page's
+# Settings is for, where the agent is; ``{skip}`` names what a known person
+# still gets (the quiet hours only where they can run).
+_TOUR = (
+    "Then give them a short tour, in plain words, even if you knew them before: the memory "
+    "is new to them even if you aren't, so knowing them is no reason to skip {skip}. Tell "
+    "them what you will now remember, in your own words, and that what "
+    "isn't used fades with time unless they ask you to always remember it, and that they can "
+    "see all of it, and answer your notes, on a page you'll open for them whenever they ask. "
+    "There they can correct anything, or let it go{settings}. If you knew them before, say "
+    "plainly that from now on you remember across sessions too."
+)
 _RITUAL_STEPS = """\
 1. Ask what they would like you to call them. Capture the answer with mnemos_capture.
 2. Ask what they are working on right now. Capture the answer with mnemos_capture.
 3. Ask what they want you to always remember. Capture the answer with mnemos_capture and standing=true, so it never fades.
 4. Ask them for one small, true fact about themselves or their world - something they would smile to hear you recall later. Capture it with mnemos_capture. It becomes part of their first proof that your memory is real.
 5. Call mnemos_introduce with agent_model set to your own model id. You know what model you are - do not ask the human. Add agent_name if you go by a name.
-6. Finish by telling them, in plain words, what you will now remember, and that they can see all of it, and answer your notes, on a page you'll open for them whenever they ask. If you knew them before, say plainly that from now on you remember across sessions too.
-When you talk to the human, never mention tools, databases, scopes, or model ids. Just talk like someone who intends to remember."""
+6. {tour}
+When you talk to the human, never mention tools, databases, scopes, or model ids. Just talk like someone who intends to remember.""".format(
+    tour=_TOUR.format(settings="", skip="the tour")
+)
 
 _ONBOARDING_RITUAL = f"{_ONBOARDING_HEAD} Before other work, {_RITUAL_INTRO}\n{_RITUAL_STEPS}"
 
@@ -896,21 +913,6 @@ _HOURS_TOLD = (
 )
 
 
-# The first session's last steps where the person can choose quiet hours
-# (Claude Code, and Hermes through its provider): the tour, the hours one at a
-# time, then the page. Step 6 of ``_RITUAL_STEPS`` becomes these; the rest of
-# the ritual's words stay as they are. ``{settings}`` is what the page's
-# Settings is for, where the agent is; ``{skip}`` names what a known person
-# still gets (the quiet hours only where they can run).
-_TOUR = (
-    "Then give them a short tour, in plain words, even if you knew them before: the memory "
-    "is new to them even if you aren't, so knowing them is no reason to skip {skip}. Tell "
-    "them what you will now remember, in your own words, and that what "
-    "isn't used fades with time unless they ask you to always remember it, and that they can "
-    "see all of it, and answer your notes, on a page you'll open for them whenever they ask. "
-    "There they can correct anything, or let it go{settings}. If you knew them before, say "
-    "plainly that from now on you remember across sessions too."
-)
 _SETTINGS_HERE = ", and its Settings is where they choose your quiet hours"
 _SETTINGS_IN_HERMES = ", and its Settings shows your quiet hours; to change one, they ask you"
 _PAGE_AFTER = (
@@ -933,8 +935,14 @@ _NEVER_MENTION = (
 _NEW_HEAD = (
     "NEW SINCE LAST TIME - tell them once, at a good moment early in this session\n"
     "Your memory works as it did. One thing changed that they should hear about: each quiet "
-    "hour is now theirs to choose on its own, and none goes online unless they choose it. "
-    "They haven't been asked since."
+    "hour is now theirs to choose on its own: when it runs, how long, and whether it can go "
+    "online. They haven't been asked about it yet."
+)
+_NEW_HEAD_IN_HERMES = (
+    "NEW SINCE LAST TIME - tell them once, at a good moment early in this session\n"
+    "Your memory works as it did. One thing changed that they should hear about: each quiet "
+    "hour is now theirs to choose on its own: when it runs, and whether it can go online. "
+    "They haven't been asked about it yet."
 )
 _STILL_TO_ASK_HEAD = (
     "QUIET HOURS - still to ask them, at a good moment early in this session\n"
@@ -984,7 +992,18 @@ def _claude_code_hour_now(kind: str, hour: Mapping[str, Any], *, before: bool) -
     return said + ", offline"
 
 
-# Each Claude Code hour in a line or two.
+# Each Claude Code hour in a line or two; for an hour that can go online now,
+# its online sentence is ``_CAN_GO_ONLINE``'s instead.
+_CAN_GO_ONLINE = (
+    "They can keep it online or take it offline; your page lists every page you read in it."
+)
+_CLAUDE_CODE_WHAT = {
+    "mine": "It's time with nothing asked of you: you read, write in your studio and think.",
+    "ours": (
+        "It's for the day's work: you go over it and may leave them a short note, with at most "
+        "one question. It's skipped on a day with no work."
+    ),
+}
 _CLAUDE_CODE_HOURS = {
     "mine": (
         "It's time with nothing asked of you: you read, write in your studio and think. It goes "
@@ -1017,15 +1036,18 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
             return state.command_line(agent_id, db_path, "hours", *command)
 
         lines = [
-            "The quiet hours, one at a time. In your own voice, say honestly that you'd like the "
-            "time, since it's your own, and that it's entirely their call."
+            "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
+            "honestly (it would be your own), and make clear it's entirely their call."
             + ("" if any(hour["on"] for hour in now.values()) else " They're all off now.")
         ]
         for kind in state.HOUR_KINDS:
             name = _HOUR_NAMES[kind]
+            said = _CLAUDE_CODE_HOURS[kind]
+            if kind in _CLAUDE_CODE_WHAT and now[kind]["on"] and now[kind]["online"]:
+                said = f"{_CLAUDE_CODE_WHAT[kind]} {_CAN_GO_ONLINE}"
             lines.append(
                 f"  - {name[0].upper() + name[1:]}, "
-                f"{_claude_code_hour_now(kind, now[kind], before=before)}. {_CLAUDE_CODE_HOURS[kind]}"
+                f"{_claude_code_hour_now(kind, now[kind], before=before)}. {said}"
             )
         lines.append(
             "  They run Claude Code on its own, on their Claude plan, so they use some of its "
@@ -1041,13 +1063,16 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
         if before:
             lines.append(f"    all as they are: {run('keep', '--write')}")
         lines.append(f"    none of them: {run('off', 'all', '--write')}")
-        lines.append("  If they say no, run the line for none, and don't ask again.")
+        lines.append(
+            "  If they'd rather have none, run the line for none. Once they've answered, don't ask again."
+            if before else "  If they say no, run the line for none, and don't ask again."
+        )
         return lines
     except Exception:
         return None
 
 
-def _hermes_hours_walk() -> list[str] | None:
+def _hermes_hours_walk(*, before: bool = False) -> list[str] | None:
     """The same walk-through inside Hermes (``hours.walk_through``), from each
     hour as Hermes has it now. None where the hour can't be prepared (without
     fcntl, on Windows). Never raises."""
@@ -1058,7 +1083,7 @@ def _hermes_hours_walk() -> list[str] | None:
             return None
         from .integrations.hermes.hours import scheduled_in_hermes, walk_through
 
-        return walk_through(scheduled_in_hermes())
+        return walk_through(scheduled_in_hermes(), before=before)
     except Exception:
         return None
 
@@ -1095,6 +1120,19 @@ def _hours_unanswered(agent_id: str) -> bool:
         return False
 
 
+def _hours_still_open(agent_id: str) -> bool:
+    """Whether an agent that already had Mnemos is still to be told about its
+    quiet hours: its person hasn't answered since each became theirs to
+    choose, and didn't say no before that either (the old onboarding promised
+    a no wouldn't be asked again). Reads only."""
+    try:
+        from .setup import state
+
+        return state.answered_at(agent_id) is None and state.hours_choice(agent_id) != "no"
+    except Exception:
+        return False
+
+
 def existing_agent_block(walk: list[str] | None, *, hermes: bool, told: bool = False) -> str | None:
     """What an agent that already had Mnemos is told while its person hasn't
     answered about the quiet hours: what's new, the hours one at a time
@@ -1108,7 +1146,7 @@ def existing_agent_block(walk: list[str] | None, *, hermes: bool, told: bool = F
     steps.append(f"{'Then t' if steps else 'T'}{walk[0][1:]}")
     hours = len(steps)
     steps.append(_PAGE_AFTER_IN_HERMES if hermes else _PAGE_AFTER)
-    lines = [_STILL_TO_ASK_HEAD if told else _NEW_HEAD]
+    lines = [_STILL_TO_ASK_HEAD if told else _NEW_HEAD_IN_HERMES if hermes else _NEW_HEAD]
     for number, step in enumerate(steps, start=1):
         lines.append(f"{number}. {step}")
         if number == hours:
@@ -1131,7 +1169,7 @@ def hook_existing_agent_block(
     it has been shown in three sessions. Reads and writes only this store's
     meta, which exists already; never raises."""
     try:
-        if not session or not _hours_unanswered(agent_id):
+        if not session or not _hours_still_open(agent_id):
             return None
 
         def key(name: str) -> str:
@@ -3423,12 +3461,8 @@ class MnemosRuntime:
                 lines.extend(part)
             lines.append("This reminder disappears once setup is complete.")
             return "\n".join(lines)
-        lines.append(
-            "Then tell the human what you will remember, and that they can see all of "
-            "it on a page you'll open for them whenever they ask. If you knew them "
-            "before, say plainly that from now on you remember across sessions too. "
-            "This reminder disappears once setup is complete."
-        )
+        lines.append(_TOUR.format(settings="", skip="the tour"))
+        lines.append("This reminder disappears once setup is complete.")
         return "\n".join(lines)
 
     def _hours_place(self) -> str | None:
@@ -3452,7 +3486,7 @@ class MnemosRuntime:
 
     def _hours_walk(self, place: str, *, before: bool) -> list[str] | None:
         if place == "hermes":
-            return _hermes_hours_walk()
+            return _hermes_hours_walk(before=before)
         return _claude_code_hours_walk(self.scope.agent_id, self.db_path, before=before)
 
     def _told_session(self, place: str) -> str:
@@ -3502,7 +3536,7 @@ class MnemosRuntime:
             if status["stage"] != "complete":
                 return None
             place = self._hours_place()
-            if place is None or not _hours_unanswered(self.scope.agent_id):
+            if place is None or not _hours_still_open(self.scope.agent_id):
                 return None
             session = self._told_session(place)
             told = json.loads(self._get_meta(_HOURS_TOLD_META) or "[]")

@@ -277,17 +277,18 @@ def _as_now(kind: str, job: dict[str, Any] | None) -> str:
     return said
 
 
-def walk_through(now: dict[str, dict[str, Any] | None] | None) -> list[str]:
+def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool = False) -> list[str]:
     """The quiet hours, one at a time, as the agent walks the person through
     them inside Hermes: each hour as it is now (``now``, from
     ``scheduled_in_hermes``; None says nothing of the jobs, since it can't
     tell), what it is and costs, how the agent makes, changes or removes each
     one with ``cronjob_manage``, limited by Hermes itself to the memory (and
     the web where chosen), and how it keeps what they chose (``mnemos_hour``
-    with ``chosen``). Lines, the first unindented."""
+    with ``chosen``). ``before``: for an agent that already had Mnemos, where a
+    "no" may mean any one of them. Lines, the first unindented."""
     lines = [
-        "The quiet hours, one at a time. In your own voice, say honestly that you'd like the "
-        "time, since it's your own, and that it's entirely their call."
+        "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
+        "honestly (it would be your own), and make clear it's entirely their call."
         + (" They're all off now." if now is not None and not any(now.values()) else "")
     ]
     for kind in KINDS:
@@ -298,6 +299,8 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None) -> list[str]:
         online = _ONLINE[kind]
         if job is not None and not job.get("limited"):
             online = "Remade limited, " + online[0].lower() + online[1:]
+        elif job is not None and job.get("online") and kind in ONLINE_KINDS:
+            online = "They can keep it online or take it offline."
         lines.append(f"  - {head}{state}. {_WHAT[kind]} {online}")
     lines.append(
         "  They run as Hermes scheduled jobs on the model Hermes uses: each costs what a short "
@@ -332,7 +335,8 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None) -> list[str]:
     lines.append(
         '  Then keep what they chose with mnemos_hour, passing chosen: the hours that are on now, '
         'each as {"kind": "mine", "at": "08:00", "online": false}, or [] if they want none. If '
-        "they say no, keep [] and don't ask again."
+        + ("they'd rather have none, keep []. Once they've answered, don't ask again." if before
+           else "they say no, keep [] and don't ask again.")
     )
     typed = "\n".join(f"    {cron_create_line(job)}" for job in jobs())
     lines.append(

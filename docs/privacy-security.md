@@ -113,10 +113,11 @@ a link or a belief, and none of its words are kept.
 The quiet hours are the agent's time between sessions: up to an hour a day of
 its own, half an hour for the day's work, skipped on a day with none, and a
 short dream each night. They're off until you choose them, one by one. Setup
-turns none on and asks nothing; the agent's first session tells you what each
-is and what it costs, and sets up only the ones you want. Each has its own
-switch, start time and length (`mnemos hours`, or the Settings on the agent's
-page). Your choices are kept in `~/.mnemos/hours/<agent>/choice.json`. An app
+turns none on and asks nothing; the agent's first session (or its next one, if
+it already had Mnemos) tells you what each is and what it costs, and sets up
+only the ones you want. Each has its own switch, start time and length
+(`mnemos hours`, or the Settings on the agent's page). Your choices are kept in
+`~/.mnemos/hours/<agent>/choice.json`. An app
 that runs Mnemos for you may turn them on.
 
 **Offline unless you choose.** Its own hour and our hour go online only when
