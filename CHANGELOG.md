@@ -14,9 +14,10 @@ it, run both ways, found nothing else.
 ### Quiet hours, chosen one by one
 
 - **Off until you choose them.** Setup no longer asks about the quiet hours or turns any on. It
-  says in one line whether they're on, and in its next session the agent tells you about each and
-  sets up only the ones you want. Through 0.6.7 a terminal's question turned all three on with
-  Enter, an agent running setup was told yes was the default, and since 0.6.1 `mnemos connect
+  says in one line whether they're on. In Claude Code, and inside Hermes, the agent then tells you
+  about each in its next session and sets up only the ones you want; with any other agent, the
+  line says where to see and choose them. Through 0.6.7 a terminal's question turned all three on
+  with Enter, an agent running setup was told yes was the default, and since 0.6.1 `mnemos connect
   claude-code` ended with two lines that contradicted each other. Hours already on stay on, at
   their times. An app that sets Mnemos up and counts on the hours being on turns them on itself:
   `mnemos hours on all --write`, or `mnemos daemon install --hours --write` as before.
@@ -29,6 +30,9 @@ it, run both ways, found nothing else.
   switch turned all three on or off, and changing one time scheduled all three again. `mnemos
   daemon install --hours` now keeps the times the hours have instead of resetting them, and the
   length shown is the length an hour runs for, `life.minutes.<kind>` in Mnemos's config included.
+  An hour's job runs the same copy of Mnemos as the agent's upkeep, whichever copy turned it on.
+  For a Hermes agent's memory, `mnemos hours` shows the hours as Hermes has them and changes
+  nothing: there the agent changes them.
 - **Offline unless you choose.** The own hour and our hour can search and read the web only when
   you turn that on for that hour; a dream never can. Through 0.6.7 the own hour could always
   search the web and read any page (its shell can't reach the network). An own hour scheduled
@@ -57,6 +61,11 @@ it, run both ways, found nothing else.
   the agent made, and its `--hours` says its jobs aren't limited to the memory. The page's
   Settings shows each hour as Hermes has it, only to read, and its Jev panel, which can't apply
   there, is gone.
+- **`mnemos connect`'s preview ends with the command that does what it showed.** Through 0.6.7 it
+  ended with `mnemos connect <agent> --write` whatever flags you gave, so `connect hermes --hours`,
+  run again as it said, left the hours out. Now every flag you gave stays. Its hours step says
+  where each job's reply goes: Hermes keeps it on this machine, and OpenClaw sends it to no chat or
+  channel.
 
 ### Inside Hermes: what leaves, and whose it is
 
