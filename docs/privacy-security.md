@@ -171,12 +171,18 @@ where that session goes:
 | Codex | the prompt and what the agent recalls and writes, in its session | OpenAI | no |
 | Grok | the same | xAI | no |
 | Gemini CLI | the same | Google | no |
-| Hermes | the same, in a session its own cron starts | the provider Hermes is set to use | only if you ran `connect hermes --hours --write` |
+| Hermes | the same, in a session its own cron starts | the provider Hermes is set to use | only the hours you chose for the agent to make, or if you ran `connect hermes --hours --write` |
 | OpenClaw | the same, in a turn its own cron starts | the provider OpenClaw is set to use | only if you ran `connect openclaw --hours --write` |
 
 Such an hour is not walled in the way Claude Code's is: the agent has its usual
 tools, and the prompt asks it to keep to what the hour is for (a dream: no
-files, no shell, no web). Each cron job's reply goes nowhere: Hermes
+files, no shell, no web). Inside Hermes the agent makes each hour you choose
+with Hermes's own scheduler, and lists the tools the job may use
+(`enabled_toolsets`): its memory's, the day's conversations for our hour, and
+the web only for an hour you chose to have online. Hermes itself holds the job
+to that list. Jobs made in a terminal (`connect hermes --hours --write`, or
+`hermes cron create`) aren't limited that way: they run with every tool Hermes
+gives its scheduled jobs. Each cron job's reply goes nowhere: Hermes
 `--deliver local` keeps it on this machine, and OpenClaw `--no-deliver` sends it
 to no chat or channel. Turn them off with `mnemos connect <agent> --no-hours
 --write`; `mnemos uninstall --write` removes the jobs too.

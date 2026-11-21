@@ -440,6 +440,18 @@ def _hours_gaps(h: hs.Harness) -> list[str]:
     ]
 
 
+# Where each job's reply goes (``agent_hours``: Hermes's ``--deliver local``,
+# OpenClaw's ``--no-deliver``), and what a Hermes job made this way can use.
+_REPLIES = {
+    "hermes": "each reply is kept on this machine and sent to no one",
+    "openclaw": "each reply is sent to no chat or channel",
+}
+_HERMES_NOT_LIMITED = (
+    "Jobs made this way aren't limited to the memory: they run with every tool Hermes gives "
+    "its scheduled jobs. The agent can make limited ones itself in its next session."
+)
+
+
 def _hours_steps(h: hs.Harness, scope, args) -> list[tuple[str, object]]:
     """The quiet hours step, only when asked for (--hours) or turned off (--no-hours),
     or when the jobs already there need newer words."""
@@ -454,10 +466,11 @@ def _hours_steps(h: hs.Harness, scope, args) -> list[tuple[str, object]]:
     if getattr(args, "hours", False):
         if h.hours is None or not ah.AGENTS.get(h.key):
             return []
-        return [(
-            f"schedule the quiet hours in {h.label}'s own scheduler (3 jobs; replies go nowhere)",
-            lambda: _hours_on(h, scope),
-        )]
+        said = (f"schedule the quiet hours in {h.label}'s own scheduler (3 jobs; "
+                f"{_REPLIES.get(h.key, 'replies go to no one')})")
+        if h.key == "hermes":
+            said += f". {_HERMES_NOT_LIMITED}"
+        return [(said, lambda: _hours_on(h, scope))]
     if getattr(args, "no_hours", False) and h.hours is not None and ah.AGENTS.get(h.key):
         return [(f"remove the quiet hours from {h.label}'s scheduler", lambda: _hours_off(h, scope))]
     return []
@@ -469,11 +482,7 @@ def _hours_on(h: hs.Harness, scope) -> tuple[bool, str]:
         state.record_hours_choice(scope.agent_id, "yes")
         if h.key == "hermes":
             message += "\nHermes fires them only while its gateway runs: hermes gateway install"
-            message += (
-                "\nJobs made this way aren't limited to the memory: they run with every tool "
-                "Hermes gives its scheduled jobs. The agent can make limited ones itself in its "
-                "next session."
-            )
+            message += f"\n{_HERMES_NOT_LIMITED}"
     return ok, message
 
 

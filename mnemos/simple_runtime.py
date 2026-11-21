@@ -967,6 +967,21 @@ _HOURS_TOLD_AT_MOST = 3
 _HOUR_NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
 
 
+def hours_walked_through(harness: str | None, *, inside_hermes: bool = False) -> bool:
+    """Whether this agent's person is walked through the quiet hours, one at a
+    time, at the end of the first session's ritual (and, for an agent that
+    already had Mnemos, in its next session): in Claude Code, where ``mnemos
+    hours`` makes each, and in Hermes through its own provider
+    (``inside_hermes``), where the agent makes each with Hermes's scheduler
+    and keeps the answer with ``mnemos_hour``. No other agent is: Claude
+    Desktop, Codex, Grok, Gemini, OpenClaw, or Hermes over MCP, which has no
+    ``mnemos_hour``. The onboarding and setup's line both ask this."""
+    key = (harness or "").strip().lower()
+    if key == "hermes":
+        return inside_hermes
+    return key == "claude-code"
+
+
 def _scoped_meta_key(agent_id: str, person_id: str, project_scope: str, name: str) -> str:
     """A scope's meta key (``MnemosRuntime._meta_key``)."""
     return f"simple:{agent_id}:{person_id}:{project_scope}:{name}"
@@ -3472,7 +3487,7 @@ class MnemosRuntime:
         through its provider: the agent makes each with Hermes's own tool and
         keeps the choice with ``mnemos_hour``), or None for every other agent,
         whose words are as they were."""
-        if (self.harness or "").strip().lower() == "hermes":
+        if hours_walked_through(self.harness, inside_hermes=True):
             return "hermes"
         try:
             from .setup import harnesses
@@ -3480,9 +3495,8 @@ class MnemosRuntime:
             harness = harnesses.identify(declared=self.harness, client_name=self.client_name)
         except Exception:
             return None
-        if harness is not None:
-            return "claude-code" if harness.key == "claude-code" else None
-        return "claude-code" if in_claude_code() else None
+        key = harness.key if harness is not None else "claude-code" if in_claude_code() else None
+        return key if hours_walked_through(key) else None
 
     def _hours_walk(self, place: str, *, before: bool) -> list[str] | None:
         if place == "hermes":

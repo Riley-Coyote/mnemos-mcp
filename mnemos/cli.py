@@ -2161,9 +2161,13 @@ def _hours_on_words(hours: dict[str, dict]) -> str:
 
 def _quiet_hours_setup(blueprint: dict, args: argparse.Namespace) -> None:
     """Setup's one line about the quiet hours. Setup asks nothing about them
-    and turns none on: the agent tells the person about them in its next
-    session and sets up only the ones they want. Hours already on are said,
-    and stay as they are; so does a no the person gave."""
+    and turns none on. Where the agent walks its person through them
+    (``hours_walked_through``: Claude Code), it says the agent will, in its
+    next session; elsewhere (Claude Desktop) it says where to see and choose
+    them. Hours already on are said, and stay as they are; so does a no the
+    person gave."""
+    from .simple_runtime import hours_walked_through
+
     agent_id = blueprint["agent_id"]
     see = _for_this_memory(args, "hours")
     hours = _state.hours_now(agent_id)
@@ -2175,6 +2179,15 @@ def _quiet_hours_setup(blueprint: dict, args: argparse.Namespace) -> None:
         return
     if _state.hours_choice(agent_id) == "no":
         print(f"Quiet hours: off, as chosen. To see or change them: {see}")
+        return
+    # The client this setup is for: `hooks install <client>`, or `mcp install
+    # claude`, which is Claude Desktop's.
+    client = {"claude": "claude-desktop"}.get(getattr(args, "client", "") or "", getattr(args, "client", ""))
+    if not hours_walked_through(client):
+        print(
+            "Quiet hours: off. They're the agent's own time between sessions; to see them "
+            f"or choose them: the Settings on the agent's page, or {see}"
+        )
         return
     print(
         "Quiet hours: off. They're the agent's own time between sessions; in its next "
