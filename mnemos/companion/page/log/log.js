@@ -55,7 +55,9 @@ function head() {
     return d.getTime();
   };
   const next = [...(life.schedule || [])].sort((a, b) => b.loaded - a.loaded || soon(a) - soon(b))[0];
-  v.push(next ? `<span>next hour ${Number.isFinite(soon(next)) ? `at ${clock(new Date(soon(next)))}` : 'scheduled'}${next.loaded ? '' : ', but not loaded'}</span>` : '<span>hours not scheduled</span>');
+  // inside Hermes the schedule is Hermes's own jobs; when they can't be read, Settings says so, and this says nothing
+  const untold = life.quietHours?.where === 'hermes' && !life.quietHours.hours;
+  if (!untold) v.push(next ? `<span>next hour ${Number.isFinite(soon(next)) ? `at ${clock(new Date(soon(next)))}` : 'scheduled'}${next.loaded ? '' : ', but not loaded'}</span>` : '<span>hours not scheduled</span>');
   const made = at(life.made), stale = Date.now() - made.getTime() > STALE_AFTER;
   v.push(`<span class="fresh">${stale ? `stopped updating ${ago(Date.now() - made.getTime())}` : `read ${ago(Date.now() - made.getTime())}`}</span>`);
   const el = $('verify'); el.innerHTML = v.join(''); el.classList.toggle('stale', stale);

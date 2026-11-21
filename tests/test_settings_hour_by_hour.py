@@ -296,3 +296,43 @@ def test_mnemos_interface_changes_hours_the_same_way(launchd, claude, store):
     answer = interface.answer(json.dumps({"id": 4, "command": "hours", "on": False}))
     assert "result" in answer, answer
     assert launchd.loaded == set()
+
+
+def test_inside_hermes_the_schedule_is_the_jobs_that_run(store, tmp_path, monkeypatch):
+    """The sidebar's "next hour at …" reads ``schedule``; inside Hermes it was
+    always empty, so it said "hours not scheduled" under rows that said On.
+    Now it is the jobs that run, from the reader the rows come from."""
+    from mnemos.integrations.hermes.hours import JOB_PROMPT
+
+    home = tmp_path / "hermes"
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    _in_hermes(monkeypatch)
+    _jobs(home,
+          {"name": "mnemos-hour-mine", "schedule": {"kind": "cron", "expr": "0 8 * * *"},
+           "prompt": JOB_PROMPT.format(kind="mine"), "enabled_toolsets": ["memory", "no_mcp"]},
+          {"name": "mnemos-hour-ours", "schedule": {"kind": "every", "minutes": 90, "display": "every 90m"},
+           "prompt": JOB_PROMPT.format(kind="ours")},
+          {"name": "mnemos-hour-dream", "schedule": {"kind": "cron", "expr": "30 3 * * *"},
+           "prompt": JOB_PROMPT.format(kind="dream"), "paused_at": "2026-11-20T10:00:00Z"})
+    with serving() as server:
+        assert life(server)["schedule"] == [
+            {"label": "mnemos-hour-mine", "when": {"Hour": 8, "Minute": 0}, "kind": "mine", "loaded": True},
+            {"label": "mnemos-hour-ours", "when": None, "kind": "ours", "loaded": True},
+        ]
+    _jobs(home, {"name": "mnemos-hour-dream", "schedule": {"kind": "cron", "expr": "30 3 * * *"},
+                 "prompt": JOB_PROMPT.format(kind="dream"), "enabled": False})
+    with serving() as server:
+        document = life(server)
+    assert document["schedule"] == [] and document["quietHours"]["hours"]["dream"]["on"] is False
+
+
+def test_inside_hermes_jev_says_it_does_not_apply(store, tmp_path, monkeypatch):
+    """Jev judges Claude Code's cue and is never set inside Hermes, where the
+    page read none of its numbers and showed "cut to 0 characters". The page
+    is told it doesn't apply there, and anywhere else it still does."""
+    with serving() as server:
+        assert "applies" not in life(server)["jev"]
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
+    _in_hermes(monkeypatch)
+    with serving() as server:
+        assert life(server)["jev"] == {"on": False, "key": False, "env": False, "applies": False}

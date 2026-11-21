@@ -598,7 +598,7 @@ export class Room {
       : life.quietHours?.where === 'hermes' ? this.hermesHoursPanel() : this.hoursPanel();
     return `<section class="settings">
       ${hoursPanel}
-      ${who.onlyReadIn ? '' : this.jevPanel()}
+      ${who.onlyReadIn || life.jev?.applies === false ? '' : this.jevPanel()}
       ${this.tellPanel()}
       <div class="belief set">
         <div class="set-title">Where it lives</div>
@@ -724,7 +724,7 @@ export class Room {
     const row = ([k, label, line]) => {
       const job = hours ? hours[k] : undefined, on = !!job?.on;
       const state = !hours ? 'Can’t tell' : on ? 'On' : 'Off';
-      const when = job && /^\d\d:\d\d$/.test(job.at || '') ? job.at : null;
+      const hm = job && /^(\d\d):(\d\d)$/.exec(job.at || ''), when = hm ? clock(new Date(2000, 0, 1, +hm[1], +hm[2])) : null;
       const details = on ? `<div class="set-more">
           <div class="set-sub"><span class="set-s">${when ? 'Starts at' : 'Runs on Hermes’s schedule'}</span><span class="set-v">${esc(when || job.at || '')}</span></div>
           ${job.limited && !job.online && k === 'dream' ? '<div class="set-sub"><span class="set-s">Never online.</span></div>'
