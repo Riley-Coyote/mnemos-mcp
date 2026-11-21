@@ -695,9 +695,11 @@ class Exporter:
 
         if _served_from_a_host():
             # Never Mnemos's to use there (its key is in a file, and a host's
-            # plugin reads no key from one), so the page looks for neither the
-            # switch nor the key file.
-            return {"on": False, "key": False, "env": False}
+            # plugin reads no key from one, and the cue it judges is Claude
+            # Code's), so the page looks for neither the switch nor the key
+            # file, and says Jev doesn't apply here (``applies``) rather than
+            # show a panel of numbers it never read.
+            return {"on": False, "key": False, "env": False, "applies": False}
         try:
             status = jev.status()
         except Exception:
@@ -707,18 +709,29 @@ class Exporter:
                 "messageChars": status["message_chars"], "candidates": status["candidates"],
                 "lineChars": status["line_chars"]}
 
-    def schedule(self) -> list[dict]:
+    def schedule(self, quiet: dict | None = None) -> list[dict]:
         """Whether anything wakes the hours on its own: a LaunchAgent, a
         systemd user timer (what `mnemos daemon install --hours` writes where
         systemd runs) or a crontab line that runs them for this agent. ``when``
         is the time of day when the schedule names one, else None.
 
-        Served from inside a host (Hermes), nothing is looked for: the hours
-        aren't set from there, and the page reads nobody's LaunchAgents, timers
-        or crontab, and starts no program to ask whether one is loaded. Until
-        0.6.7 it did, each time the page was read."""
+        Served from inside a host (Hermes), the page reads nobody's
+        LaunchAgents, timers or crontab, and starts no program to ask whether
+        one is loaded (until 0.6.7 it did, each time the page was read). There
+        what wakes an hour is Hermes's own job, so the schedule is the jobs that
+        run, from the one reader Settings shows them from (``quiet``, as
+        ``quiet_hours`` made it): nothing when none runs, or when they can't
+        be read (Settings then says it can't tell)."""
         found = []
         if _served_from_a_host():
+            hours = (quiet if quiet is not None else self.quiet_hours()).get("hours") or {}
+            for kind in ("mine", "ours", "dream"):
+                job = hours.get(kind)
+                if not job or not job.get("on"):
+                    continue
+                clock = re.fullmatch(r"(\d\d):(\d\d)", str(job.get("at") or ""))
+                at = {"Hour": int(clock.group(1)), "Minute": int(clock.group(2))} if clock else None
+                found.append({"label": f"mnemos-hour-{kind}", "when": at, "kind": kind, "loaded": True})
             return found
         agents = _launch_agents()
         for plist_path in sorted(agents.glob("*.plist")) if agents.is_dir() else []:
@@ -770,6 +783,42 @@ class Exporter:
             found.append({"label": "crontab", "when": at, "kind": kind, "loaded": True})
         return found
 
+    def quiet_hours(self) -> dict:
+        """Each quiet hour as Settings shows it, one by one.
+
+        Here: ``{"where": "here", "hours": {kind: {"on", "at", "minutes",
+        "online"}}, "cant": sentence or None}``, each hour as it is on this
+        machine now (``state.hours_now``), and ``cant`` saying why none can be
+        turned on here, when none can.
+
+        Served from inside Hermes: ``{"where": "hermes", "hours": {kind: {"at",
+        "on", "online", "limited", "made_by"} or None}}``, each hour as
+        Hermes has it scheduled (``scheduled_in_hermes``: a kind with no job is
+        None), and ``"hours": None`` when its jobs can't be read, so the page
+        says it can't tell rather than "off". Reads only; never fails."""
+        if _served_from_a_host():
+            try:
+                from ..integrations.hermes.hours import scheduled_in_hermes
+
+                return {"where": "hermes", "hours": scheduled_in_hermes()}
+            except Exception:
+                logger.debug("could not read Hermes's scheduled jobs", exc_info=True)
+                return {"where": "hermes", "hours": None}
+        try:
+            from .. import cli
+            from ..setup import scheduler, state
+
+            hours = state.hours_now(self.scope.agent_id)
+            cant = None
+            if scheduler.detect_backend() == "unsupported":
+                cant = cli._NO_SCHEDULER
+            elif not scheduler.find_claude():
+                cant = f"None can be turned on here: {cli._NO_CLAUDE}."
+        except Exception:
+            logger.debug("could not read the quiet hours", exc_info=True)
+            return {"where": "here", "hours": None, "cant": None}
+        return {"where": "here", "hours": hours, "cant": cant}
+
     def export(self, now: datetime | None = None) -> tuple[dict, dict]:
         """The page's two documents, ``(life, memories)``. Writes nothing."""
         from ..shared_memory import notebook
@@ -798,6 +847,7 @@ class Exporter:
             hours = self.hours(files, reading)
         finally:
             conn.close()
+        quiet = self.quiet_hours()
         open_asks = [a for a in asks if not a["answered_at"]]
         by_kind: dict[str, int] = {}
         for ask in open_asks:
@@ -807,7 +857,8 @@ class Exporter:
             "made": iso(now),
             "identity": who,
             "hours": hours,
-            "schedule": self.schedule(),
+            "schedule": self.schedule(quiet),
+            "quietHours": quiet,
             "jev": self.jev(),
             "shared": shared,
             "journal": journal,

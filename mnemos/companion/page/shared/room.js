@@ -15,6 +15,16 @@ import { herbariumOf, lifeOf, lifeWords, mountLife } from './specimens.js';
 
 const LABEL = { shared: SHARED.title, log: 'Log', memories: 'Memories', beliefs: 'Beliefs', questions: 'Questions', journal: 'Journal', notes: 'Notes', hours: 'Hours', settings: 'Settings' };
 const PAGE = 60;
+/* the quiet hours, each its own row in Settings, in this order */
+const HOUR_ROWS = [
+  ['mine', 'Its own hour', 'An hour to itself, each morning.'],
+  ['ours', 'Our hour', 'Half an hour for the day’s work, each evening. Skipped on a day with no work.'],
+  ['dream', 'The dream', 'A short time each night, over its memory.'],
+];
+const LENGTHS = [10, 20, 30, 45, 60, 90, 120];
+const lengthWord = (n) => (n === 60 ? 'An hour' : n === 90 ? 'An hour and a half' : n === 120 ? 'Two hours' : `${n} minutes`);
+/* the settings a re-render must hand the keyboard back to */
+const HOUR_CONTROLS = ['hourOn', 'hourOnline', 'hoursTime', 'hourMinutes', 'hoursSave', 'hoursReset'];
 const SEEN_AFTER = 1200;                  // a note of its own is read once it has stayed on your screen this long
 
 export class Room {
@@ -80,6 +90,8 @@ export class Room {
     // a live redraw never takes the search box away from someone typing in it
     const typing = document.activeElement?.id === 'room-search' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
     const a = document.activeElement, typingIn = a?.dataset?.draft ? [a.dataset.draft, a.selectionStart, a.selectionEnd] : null;
+    const control = HOUR_CONTROLS.find((k) => a?.dataset?.[k] !== undefined);
+    const holding = control ? `[data-${control.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)}="${CSS.escape(a.dataset[control])}"]` : null;
     const list = () => ({ log: () => this.logHTML(), memories: () => this.memoriesHTML(), beliefs: () => this.beliefsHTML(), questions: () => this.questionsHTML(),
       journal: () => this.journalHTML(), notes: () => this.notesHTML(), hours: () => this.hoursHTML(), shared: () => this.sharedHTML(), settings: () => this.settingsHTML() }[this.s.tab]());
     // in the notebook a memory opens in the pane beside the list; in the mind's sheet, it takes the list's place
@@ -104,6 +116,8 @@ export class Room {
     if (typing && search) { search.focus({ preventScroll: true }); search.setSelectionRange(...typing); }
     const draft = typingIn && this.find(`[data-draft="${CSS.escape(typingIn[0])}"]`);
     if (draft) { draft.focus({ preventScroll: true }); draft.setSelectionRange(typingIn[1], typingIn[2]); }
+    const held = holding && this.find(holding);
+    if (held && !held.disabled) held.focus({ preventScroll: true });
     // a key being typed is set back as a value, never written into the page
     const key = this.jevKey && this.find('[data-jev-key]');
     if (key) { key.value = this.jevKey; const save = this.find('[data-jev-save]'); if (save && this.sending !== 'jev') save.disabled = false; }
@@ -125,7 +139,7 @@ export class Room {
   }
   /* a live redraw waits while you're writing, so nothing you type is lost or jumps */
   refresh() {
-    if ((this.bodyEl.contains(document.activeElement) || this.hooks.pane?.el.contains(document.activeElement)) && document.activeElement.matches('[data-draft], [data-jev-key]')) return;
+    if ((this.bodyEl.contains(document.activeElement) || this.hooks.pane?.el.contains(document.activeElement)) && document.activeElement.matches('[data-draft], [data-jev-key], [data-hours-time], [data-hour-minutes]')) return;
     this.render();
   }
 
@@ -504,7 +518,24 @@ export class Room {
     if (!life.hours.length) return '<p class="empty">No quiet hour has run yet. When hours are turned on, each one appears here as soon as it ends.</p>';
     return `<ul class="rows">${life.hours.map((h) => { const s = at(h.start), k = temperature(h);
       return `<li><button class="rowb" data-hour="${esc(h.id)}"><div class="meta"><span>${shortDay(s)}, ${clock(s)}</span><span class="k">${KIND[h.kind] || esc(h.kind)}</span>${h.practice ? '<span>practice</span>' : ''}<span class="${k > 0.06 ? 'warm' : ''}">${tempWord(k, h).toLowerCase()}</span></div>
-        <div class="q">${esc(trailSentence(h))}</div>${h.journal.length ? `<div class="ex">${esc(firstLine(h.journal[h.journal.length - 1].text, 200))}</div>` : ''}</button></li>`; }).join('')}</ul>`;
+        <div class="q">${esc(trailSentence(h))}</div>${h.journal.length ? `<div class="ex">${esc(firstLine(h.journal[h.journal.length - 1].text, 200))}</div>` : ''}</button>${this.webHTML(h)}</li>`; }).join('')}</ul>`;
+  }
+  /* what an hour that went online read and searched, as it recorded them: each page by its address, opening apart
+     from this one; an hour that could have gone online and didn't says nothing more */
+  webHTML(h) {
+    const web = h.web && typeof h.web === 'object' ? h.web : null;
+    const read = Array.isArray(web?.read) ? web.read.filter((u) => typeof u === 'string' && u) : [];
+    const searched = Array.isArray(web?.searched) ? web.searched.filter((q) => typeof q === 'string' && q) : [];
+    if (!read.length && !searched.length) return '';
+    const page = (u) => {
+      let url = null;
+      try { url = new URL(u); } catch { /* shown as written */ }
+      if (!url || !/^https?:$/.test(url.protocol)) return `<li><span class="web-u">${esc(u)}</span></li>`;
+      const shown = url.host + (url.pathname === '/' ? '' : url.pathname);
+      return `<li><a class="textlink web-u" href="${esc(url.href)}" target="_blank" rel="noopener noreferrer" title="${esc(url.href)}">${esc(shown)}</a></li>`;
+    };
+    return `<div class="web">${read.length ? `<div class="web-k">Read online</div><ul class="web-l">${read.map(page).join('')}</ul>` : ''}${
+      searched.length ? `<div class="web-k">Searched</div><ul class="web-l">${searched.map((q) => `<li><span class="web-q">${esc(q)}</span></li>`).join('')}</ul>` : ''}</div>`;
   }
 
   /* ---------- a memory, corrected in the person's words, or let go ----------
@@ -555,34 +586,19 @@ export class Room {
 
   /* ---------- settings: what's the person's to decide ---------- */
 
-  /* The quiet hours are the one setting that's yours: whether it has them, and when each starts. Everything else in
-     Mnemos tunes itself. What's set here is what `mnemos daemon install --hours` would do, on this machine. */
+  /* The quiet hours are the setting that's yours: each one on or off by itself, when it starts, how long it may last,
+     and whether it may go online (never the dream). Everything else in Mnemos tunes itself. One Save changes only what
+     you changed, the way `mnemos hours on|off … --write` does, on this machine. Inside Hermes they're Hermes's own
+     scheduled jobs: shown as Hermes has them, only to read. */
   settingsHTML() {
     const { who, life } = this.ctx();
-    const plan = life.schedule || [], at = (k) => plan.find((p) => p.kind === k);
-    const hhmm = (w) => (w ? `${String(w.Hour ?? 0).padStart(2, '0')}:${String(w.Minute ?? 0).padStart(2, '0')}` : '');
-    const DEFAULT = { mine: '08:00', ours: '19:00', dream: '03:30' };
-    const saved = { on: plan.length > 0, mine: hhmm(at('mine')?.when) || DEFAULT.mine, ours: hhmm(at('ours')?.when) || DEFAULT.ours, dream: hhmm(at('dream')?.when) || DEFAULT.dream };
-    const h = this.hours || saved, changed = JSON.stringify(h) !== JSON.stringify(saved);
-    const notice = this.notices.get('hours');
-    const off = plan.filter((p) => !p.loaded);
-    const row = (k, label, what) => `<label class="set-row"><span><span class="set-k">${label}</span><span class="set-d">${what}</span></span>
-      <input class="set-time" type="time" data-hours-time="${k}" value="${esc(h[k])}"${h.on ? '' : ' disabled'} aria-label="${label}, starts at"></label>`;
     const hoursPanel = who.unfiled ? `<div class="belief set"><div class="set-title">Quiet hours</div>
         <p class="set-d">${esc(who.name)}’s memory is from before quiet hours, so there’s nothing here to set. This page only reads it.</p></div>`
-      : who.onlyReadIn ? `<div class="belief set"><p class="set-d">${esc(onlyRead(who))}</p></div>` : null;
+      : who.onlyReadIn ? `<div class="belief set"><p class="set-d">${esc(onlyRead(who))}</p></div>`
+      : life.quietHours?.where === 'hermes' ? this.hermesHoursPanel() : this.hoursPanel();
     return `<section class="settings">
-      ${hoursPanel || `<div class="belief set">
-        <div class="set-head"><div><div class="set-title">Quiet hours</div>
-          <p class="set-d">Time between conversations that’s ${esc(who.name)}’s own: an hour a day to itself, half an hour for the day’s work, and a short time each night to dream over its memory. They run Claude on its own and use ${person(who) === 'you' ? 'your' : `${esc(person(who))}’s`} Claude plan.</p></div>
-          <button class="switch" type="button" role="switch" aria-checked="${h.on}" data-hours-on="${h.on ? 'off' : 'on'}"><span class="knob" aria-hidden="true"></span><span class="vh">Quiet hours</span></button></div>
-        <div class="set-rows">${row('mine', 'Its own hour', 'An hour to itself')}${row('ours', 'Our hour', 'Half an hour for the day’s work')}${row('dream', 'The dream', 'A short time each night')}</div>
-        ${off.length ? `<p class="set-d flag">${off.length === plan.length ? 'Scheduled, but not loaded: they won’t run until they are.' : `${plural(off.length, 'hour')} scheduled but not loaded.`}</p>` : ''}
-        <div class="acts"><span class="hint${notice ? ' flag' : ''}" aria-live="polite">${esc(notice || (changed ? 'Not saved yet.' : h.on ? 'Scheduled on this machine.' : 'Off. Nothing runs between conversations.'))}</span>
-          ${changed ? '<button class="cancel" type="button" data-hours-reset="1">Undo</button>' : ''}
-          <button class="send" type="button" data-hours-save="1"${changed && this.sending !== 'hours' ? '' : ' disabled'}>${this.sending === 'hours' ? 'Saving…' : 'Save'}</button></div>
-      </div>`}
-      ${who.onlyReadIn ? '' : this.jevPanel()}
+      ${hoursPanel}
+      ${who.onlyReadIn || life.jev?.applies === false ? '' : this.jevPanel()}
       ${this.tellPanel()}
       <div class="belief set">
         <div class="set-title">Where it lives</div>
@@ -637,22 +653,114 @@ export class Room {
         : `One quiet notification when ${esc(who.name)} leaves you a question, only while this page isn’t in front of you. Each question is told once, however many of its pages are open.`}</p></div>
       <button class="switch" type="button" role="switch" aria-checked="${on}" data-tell="${on ? 'off' : 'on'}"${denied ? ' disabled' : ''}><span class="knob" aria-hidden="true"></span><span class="vh">Tell me when it asks me something</span></button></div></div>`;
   }
-  currentHours() {
-    if (this.hours) return this.hours;
-    const plan = this.ctx().life.schedule || [], at = (k) => plan.find((p) => p.kind === k)?.when;
-    const hhmm = (w, d) => (w ? `${String(w.Hour ?? 0).padStart(2, '0')}:${String(w.Minute ?? 0).padStart(2, '0')}` : d);
-    return { on: plan.length > 0, mine: hhmm(at('mine'), '08:00'), ours: hhmm(at('ours'), '19:00'), dream: hhmm(at('dream'), '03:30') };
+  /* each hour as it is now, from the page's data: {kind: {on, at, minutes, online}}, or null if it couldn't be read */
+  savedHours() {
+    const hours = this.ctx().life.quietHours?.hours;
+    if (!hours) return null;
+    return Object.fromEntries(HOUR_ROWS.map(([k]) => {
+      const h = hours[k] || {};
+      return [k, { on: !!h.on, at: h.at || '', minutes: h.minutes, online: k !== 'dream' && !!h.online }];
+    }));
+  }
+  currentHours() { return JSON.parse(JSON.stringify(this.hours || this.savedHours())); }
+  /* what you changed, hour by hour, and only that: what Save sends */
+  hoursChanged(h = this.hours, saved = this.savedHours()) {
+    const changed = {};
+    if (!h || !saved) return changed;
+    for (const [k] of HOUR_ROWS) {
+      const now = h[k], was = saved[k], c = {};
+      if (now.on !== was.on) c.on = now.on;
+      if (now.on) {
+        if (now.at && now.at !== was.at) c.at = now.at;
+        if (now.minutes !== was.minutes) c.minutes = now.minutes;
+        if (k !== 'dream' && now.online !== was.online) c.online = now.online;
+      }
+      if (Object.keys(c).length) changed[k] = { on: now.on, ...c };
+    }
+    return changed;
+  }
+  hoursHint(h, changed, notice) {
+    if (notice) return notice;
+    if (Object.keys(changed).length) return 'Not saved yet.';
+    if (this.hoursSaid) return this.hoursSaid;
+    return HOUR_ROWS.some(([k]) => h[k].on) ? 'Scheduled on this machine.' : 'All off. Nothing runs between conversations.';
+  }
+  hoursPanel() {
+    const { who, life } = this.ctx();
+    const head = `<div class="set-title">Quiet hours</div>
+        <p class="set-d">Time between conversations that’s ${esc(who.name)}’s own: an hour a day to itself, half an hour for the day’s work, and a short time each night to dream over its memory. They run Claude on its own and use ${person(who) === 'you' ? 'your' : `${esc(person(who))}’s`} Claude plan.</p>`;
+    const saved = this.savedHours();
+    if (!saved) return `<div class="belief set">${head}<p class="set-d flag">The quiet hours couldn’t be read just now. The page looks again in a moment.</p></div>`;
+    const h = this.hours || saved, changed = this.hoursChanged(h, saved), dirty = Object.keys(changed).length > 0;
+    const notice = this.notices.get('hours'), busy = this.sending === 'hours', cant = life.quietHours?.cant;
+    const plan = life.schedule || [], off = plan.filter((p) => !p.loaded);
+    const row = ([k, label, line]) => {
+      const x = h[k], lengths = [...new Set([...LENGTHS, x.minutes].filter(Number.isFinite))].sort((m, n) => m - n);
+      const blocked = busy || (cant && !saved[k].on && !x.on);
+      const details = x.on ? `<div class="set-more">
+          <label class="set-sub"><span class="set-s">Starts at</span><input class="set-time" type="time" data-hours-time="${k}" value="${esc(x.at)}"${busy ? ' disabled' : ''} aria-label="${label}, starts at"></label>
+          <label class="set-sub"><span class="set-s">How long</span><span class="sortw"><select class="sort" data-hour-minutes="${k}"${busy ? ' disabled' : ''} aria-label="${label}, how long">${lengths.map((n) => `<option value="${n}"${n === x.minutes ? ' selected' : ''}>${lengthWord(n)}</option>`).join('')}</select></span></label>
+          ${k === 'dream' ? '<div class="set-sub"><span class="set-s">Never online.</span></div>'
+            : `<div class="set-sub"><span><span class="set-s">Can go online</span>${x.online ? '<span class="set-d">It can search and read the web in this hour. Every page it reads is listed in Hours.</span>' : ''}</span>
+          <button class="switch" type="button" role="switch" aria-checked="${x.online}" data-hour-online="${k}"${busy ? ' disabled' : ''}><span class="knob" aria-hidden="true"></span><span class="vh">${label}, can go online</span></button></div>`}
+        </div>` : '';
+      return `<div class="set-hour"><div class="set-row"><span><span class="set-k">${label}</span><span class="set-d">${line}</span></span>
+        <button class="switch" type="button" role="switch" aria-checked="${x.on}" data-hour-on="${k}"${blocked ? ' disabled' : ''}><span class="knob" aria-hidden="true"></span><span class="vh">${label}</span></button></div>${details}</div>`;
+    };
+    return `<div class="belief set">${head}
+        <div class="set-rows">${HOUR_ROWS.map(row).join('')}</div>
+        ${cant ? `<p class="set-d flag">${esc(cant)}</p>` : ''}
+        ${off.length ? `<p class="set-d flag">${off.length === plan.length ? 'Scheduled, but not loaded: they won’t run until they are.' : `${plural(off.length, 'hour')} scheduled but not loaded.`}</p>` : ''}
+        <div class="acts"><span class="hint${notice ? ' flag' : ''}" aria-live="polite">${esc(this.hoursHint(h, changed, notice))}</span>
+          <button class="cancel" type="button" data-hours-reset="1"${dirty && !busy ? '' : ' hidden'}>Undo</button>
+          <button class="send" type="button" data-hours-save="1"${dirty && !busy ? '' : ' disabled'}>${busy ? 'Saving…' : 'Save'}</button></div>
+      </div>`;
+  }
+  /* inside Hermes: each hour as Hermes has it scheduled, only to read. What its jobs say is the truth there; when they
+     can't be read, that's said, never "off" */
+  hermesHoursPanel() {
+    const { who, life } = this.ctx();
+    const hours = life.quietHours?.hours;
+    const row = ([k, label, line]) => {
+      const job = hours ? hours[k] : undefined, on = !!job?.on;
+      const state = !hours ? 'Can’t tell' : on ? 'On' : 'Off';
+      const hm = job && /^(\d\d):(\d\d)$/.exec(job.at || ''), when = hm ? clock(new Date(2000, 0, 1, +hm[1], +hm[2])) : null;
+      const details = on ? `<div class="set-more">
+          <div class="set-sub"><span class="set-s">${when ? 'Starts at' : 'Runs on Hermes’s schedule'}</span><span class="set-v">${esc(when || job.at || '')}</span></div>
+          ${job.limited && !job.online && k === 'dream' ? '<div class="set-sub"><span class="set-s">Never online.</span></div>'
+            : `<div class="set-sub"><span><span class="set-s">${job.online ? 'Can go online' : 'Offline'}</span>${job.online ? '<span class="set-d">It can search and read the web in this hour.</span>' : ''}</span></div>`}
+          ${job.limited ? '' : '<div class="set-sub"><span class="set-d set-d-k">Not limited to its memory: it runs with the tools Hermes gives every scheduled job.</span></div>'}
+        </div>` : '';
+      return `<div class="set-hour"><div class="set-row"><span><span class="set-k">${label}</span><span class="set-d">${line}</span></span>
+        <span class="set-state">${state}<span class="vh"> (${label})</span></span></div>${details}</div>`;
+    };
+    return `<div class="belief set">
+        <div class="set-title">Quiet hours</div>
+        <p class="set-d">Time between conversations that’s ${esc(who.name)}’s own: an hour a day to itself, half an hour for the day’s work, and a short time each night to dream over its memory. They run on the model Hermes uses, each costing what a short conversation with it costs, and only while Hermes’s gateway is running.</p>
+        <div class="set-rows">${HOUR_ROWS.map(row).join('')}</div>
+        ${hours ? '' : '<p class="set-d flag">Mnemos can’t read Hermes’s scheduled jobs just now, so it can’t say which of these are on.</p>'}
+        <p class="set-d set-foot">Hermes runs these as its own scheduled jobs. To change them, ask ${esc(who.name)}.</p>
+      </div>`;
   }
   async saveHours() {
-    const h = this.hours;
-    if (!h || this.sending || !this.hooks.send) return;
-    this.sending = 'hours'; this.notices.delete('hours'); this.render();
+    const changed = this.hoursChanged();
+    if (!Object.keys(changed).length || this.sending || !this.hooks.send) return;
+    this.sending = 'hours'; this.notices.delete('hours'); this.hoursSaid = ''; this.render();
     let answer;
-    try { answer = await this.hooks.send({ command: 'hours', on: h.on, mine: h.mine, ours: h.ours, dream: h.dream }); }
+    try { answer = await this.hooks.send({ command: 'hours', hours: changed }); }
     catch { answer = { error: 'It couldn’t be changed just now. Is `mnemos log` still running?' }; }
     this.sending = null;
-    if (answer?.result) this.hours = null; else this.notices.set('hours', answer?.error || 'It couldn’t be changed.');
+    if (answer?.result) { this.hours = null; this.hoursSaid = `Saved. ${answer.result}`; } else this.notices.set('hours', answer?.error || 'It couldn’t be changed.');
     this.render();
+  }
+  /* a time or a length set without a redraw, so the field keeps its focus: only Undo, Save and the hint change */
+  hoursEdited() {
+    this.notices.delete('hours'); this.hoursSaid = '';
+    const dirty = Object.keys(this.hoursChanged()).length > 0;
+    const save = this.find('[data-hours-save]'); if (save) save.disabled = !dirty || !!this.sending;
+    const undo = this.find('[data-hours-reset]'); if (undo) undo.hidden = !dirty;
+    const hint = save?.closest('.acts')?.querySelector('.hint');
+    if (hint) { hint.textContent = this.hoursHint(this.hours, this.hoursChanged(), null); hint.classList.remove('flag'); }
   }
 
   /* ---------- events ---------- */
@@ -698,9 +806,16 @@ export class Room {
       if (yes) { const id = yes.dataset.forgetYes; return this.memChange(id, { command: 'forget', memory_id: id, confirmed: true }); }
       const tellSw = e.target.closest('[data-tell]');
       if (tellSw) { const { who, life } = this.ctx(); return setTelling(who.agentId, tellSw.dataset.tell === 'on', life.notes).then(() => this.render()); }
-      const sw = e.target.closest('[data-hours-on]');
-      if (sw) { this.hours = { ...this.currentHours(), on: sw.dataset.hoursOn === 'on' }; this.notices.delete('hours'); return this.render(); }
-      if (e.target.closest('[data-hours-reset]')) { this.hours = null; this.notices.delete('hours'); return this.render(); }
+      const sw = e.target.closest('[data-hour-on], [data-hour-online]');
+      if (sw && !sw.disabled) {
+        const h = this.currentHours(), k = sw.dataset.hourOn || sw.dataset.hourOnline, what = sw.dataset.hourOn ? 'on' : 'online';
+        h[k][what] = !h[k][what]; this.hours = h; this.notices.delete('hours'); this.hoursSaid = '';
+        return this.render();
+      }
+      if (e.target.closest('[data-hours-reset]')) {
+        this.hours = null; this.notices.delete('hours'); this.render();
+        return this.find('[data-hour-on]')?.focus({ preventScroll: true });
+      }
       if (e.target.closest('[data-hours-save]')) return this.saveHours();
       const jevSw = e.target.closest('[data-jev-on]');
       if (jevSw) return this.jevSend({ on: jevSw.dataset.jevOn === 'on' });
@@ -715,7 +830,11 @@ export class Room {
       const k = e.target.closest('[data-qkind]'); if (k) { this.s.qkind = this.s.qkind === k.dataset.qkind ? 'all' : k.dataset.qkind; this.s.shown = PAGE; return this.render(); }
       const h = e.target.closest('[data-hour]'); if (h && this.hooks.hour) return this.hooks.hour(h.dataset.hour);
     });
-    body.addEventListener('change', (e) => { if (e.target.dataset?.sortSelect) { this.s.sort = e.target.value; this.s.shown = PAGE; this.render(); } });
+    body.addEventListener('change', (e) => {
+      if (e.target.dataset?.sortSelect) { this.s.sort = e.target.value; this.s.shown = PAGE; this.render(); }
+      const k = e.target.dataset?.hourMinutes;
+      if (k) { const h = this.currentHours(); h[k].minutes = Number(e.target.value); this.hours = h; this.hoursEdited(); }
+    });
     body.addEventListener('keydown', (e) => {
       // ⌘↩ or Ctrl↩ sends what you wrote
       if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && e.target.dataset?.draft) {
@@ -734,10 +853,8 @@ export class Room {
       }
       const time = e.target.dataset?.hoursTime;
       if (time) {
-        // the field keeps its focus: only the Save button and the hint change while you set a time
-        this.hours = { ...this.currentHours(), [time]: e.target.value };
-        const save = this.find('[data-hours-save]'); if (save) save.disabled = false;
-        const hint = this.find('.set .acts .hint'); if (hint) { hint.textContent = 'Not saved yet.'; hint.classList.remove('flag'); }
+        // the field keeps its focus: only Undo, Save and the hint change while you set a time
+        const h = this.currentHours(); h[time].at = e.target.value; this.hours = h; this.hoursEdited();
         return;
       }
       if (e.target.dataset?.sharedAuthor) { this.shared.author = e.target.value; this.shared.shown = 50; this.render(); this.find('[data-shared-author]')?.focus(); return; }

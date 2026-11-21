@@ -409,7 +409,7 @@ def test_a_hermes_agents_page_looks_at_nothing_else_on_the_machine(tmp_path, mon
         _call(provider, "mnemos_page")
         (page,) = provider_module._pages.values()
         life = json.loads(page.documents()[0])
-        assert life["schedule"] == [] and life["jev"] == {"on": False, "key": False, "env": False}
+        assert life["schedule"] == [] and life["jev"] == {"on": False, "key": False, "env": False, "applies": False}
         assert looked == [], f"the page looked at {looked}"
 
         llm.take_secrets_from(None)  # anywhere else the page says what runs the hours, as before

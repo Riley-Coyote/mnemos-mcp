@@ -333,6 +333,28 @@
 .switch[aria-checked="true"] .knob{transform:translateX(16px);background:#fff}
 .switch:focus-visible{outline:2px solid var(--focus);outline-offset:2px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+/* the quiet hours, one row each: its name, its line and its own switch; when it's on, what it gets, quietly beneath */
+.set-hour + .set-hour{margin-top:2px}
+.set-more{display:grid;gap:2px;margin:-4px 0 0;padding:0 var(--bleed) 10px}
+.set-sub{display:flex;justify-content:space-between;align-items:center;gap:var(--s4);min-height:36px}
+.set-s{display:block;color:var(--ink-2);font:400 var(--t-small)/18px var(--sans);letter-spacing:-.003em}
+.set-sub .set-d{display:block;margin-top:2px;font:400 var(--t-small)/18px var(--sans);letter-spacing:-.003em}
+.set-sub .set-d-k{margin-top:0;color:var(--ink-2)}
+.set-sub .set-time{padding:5px 8px}
+.set-sub .sort{height:32px}
+.set-sub .sortw::after{top:11px}
+.set-v,.set-state{flex:none;color:var(--ink-1);font:400 var(--t-small)/18px var(--sans);letter-spacing:-.003em;font-variant-numeric:tabular-nums}
+.set-state{color:var(--ink-2)}
+.sort:disabled{cursor:default;color:var(--ink-4)}
+.cancel[hidden]{display:none}
+.set-rows + .set-d{margin-top:var(--s3)}
+/* what an hour read online and searched for, beneath it in Hours: the pages by their address, quietly */
+.web{padding:0 var(--bleed) 10px;display:grid;gap:2px}
+.web-k{margin-top:var(--s1);color:var(--ink-3);font:400 var(--t-micro)/16px var(--sans);letter-spacing:0}
+.web-l{list-style:none;display:grid}
+.web-l + .web-k{margin-top:var(--s2)}
+.web-l li{min-width:0;font:400 var(--t-small)/20px var(--sans);letter-spacing:-.003em;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.web-l .textlink{border-bottom-width:1px}
 .set-facts{display:grid;grid-template-columns:max-content 1fr;gap:10px var(--s5);margin-top:var(--s4);font:400 var(--t-body)/20px var(--sans);letter-spacing:-.006em}
 .set-facts dt{color:var(--ink-3)}
 .set-facts dd{color:var(--ink-1);font:400 var(--t-small)/18px var(--mono);letter-spacing:-.003em;overflow-wrap:anywhere}
