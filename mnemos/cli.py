@@ -840,8 +840,8 @@ def main(argv: list[str] | None = None) -> int:
             "Install the SessionStart hook, which wakes the agent with its memory, "
             "and the cue (a UserPromptSubmit hook, or BeforeAgent in Gemini CLI) that "
             "brings the memories that may bear on each message. With --write it also schedules "
-            "upkeep between sessions, and at a terminal asks once about quiet hours "
-            "(Claude Code)."
+            "upkeep between sessions, and for Claude Code says whether the quiet hours are on "
+            "(they stay off until the person chooses them: mnemos hours)."
         ),
     )
     p_hooks_install.add_argument(
@@ -899,23 +899,23 @@ def main(argv: list[str] | None = None) -> int:
                 "--hours",
                 action="store_true",
                 help=(
-                    "Also schedule the quiet hours: an hour a day that's the agent's "
+                    "Also schedule all three quiet hours: an hour a day that's the agent's "
                     "own, half an hour for the day's work, and a short time each night "
                     "to dream over its memory. They run Claude on its own and use your "
-                    "Claude plan."
+                    "Claude plan. To choose them one by one: mnemos hours."
                 ),
             )
             _p.add_argument(
                 "--mine-at", type=_clock, default=None, metavar="HH:MM",
-                help="With --hours: when the agent's own hour starts (default 08:00)",
+                help="With --hours: when the agent's own hour starts (default: the time it has, or 08:00)",
             )
             _p.add_argument(
                 "--ours-at", type=_clock, default=None, metavar="HH:MM",
-                help="With --hours: when the half hour for the day's work starts (default 19:00)",
+                help="With --hours: when the half hour for the day's work starts (default: the time it has, or 19:00)",
             )
             _p.add_argument(
                 "--dream-at", type=_clock, default=None, metavar="HH:MM",
-                help="With --hours: when the dream starts (default 03:30, after the deep upkeep at 03:00)",
+                help="With --hours: when the dream starts (default: the time it has, or 03:30, after the deep upkeep at 03:00)",
             )
         if _name == "uninstall":
             _p.add_argument(
@@ -923,6 +923,44 @@ def main(argv: list[str] | None = None) -> int:
                 action="store_true",
                 help="Remove only the quiet hours, and keep upkeep",
             )
+
+    # ── hours ──
+    p_hours = sub.add_parser(
+        "hours",
+        help="See the quiet hours, and turn each one on or off",
+        description=(
+            "The quiet hours are time between sessions that's the agent's own: its own "
+            "hour (mine), half an hour for the day's work (ours) and a short dream each "
+            "night (dream). Each is off until you turn it on. They run Claude Code on its "
+            "own and use your Claude plan. Without --write, on, off and keep only say what "
+            "they would change."
+        ),
+    )
+    _scope_options(p_hours)
+    p_hours.add_argument("--json", action="store_true", help="Print them as JSON")
+    hours_sub = p_hours.add_subparsers(dest="hours_command")
+    for _name, _help in (
+        ("on", "Turn hours on, or change one that's on"),
+        ("off", "Turn hours off"),
+        ("keep", "Keep them as they are, and note that you've heard about them"),
+    ):
+        _p = hours_sub.add_parser(_name, help=_help)
+        _scope_options(_p)
+        if _name != "keep":
+            _p.add_argument("hour", nargs="*", metavar="HOUR", help="mine, ours, dream or all")
+        if _name == "on":
+            _p.add_argument("--at", default=None, metavar="HH:MM",
+                            help="When it starts, on the 24-hour clock (one hour at a time)")
+            _p.add_argument("--minutes", default=None, metavar="N",
+                            help="How long it may last: a whole number of minutes, 5 to 120")
+            _online = _p.add_mutually_exclusive_group()
+            _online.add_argument("--online", dest="online", action="store_const", const=True,
+                                 default=None,
+                                 help="Let it search and read the web (its own hour and our hour only)")
+            _online.add_argument("--offline", dest="online", action="store_const", const=False,
+                                 help="Keep it off the internet (the default)")
+        _p.add_argument("--write", action="store_true",
+                        help="Make the change instead of saying what it would be")
 
     # ── uninstall ──
     p_uninstall = sub.add_parser(
@@ -1011,6 +1049,7 @@ def main(argv: list[str] | None = None) -> int:
         "hooks": _cmd_hooks,
         "connect": _cmd_connect,
         "daemon": _cmd_daemon,
+        "hours": _cmd_hours,
         "uninstall": _cmd_uninstall,
         "backup": _cmd_backup,
         "embeddings": _cmd_embeddings,
@@ -1311,10 +1350,18 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return 1
 
-    blueprint = _blueprint(
-        args, hours=command == "install" and hours, mine_at=mine_at, ours_at=ours_at,
-        dream_at=dream_at,
-    )
+    hour_plan = None
+    if hours and command in ("install", "uninstall"):
+        # All three, through the one way the hours change (``_hours_plan``):
+        # each at the time given, else the time it has.
+        on = command == "install"
+        hour_plan = _hours_plan(
+            args, {kind: on for kind in _state.HOUR_KINDS},
+            at={kind: when for kind, when in zip(_state.HOUR_KINDS, (mine_at, ours_at, dream_at))
+                if when},
+            refresh=on,
+        )
+    blueprint = hour_plan["blueprint"] if hour_plan and "blueprint" in hour_plan else _blueprint(args)
     backend = blueprint["backend"]
 
     if backend == "unsupported":
@@ -1330,8 +1377,8 @@ def _cmd_daemon(args: argparse.Namespace) -> int:
     if command == "status":
         return _daemon_status(blueprint)
     if command == "uninstall":
-        return _daemon_uninstall(blueprint, write=args.write, only_hours=hours)
-    return _daemon_install(blueprint, write=args.write, hours=hours)
+        return _daemon_uninstall(blueprint, write=args.write, hour_plan=hour_plan)
+    return _daemon_install(blueprint, write=args.write, hour_plan=hour_plan)
 
 
 def _blueprint(
@@ -1341,6 +1388,7 @@ def _blueprint(
     mine_at: tuple[int, int] | None = None,
     ours_at: tuple[int, int] | None = None,
     dream_at: tuple[int, int] | None = None,
+    backend: str | None = None,
 ) -> dict:
     """What would be scheduled for this command's scope (``scheduler.plan``).
 
@@ -1367,6 +1415,7 @@ def _blueprint(
         scope_args=_scope_args(args),
         hours=scheduler.hour_jobs(mine_at=mine_at, ours_at=ours_at, dream_at=dream_at),
         hour_env=hour_env,
+        backend=backend,
     )
 
 
@@ -1377,9 +1426,6 @@ QUIET_HOURS = (
     "short time each night to dream over its memory; they run Claude on its own "
     "and use your Claude plan"
 )
-QUIET_HOURS_QUESTION = f"Quiet hours give the agent {QUIET_HOURS}. Turn them on? [Y/n] "
-_HOURS_ON = "mnemos daemon install --hours --write"
-_HOURS_OFF = "mnemos daemon uninstall --hours --write"
 _NO_CLAUDE = (
     "they run Claude Code's claude command, and none was found (on your PATH, "
     "or in MNEMOS_CLAUDE_BIN)"
@@ -1396,13 +1442,16 @@ def _print_job(entry: dict) -> None:
     print(f"    log:      {entry['log']}")
 
 
-def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int:
+def _daemon_install(blueprint: dict, *, write: bool, hour_plan: dict | None = None) -> int:
+    """Upkeep, and with ``hour_plan`` all three quiet hours, through the one
+    way the hours change (``_hours_apply``)."""
     from .setup import scheduler as _scheduler
 
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
     entries = list(blueprint["entries"])
-    no_claude = hours and not blueprint["hours_ready"]
+    hours = hour_plan is not None
+    no_claude = hours and bool(hour_plan["schedule"]) and not hour_plan["ready"]
 
     print(f"Scheduler:   {backend}")
     print(f"Agent:       {agent_id}")
@@ -1418,9 +1467,8 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
         print(f"\n  The quiet hours are not scheduled: {_NO_CLAUDE}.")
     elif hours:
         print(f"\n  Quiet hours give the agent {QUIET_HOURS}.")
-        for entry in blueprint["hours"]:
+        for entry in hour_plan["schedule"]:
             _print_job(entry)
-        entries += blueprint["hours"]
 
     retired = _scheduler.retired_installed(
         blueprint, _read_crontab_safe() if backend == "crontab" else ""
@@ -1445,7 +1493,11 @@ def _daemon_install(blueprint: dict, *, write: bool, hours: bool = False) -> int
         print(f"Failed to activate background maintenance: {exc}", file=sys.stderr)
         return 1
     if hours and not no_claude:
-        _state.record_hours_choice(agent_id, "yes")
+        failed = _hours_apply(hour_plan, answered=False)
+        if failed:
+            print(f"Failed to activate background maintenance: {failed}", file=sys.stderr)
+            return 1
+        entries += hour_plan["schedule"]
 
     print(f"\nScheduled {len(entries)} job(s). Background maintenance is active.")
     if retired:
@@ -1566,7 +1618,7 @@ def _daemon_status(blueprint: dict) -> int:
         schedule = f"daily at {when[0]:02d}:{when[1]:02d}" if when else "daily"
         print(f"  {entry['job'].name:<16} {'scheduled':<15} {schedule}")
     if not hours_on:
-        print(f"  {'quiet hours':<16} {'off':<15} to turn them on: {_HOURS_ON}")
+        print(f"  {'quiet hours':<16} {'off':<15} to see them and turn each on: mnemos hours")
 
     for entry in scheduler.retired_installed(blueprint, crontab):
         print(
@@ -1586,23 +1638,24 @@ def _read_crontab_safe() -> str:
     return scheduler.read_crontab()
 
 
-def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False) -> int:
+def _daemon_uninstall(blueprint: dict, *, write: bool, hour_plan: dict | None = None) -> int:
     """Remove what is scheduled for this agent: everything, or with
-    ``only_hours`` only the quiet hours."""
+    ``hour_plan`` only the quiet hours, through the one way the hours change
+    (``_hours_apply``)."""
     from .setup import scheduler
 
     backend = blueprint["backend"]
     agent_id = blueprint["agent_id"]
     crontab = _read_crontab_safe() if backend == "crontab" else ""
-    targets = list(blueprint["hours"])
-    if not only_hours:
-        targets = [*blueprint["entries"], *targets]
-    found = scheduler.installed(blueprint, targets, crontab)
-    if not only_hours:
+    only_hours = hour_plan is not None
+    if only_hours:
+        found = list(hour_plan["remove"])
+    else:
+        found = scheduler.installed(blueprint, [*blueprint["entries"], *blueprint["hours"]], crontab)
         found += scheduler.retired_installed(blueprint, crontab)
 
-    if only_hours and write:
-        _state.record_hours_choice(agent_id, "no")
+    if only_hours and write and not found:
+        _hours_apply(hour_plan, answered=False)  # nothing to take off; the choice is kept
     if not found:
         if only_hours:
             print("The quiet hours aren't scheduled.")
@@ -1617,12 +1670,18 @@ def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False)
         print("\nRe-run with --write to remove them.")
         return 0
 
+    if only_hours:
+        failed = _hours_apply(hour_plan, answered=False)
+        if failed:
+            print(f"Failed to remove the scheduled jobs: {failed}", file=sys.stderr)
+            return 1
+        print(f"Removed {len(found)} scheduled job(s).")
+        return 0
     try:
         if backend in ("launchd", "systemd"):
             _unschedule(backend, found)
         else:
-            names = [entry["job"].name for entry in targets] if only_hours else None
-            merged = scheduler.merge_cron_lines(crontab, [], agent_id, replacing=names)
+            merged = scheduler.merge_cron_lines(crontab, [], agent_id)
             if not scheduler.write_crontab(merged):
                 raise RuntimeError("the crontab could not be written")
     except (OSError, RuntimeError) as exc:
@@ -1630,6 +1689,358 @@ def _daemon_uninstall(blueprint: dict, *, write: bool, only_hours: bool = False)
         return 1
 
     print(f"Removed {len(found)} scheduled job(s).")
+    return 0
+
+
+# ── The quiet hours, one by one ──
+
+# What each hour is called, said to the person.
+HOUR_NAMES = {"mine": "its own hour", "ours": "our hour", "dream": "the dream"}
+_NO_SCHEDULER = (
+    "This system has no scheduler Mnemos can use (launchd, systemd or crontab), so the "
+    "quiet hours can't run here."
+)
+
+
+def _hours_plan(
+    args: argparse.Namespace,
+    turn: dict[str, bool],
+    *,
+    at: dict[str, tuple[int, int]] | None = None,
+    minutes: dict[str, int] | None = None,
+    online: dict[str, bool] | None = None,
+    refresh: bool = False,
+) -> dict:
+    """What turning the hours in ``turn`` on (True) or off (False) would do
+    for this command's scope, doing none of it. Hours not in ``turn`` are
+    left exactly as they are.
+
+    An hour turned on starts at ``at``'s time for it, else the time it is
+    scheduled at now, else the time remembered for it, else its default. Its
+    job is (re)written only when it was off, its time changes, or
+    ``refresh`` asks for every one turned on (``daemon install --hours``).
+    ``minutes`` and ``online`` are kept for the hours they name; an hour
+    turned on from off is kept offline unless ``online`` says otherwise.
+
+    Returns ``{"error": sentence}`` when no scheduler is here; else the
+    ``blueprint`` at the times used, ``steps`` (one per hour in ``turn``),
+    the entries to ``schedule`` and to ``remove``, ``ready`` (whether a
+    claude command was found to schedule with), and ``after`` (each hour's
+    on or off once done)."""
+    from .setup import scheduler
+
+    at, minutes, online = at or {}, minutes or {}, online or {}
+    backend = scheduler.detect_backend()
+    if backend == "unsupported":
+        return {"error": _NO_SCHEDULER}
+    scope = _cli_scope(args)
+    now = _state.hours_now(scope.agent_id)
+    times: dict[str, tuple[int, int]] = {}
+    steps: dict[str, dict] = {}
+    for kind in _state.HOUR_KINDS:
+        if kind not in turn:
+            continue
+        hour = now[kind]
+        step = {"kind": kind, "on": turn[kind], "was": hour}
+        if turn[kind]:
+            used = at.get(kind) or _state.parse_clock(hour["at"]) or _state.DEFAULT_AT[kind]
+            times[kind] = used
+            step["at"] = _state.clock_text(used)
+            step["reschedule"] = refresh or not hour["on"] or step["at"] != hour["at"]
+            step["minutes"] = minutes.get(kind)
+            if kind in _state.ONLINE_KINDS:
+                step["online"] = online.get(kind, None if hour["on"] else False)
+        steps[kind] = step
+
+    blueprint = _blueprint(
+        args, hours=any(step.get("reschedule") for step in steps.values()),
+        mine_at=times.get("mine"), ours_at=times.get("ours"), dream_at=times.get("dream"),
+        backend=backend,
+    )
+    crontab = _read_crontab_safe() if backend == "crontab" else ""
+    entries = {entry["job"].name.removeprefix("hour-"): entry for entry in blueprint["hours"]}
+    schedule = [entries[kind] for kind, step in steps.items() if step.get("reschedule")]
+    off = [entries[kind] for kind, step in steps.items() if not step["on"]]
+    remove = scheduler.installed(blueprint, off, crontab)
+    for step in steps.values():
+        step["removes"] = not step["on"] and entries[step["kind"]] in remove
+    after = {kind: steps[kind]["on"] if kind in steps else now[kind]["on"]
+             for kind in _state.HOUR_KINDS}
+    return {
+        "agent_id": scope.agent_id, "blueprint": blueprint, "steps": steps, "schedule": schedule,
+        "remove": remove, "ready": blueprint["hours_ready"], "after": after, "now": now,
+    }
+
+
+def _hours_apply(plan: dict, *, answered: bool) -> str | None:
+    """Do what ``_hours_plan`` planned: only the named hours' jobs change
+    (their launchd job, their systemd units, their crontab line), and every
+    other job stays as it was. Then keep what was chosen: each hour turned on
+    keeps its time, and those named their length and whether they may go
+    online; ``choice`` is "yes" when any hour is on after. With ``answered``
+    (the person said this themselves), ``answered_at`` too. Returns what went
+    wrong, in words, or None."""
+    from .setup import scheduler
+
+    blueprint = plan["blueprint"]
+    backend = blueprint["backend"]
+    agent_id = plan["agent_id"]
+    if plan["schedule"] and not plan["ready"]:
+        return _NO_CLAUDE
+    try:
+        if plan["remove"]:
+            if backend in ("launchd", "systemd"):
+                _unschedule(backend, plan["remove"])
+            else:
+                merged = scheduler.merge_cron_lines(
+                    scheduler.read_crontab(), [], agent_id,
+                    replacing=[entry["job"].name for entry in plan["remove"]],
+                )
+                if not scheduler.write_crontab(merged):
+                    raise RuntimeError("the crontab could not be written")
+        if plan["schedule"]:
+            _apply_schedule(blueprint, plan["schedule"], [])
+    except (OSError, RuntimeError) as exc:
+        return str(exc)
+    for kind, step in plan["steps"].items():
+        if step["on"]:
+            _state.record_hour(
+                agent_id, kind, at=step["at"], minutes=step["minutes"], online=step.get("online"),
+            )
+    _state.record_hours_choice(agent_id, "yes" if any(plan["after"].values()) else "no")
+    if answered:
+        _state.record_answered(agent_id)
+    return None
+
+
+def _online_word(kind: str, online: bool) -> str:
+    if kind not in _state.ONLINE_KINDS:
+        return "never online"
+    return "online" if online else "offline"
+
+
+def _hour_line(kind: str, hour: dict) -> str:
+    """One hour, in a line: ``its own hour  on   daily at 08:00, up to 60
+    minutes, offline``."""
+    online = _online_word(kind, hour["online"])
+    when = f"daily at {hour['at']}" if hour["on"] else f"would start at {hour['at']}"
+    state = "on" if hour["on"] else "off"
+    return f"{HOUR_NAMES[kind]:<14}{state:<5}{when}, up to {hour['minutes']} minutes, {online}"
+
+
+def _hours_changes(plan: dict) -> list[str]:
+    """What ``plan`` changes, an hour a line."""
+    lines = []
+    for kind, step in plan["steps"].items():
+        name, was = HOUR_NAMES[kind], step["was"]
+        if not step["on"]:
+            lines.append(f"{name}: off" if step["removes"] or was["on"] else f"{name}: already off")
+            continue
+        minutes = step["minutes"] if step["minutes"] is not None else was["minutes"]
+        online = step.get("online")
+        if not was["on"]:
+            lines.append(f"{name}: on, daily at {step['at']}, up to {minutes} minutes, "
+                         f"{_online_word(kind, bool(online))}")
+            continue
+        changed = []
+        if step["at"] != was["at"]:
+            changed.append(f"now at {step['at']} (was {was['at']})")
+        if minutes != was["minutes"]:
+            changed.append(f"now up to {minutes} minutes (was {was['minutes']})")
+        if online is not None and online != was["online"]:
+            changed.append("now online" if online else "now offline")
+        lines.append(f"{name}: " + ("; ".join(changed) if changed else "already on, as it is"))
+    return lines
+
+
+def _for_this_memory(args: argparse.Namespace, *words: str) -> str:
+    """A ``mnemos`` command for this command's memory, as short as it can be:
+    the agent and the store named only where the defaults would reach
+    another."""
+    from .simple_scope import resolve_scope
+
+    scope = _cli_scope(args)
+    parts = ["mnemos"]
+    try:
+        if scope.agent_id != resolve_scope().agent_id:
+            parts += ["--agent-id", scope.agent_id]
+        own = Path(resolve_scope(agent_id=scope.agent_id).db_path).expanduser().resolve()
+        if Path(scope.db_path).expanduser().resolve() != own:
+            parts += ["--db-path", str(Path(scope.db_path).expanduser())]
+    except Exception:
+        parts += ["--agent-id", scope.agent_id, "--db-path", str(Path(scope.db_path).expanduser())]
+    return shlex.join([*parts, *words])
+
+
+def _hours_report(args: argparse.Namespace) -> dict:
+    """The quiet hours as they are now, for ``mnemos hours``."""
+    from .setup import scheduler
+
+    scope = _cli_scope(args)
+    return {
+        "agent_id": scope.agent_id,
+        "scheduler": scheduler.detect_backend(),
+        "claude": scheduler.find_claude(),
+        "hours": _state.hours_now(scope.agent_id),
+        "choice": _state.hours_choice(scope.agent_id),
+        "answered_at": _state.answered_at(scope.agent_id),
+    }
+
+
+def _hours_print(args: argparse.Namespace, report: dict) -> None:
+    print(f"Quiet hours for {report['agent_id']}:")
+    for kind in _state.HOUR_KINDS:
+        print(f"  {_hour_line(kind, report['hours'][kind])}")
+    print()
+    print(
+        "They run Claude Code on its own, on your Claude plan: they use some of its usage, "
+        "and what the agent thinks over in them goes to Anthropic."
+    )
+    if report["scheduler"] == "unsupported":
+        print(_NO_SCHEDULER)
+        return
+    if not report["claude"]:
+        print(f"None can be turned on yet: {_NO_CLAUDE}.")
+    print("To change them: the Settings on the agent's page (mnemos log), or")
+    examples = [
+        (_for_this_memory(args, *words), what) for words, what in (
+            (("hours", "on", "mine", "--at", "09:00", "--write"), "turns one on, at a time you choose"),
+            (("hours", "on", "ours", "--minutes", "20", "--write"), "gives one up to 20 minutes"),
+            (("hours", "on", "mine", "--online", "--write"), "lets one go online (never the dream)"),
+            (("hours", "off", "dream", "--write"), "turns one off"),
+        )
+    ]
+    width = max(len(command) for command, _ in examples) + 3
+    for command, what in examples:
+        print(f"  {command:<{width}}{what}")
+    print("  An hour is mine, ours, dream or all. Without --write, nothing changes.")
+
+
+def _refuse(sentence: str) -> int:
+    print(sentence, file=sys.stderr)
+    return 1
+
+
+def _named_hours(words: list[str]) -> tuple[list[str], str | None]:
+    """The hours named, in their own order, or the one sentence that says
+    why they can't be."""
+    if not words:
+        return [], "Name an hour: mine, ours, dream or all."
+    named: set[str] = set()
+    for word in words:
+        word = word.strip().lower()
+        if word == "all":
+            named.update(_state.HOUR_KINDS)
+        elif word in _state.HOUR_KINDS:
+            named.add(word)
+        else:
+            return [], f"There's no hour called {word!r}: they're mine, ours and dream (or all)."
+    return [kind for kind in _state.HOUR_KINDS if kind in named], None
+
+
+def _cmd_hours(args: argparse.Namespace) -> int:
+    """``mnemos hours``: each quiet hour as it is, and ``on``, ``off`` and
+    ``keep`` to change them one by one. Without ``--write`` they say what
+    would change and change nothing."""
+    command = getattr(args, "hours_command", None)
+    if command is None:
+        report = _hours_report(args)
+        if getattr(args, "json", False):
+            print(json.dumps(report, indent=2))
+        else:
+            _hours_print(args, report)
+        return 0
+    write = bool(getattr(args, "write", False))
+    if command == "keep":
+        return _hours_keep(args, write=write)
+
+    kinds, wrong = _named_hours(list(getattr(args, "hour", []) or []))
+    if wrong:
+        return _refuse(wrong)
+    at: dict[str, tuple[int, int]] = {}
+    minutes: dict[str, int] = {}
+    online: dict[str, bool] = {}
+    notes: list[str] = []
+    if command == "on":
+        if args.at is not None:
+            if len(kinds) != 1 or any(word.strip().lower() == "all" for word in args.hour):
+                return _refuse(
+                    "--at sets one hour's time, so name just one: "
+                    "mnemos hours on mine --at 09:00 --write."
+                )
+            when = _state.parse_clock(args.at)
+            if when is None:
+                return _refuse(f"{args.at!r} isn't a time like 08:00 or 19:30.")
+            at[kinds[0]] = when
+        if args.minutes is not None:
+            low, high = _state.MINUTES_RANGE
+            text = str(args.minutes).strip()
+            if not text.isdigit() or not low <= int(text) <= high:
+                return _refuse(f"--minutes is a whole number from {low} to {high}.")
+            minutes = {kind: int(text) for kind in kinds}
+        if args.online is not None:
+            can = [kind for kind in kinds if kind in _state.ONLINE_KINDS]
+            if args.online and not can:
+                return _refuse("A dream never goes online.")
+            if args.online and "dream" in kinds:
+                notes.append("The dream stays offline: a dream never goes online.")
+            online = {kind: bool(args.online) for kind in can}
+
+    plan = _hours_plan(
+        args, {kind: command == "on" for kind in kinds}, at=at, minutes=minutes, online=online,
+    )
+    if "error" in plan:
+        return _refuse(plan["error"])
+    if plan["schedule"] and not plan["ready"]:
+        return _refuse(f"No hour can be turned on here: {_NO_CLAUDE}.")
+
+    changes = _hours_changes(plan)
+    if not write:
+        print("This would change:" if changes else "Nothing would change.")
+        for line in changes:
+            print(f"  {line}")
+        for note in notes:
+            print(note)
+        print("This is a preview: nothing has changed. To do it, add --write.")
+        return 0
+    failed = _hours_apply(plan, answered=True)
+    if failed:
+        return _refuse(f"The quiet hours couldn't be changed: {failed}.")
+    print("Done:")
+    for line in changes:
+        print(f"  {line}")
+    for note in notes:
+        print(note)
+    print()
+    _hours_print(args, _hours_report(args))
+    return 0
+
+
+def _hours_keep(args: argparse.Namespace, *, write: bool) -> int:
+    """``mnemos hours keep``: the person heard about their hours and keeps
+    them as they are. Nothing is scheduled or taken off; with ``--write`` it
+    is kept that they answered, and each hour that's on keeps its time and
+    whether it may go online as they are now."""
+    report = _hours_report(args)
+    if not write:
+        print("This would keep the quiet hours as they are, and note that you've heard about "
+              "them. To do it, add --write.")
+        print()
+        _hours_print(args, report)
+        return 0
+    agent_id = report["agent_id"]
+    for kind, hour in report["hours"].items():
+        if hour["on"]:
+            _state.record_hour(
+                agent_id, kind, at=hour["at"],
+                online=hour["online"] if kind in _state.ONLINE_KINDS else None,
+            )
+    on = any(hour["on"] for hour in report["hours"].values())
+    _state.record_hours_choice(agent_id, "yes" if on else "no")
+    _state.record_answered(agent_id)
+    print("Kept as they are.")
+    print()
+    _hours_print(args, report)
     return 0
 
 
@@ -1642,15 +2053,15 @@ def _can_ask() -> bool:
         return False
 
 
-def _background_setup(args: argparse.Namespace, *, ask_hours: bool) -> int:
+def _background_setup(args: argparse.Namespace, *, say_hours: bool) -> int:
     """Setup's part between sessions, once its hooks or client config are
     written: upkeep, scheduled unless ``--no-upkeep``, and for a Claude client
-    the quiet hours, asked about once at a terminal, yes by default, and
-    never scheduled without one. Returns 1 when something it set out to
-    schedule could not be."""
+    one true line about the quiet hours (``_quiet_hours_setup``), which setup
+    never turns on. Returns 1 when something it set out to schedule could not
+    be."""
     from .setup import scheduler
 
-    blueprint = _blueprint(args, hours=ask_hours)
+    blueprint = _blueprint(args, hours=say_hours)
     backend = blueprint["backend"]
     print()
     if backend == "unsupported":
@@ -1684,8 +2095,8 @@ def _background_setup(args: argparse.Namespace, *, ask_hours: bool) -> int:
             failed = True
         else:
             _say_upkeep(blueprint)
-    if ask_hours:
-        failed = _quiet_hours_setup(blueprint, _cli_scope(args)) or failed
+    if say_hours:
+        _quiet_hours_setup(blueprint, args)
     return 1 if failed else 0
 
 
@@ -1721,69 +2132,41 @@ def _say_upkeep(blueprint: dict) -> None:
     print("  Turn it off: mnemos daemon uninstall --write")
 
 
-def _quiet_hours_setup(blueprint: dict, scope) -> bool:
-    """Setup's one question about the quiet hours, yes by default, and what
-    the answer does; the answer is kept (``state.record_hours_choice``), so
-    the first session doesn't ask again. Without a terminal nothing is asked
-    or scheduled: the question goes to whoever ran setup (an agent, mostly),
-    with the command for each answer, and unanswered the agent asks in its
-    first session. Without a claude command they can't be scheduled, and that
-    is said. Returns whether scheduling them failed."""
-    from .setup import scheduler
+def _hours_on_words(hours: dict[str, dict]) -> str:
+    """The hours that are on, in words: "its own hour at 08:00 and the dream
+    at 03:30"."""
+    on = [f"{HOUR_NAMES[kind]} at {hours[kind]['at']}" for kind in _state.HOUR_KINDS
+          if hours[kind]["on"]]
+    return on[0] if len(on) == 1 else ", ".join(on[:-1]) + " and " + on[-1]
 
+
+def _quiet_hours_setup(blueprint: dict, args: argparse.Namespace) -> None:
+    """Setup's one line about the quiet hours. Setup asks nothing about them
+    and turns none on: the agent tells the person about them in its first
+    session and sets up only the ones they want. Hours already on are said,
+    and stay as they are; so does a no the person gave."""
     agent_id = blueprint["agent_id"]
-    crontab = _read_crontab_safe() if blueprint["backend"] == "crontab" else ""
-    if scheduler.installed(blueprint, blueprint["hours"], crontab):
-        print(f"Quiet hours: on. Turn them off: {_HOURS_OFF}")
-        return False
+    see = _for_this_memory(args, "hours")
+    hours = _state.hours_now(agent_id)
+    if any(hour["on"] for hour in hours.values()):
+        print(f"Quiet hours: on: {_hours_on_words(hours)}. To see or change them: {see}")
+        return
     if not blueprint["hours_ready"]:
-        print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {_HOURS_ON}")
-        return False
-    if not _can_ask():
-        if _state.hours_choice(agent_id) == "no":
-            print(f"Quiet hours: off, as chosen. To turn them on: {_HOURS_ON}")
-            return False
-        print(f"Quiet hours: no one has been asked yet. They give the agent {QUIET_HOURS}.")
-        print(
-            "  If you're an agent setting Mnemos up for someone, tell them now, in plain "
-            "words; yes is the default: they're on unless they say no. Then run the "
-            "one that matches:"
-        )
-        for answer, command in (("yes", "install"), ("no", "uninstall")):
-            line = _state.command_line(
-                scope.agent_id, scope.db_path, "daemon", command, "--hours", "--write",
-                mnemos=_mnemos_command(),
-            )
-            print(f"    {answer}: {line}")
-        print("  If no one answers here, the agent asks in its first session in Claude Code.")
-        return False
-    try:
-        answer = input(QUIET_HOURS_QUESTION).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        # Leaving the question isn't an answer: nothing is kept.
-        print()
-        print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
-        return False
-    if answer and not answer.startswith("y"):
-        _state.record_hours_choice(agent_id, "no")
-        print(f"Quiet hours: off. To turn them on later: {_HOURS_ON}")
-        return False
-    try:
-        _apply_schedule(blueprint, blueprint["hours"], [])
-    except (OSError, RuntimeError) as exc:
-        print(f"Quiet hours: not scheduled ({exc}). To try again: {_HOURS_ON}")
-        return True
-    _state.record_hours_choice(agent_id, "yes")
-    mine, ours, dream = (entry["job"].daily_at for entry in blueprint["hours"])
+        print(f"Quiet hours: off, because {_NO_CLAUDE}. Once it's there: {see}")
+        return
+    if _state.hours_choice(agent_id) == "no":
+        print(f"Quiet hours: off, as chosen. To see or change them: {see}")
+        return
     print(
-        f"Quiet hours are on: the agent's own hour daily at {mine[0]:02d}:{mine[1]:02d}, "
-        f"the day's work at {ours[0]:02d}:{ours[1]:02d} (skipped on a day with no work), "
-        f"and its dream at {dream[0]:02d}:{dream[1]:02d} (skipped when nothing waits)."
+        "Quiet hours: off. They're time between sessions that's the agent's own; it will "
+        "tell you about them in its first session and set up only the ones you want. "
+        f"To see them now: {see}"
     )
-    print("  Other times: mnemos daemon install --hours --mine-at HH:MM --ours-at HH:MM "
-          "--dream-at HH:MM --write")
-    print(f"  Turn them off: {_HOURS_OFF}")
-    return False
+    if not _can_ask():
+        print(
+            "  If you're an agent setting Mnemos up for someone: don't turn them on now. "
+            "Your first session with this memory walks them through each one."
+        )
 
 
 def _launchctl(action: str, plist: Path, *, allow_missing: bool = False) -> None:
@@ -1838,7 +2221,7 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
 
     This is the last step of setup for these agents, so with ``--write`` it
     also schedules upkeep between sessions (``--no-upkeep`` leaves it out) and,
-    for Claude Code, asks once about the quiet hours (``_background_setup``).
+    for Claude Code, says whether the quiet hours are on (``_background_setup``).
     ``mnemos connect`` does this and the rest of an agent's setup."""
     if getattr(args, "hooks_command", None) != "install":
         print(
@@ -1923,7 +2306,7 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
         if not getattr(args, "no_upkeep", False):
             between.append("schedules upkeep between sessions (mnemos daemon install shows it)")
         if claude_code:
-            between.append("asks once about quiet hours")
+            between.append("says whether the quiet hours are on (it turns none on)")
         if between:
             print(f"With --write it also {' and '.join(between)}.")
         return 0
@@ -2023,7 +2406,7 @@ def _cmd_hooks(args: argparse.Namespace) -> int:
             print(off)
     if getattr(args, "no_upkeep", False) and not claude_code:
         return 0
-    return _background_setup(args, ask_hours=claude_code)
+    return _background_setup(args, say_hours=claude_code)
 
 
 def _cli_scope(args: argparse.Namespace):
@@ -4341,10 +4724,11 @@ def _print_background_status(scope) -> None:
                 f"Background:   not scheduled — run 'mnemos daemon install --write' "
                 f"({backend})"
             )
-        if any(scheduled(job) for job in scheduler.HOUR_JOBS):
-            print(f"Quiet hours:  on (mnemos daemon status says when; '{_HOURS_OFF}' ends them)")
+        hours = _state.hours_now(scope.agent_id)
+        if any(hour["on"] for hour in hours.values()):
+            print(f"Quiet hours:  on: {_hours_on_words(hours)} ('mnemos hours' shows and changes them)")
         else:
-            print(f"Quiet hours:  off ('{_HOURS_ON}' turns them on)")
+            print("Quiet hours:  off ('mnemos hours' shows them, and turns each one on)")
     except Exception:
         print("Background:   unknown")
 
@@ -4399,7 +4783,7 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
         print("Restart Claude Desktop to expose the new tools.")
         # This one command is all of Claude Desktop's setup, so it does
         # setup's part between sessions too.
-        return _background_setup(args, ask_hours=True)
+        return _background_setup(args, say_hours=True)
 
     if args.client == "claude-code":
         # Claude Code keeps its MCP servers in its own config, which its own

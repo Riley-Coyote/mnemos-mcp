@@ -22,9 +22,9 @@ With no dedicated provider configured, Mnemos:
 
 What the agent reads from its memory goes into its own context, and so to the
 model the agent runs on, like everything else in that context. Mnemos itself
-sends memory nowhere you haven't been told about: the quiet hours, which go on
-unless you say no once you've been told of them, and a provider, Gemini
-embeddings or the cue's judge, only when you turn them on; each below.
+sends memory nowhere you haven't been told about: the quiet hours, a provider,
+Gemini embeddings or the cue's judge, each only when you turn it on; each
+below.
 
 Simple mode tools still mutate local state:
 
@@ -111,13 +111,19 @@ a link or a belief, and none of its words are kept.
 ## Quiet Hours
 
 The quiet hours are the agent's time between sessions: up to an hour a day of
-its own, and half an hour for the day's work, skipped on a day with none.
-Mnemos's setup asks about them once at a terminal, with yes as the default.
-Without a terminal it schedules nothing and asks the agent that ran it to tell
-you; if no one has, the agent's first session in Claude Code tells you what
-they are and what they cost. They go on unless you say no, and never before
-you've been told. Your answer is kept in `~/.mnemos/hours/<agent>/choice.json`,
-so you're asked once. An app that runs Mnemos for you may keep them on.
+its own, half an hour for the day's work, skipped on a day with none, and a
+short dream each night. They're off until you choose them, one by one. Setup
+turns none on and asks nothing; the agent's first session tells you what each
+is and what it costs, and sets up only the ones you want. Each has its own
+switch, start time and length (`mnemos hours`, or the Settings on the agent's
+page). Your choices are kept in `~/.mnemos/hours/<agent>/choice.json`. An app
+that runs Mnemos for you may turn them on.
+
+**Offline unless you choose.** Its own hour and our hour go online only when
+you turn that on for that hour (`mnemos hours on mine --online --write`); a
+dream never goes online. An own hour scheduled before this setting existed
+keeps the web it had while it stays scheduled; `mnemos hours` says which hours
+can go online, and `mnemos hours on mine --offline --write` takes it away.
 
 **How.** Each hour runs your own Claude Code on its own (`claude -p`), on your
 Claude plan. It loads none of your own Claude Code settings or hooks: only the
@@ -135,8 +141,8 @@ runs with, nor in your account's own home when an app runs it under another.
 - its wake, the memory it would wake to at the start of a session;
 - whatever it reads or recalls during the hour: its memory, through Mnemos's
   tools; its studio (`~/.mnemos/studio/<agent>`); and the folders
-  `life.read_dirs` in Mnemos's config names, none unless you name them. In its
-  own hour it can search and read the web too.
+  `life.read_dirs` in Mnemos's config names, none unless you name them. In an
+  hour you let go online, it can search and read the web too.
 
 What it keeps goes into its memory, on this machine, and the record of each
 hour into `~/.mnemos/hours/<agent>/`, under the home the hour runs with. An
@@ -147,8 +153,8 @@ its own, 30 minutes and 200,000 for the day's work, unless `life.minutes` and
 `mnemos life --hour mine --dry-run` prints an hour's prompt and command, and
 runs nothing.
 
-**To turn them off:** `mnemos daemon uninstall --hours --write`, or the app's
-own setting when an app runs Mnemos for you.
+**To turn them off:** `mnemos hours off all --write` (or one: `mnemos hours off
+mine --write`), or the app's own setting when an app runs Mnemos for you.
 
 **Other agents.** Mnemos runs no hour for any agent but Claude Code, because
 none of the others' flags could be shown to limit a run to Mnemos's tools. An

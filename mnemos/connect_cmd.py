@@ -234,7 +234,7 @@ def _status_lines(h: hs.Harness, st: cn.Status) -> list[str]:
 
 def _hours_status(h: hs.Harness, st: cn.Status) -> str:
     if h.key == "claude-code":
-        return "on" if state.quiet_hours_on(st.agent_id) else "off or never asked"
+        return _claude_code_hours(st.agent_id)
     if h.hours is None:
         return f"none: Mnemos has not been tried with {h.label}'s own scheduler"
     if ah.AGENTS.get(h.key):
@@ -248,6 +248,23 @@ def _hours_status(h: hs.Harness, st: cn.Status) -> str:
         "none scheduled; Mnemos can't run them for it, but an hour can be handed to it in a session: "
         "mnemos life --hour mine --handoff"
     )
+
+
+# Each hour, as connect's status says it.
+_SHORT_NAMES = {"mine": "own hour", "ours": "our hour", "dream": "dream"}
+
+
+def _claude_code_hours(agent_id: str) -> str:
+    """Claude Code's hours, each as it is: "own hour 08:00, our hour off,
+    dream 03:30", or "off; never asked" / "off; you said no"."""
+    hours = state.hours_now(agent_id)
+    if any(hour["on"] for hour in hours.values()):
+        return ", ".join(
+            f"{_SHORT_NAMES[kind]} {hour['at'] if hour['on'] else 'off'}"
+            for kind, hour in hours.items()
+        )
+    asked = state.hours_choice(agent_id)
+    return "off; you said no" if asked == "no" else "off" if asked == "yes" else "off; never asked"
 
 
 def _hook_line(h: hs.Harness, kind: str, ability: hs.Ability, what: str) -> str:
@@ -324,7 +341,7 @@ def _one(h: hs.Harness, args: argparse.Namespace) -> int:
 
     if getattr(args, "hours", False) and not (h.hours is not None and ah.AGENTS.get(h.key)):
         if h.key == "claude-code":
-            _say("Claude Code's quiet hours are set with: mnemos daemon install --hours --write")
+            _say("Claude Code's quiet hours are chosen one by one with: mnemos hours")
         else:
             _say(f"--hours: nothing to schedule for {h.label}. " + _hours_gaps(h)[0])
         _say()
@@ -387,13 +404,18 @@ def _gaps(h: hs.Harness, st: cn.Status) -> None:
     out.extend(_hours_gaps(h))
     for note in h.notes:
         out.append(note)
+    if not out:
+        return
     _say("What it will not have:")
     for line in out:
         _say(f"  - {line}")
 
 
 def _hours_gaps(h: hs.Harness) -> list[str]:
-    """What this agent's quiet hours are, said plainly (none are on unless asked for)."""
+    """What this agent's quiet hours are, said plainly (none are on unless asked for).
+    Nothing for Claude Code: its hours run, walled in, and its status line says each."""
+    if h.key == "claude-code":
+        return []
     if h.hours is None:
         return [f"Quiet hours (the agent's own time between sessions) aren't offered for {h.label}."]
     if ah.AGENTS.get(h.key):
@@ -488,7 +510,7 @@ def _plan(h: hs.Harness, st: cn.Status, args) -> list[tuple[str, object]]:
         what = "the wake" + (" and the cue" if wants_cue else "")
         steps.append((f"add {what} to {h.label}'s hooks", lambda: _hooks(h, scope, args)))
         if h.key == "claude-code":
-            return steps  # its hooks step schedules upkeep and asks about the quiet hours
+            return steps  # its hooks step schedules upkeep and says whether the quiet hours are on
     if upkeep:
         steps.append(("schedule upkeep between sessions", lambda: _upkeep(h, scope, args)))
     return _with_hours(steps, h, scope, args)
@@ -568,8 +590,8 @@ def _hooks(h: hs.Harness, scope, args) -> tuple[bool, str]:
         hooks_command="install", client=h.key, agent_id=scope.agent_id, person_id=None,
         project_scope=None, db_path=_db(scope), timeout=15, settings=None, write=True,
         no_prompt=bool(getattr(args, "no_prompt", False)), prompt=False,
-        # Claude Code's own hooks step also schedules upkeep and asks about the
-        # quiet hours, as it always has; for the others connect does upkeep once.
+        # Claude Code's own hooks step also schedules upkeep and says whether the
+        # quiet hours are on (it turns none on); for the others connect does upkeep once.
         no_upkeep=h.key != "claude-code" or bool(getattr(args, "no_upkeep", False)),
     )
     return cli._cmd_hooks(ns) == 0, ""
@@ -627,7 +649,7 @@ def _upkeep(h: hs.Harness, scope, args) -> tuple[bool, str]:
         agent_id=scope.agent_id, person_id=scope.person_id, project_scope=scope.project_scope,
         db_path=_db(scope), no_upkeep=False, identity_command=None,
     )
-    return cli._background_setup(ns, ask_hours=False) == 0, ""
+    return cli._background_setup(ns, say_hours=False) == 0, ""
 
 
 # ── Agents that are not installed here: the setup, marked untested ──

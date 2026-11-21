@@ -274,23 +274,15 @@ def _claude_code_setup(*extra: str) -> int:
     ])
 
 
-def _answers(monkeypatch, *replies: str) -> None:
-    queue = list(replies)
-    monkeypatch.setattr(cli, "_can_ask", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda question="": queue.pop(0))
-
-
-def test_without_a_terminal_setup_hands_the_question_to_the_agent(claude_code, launchd, claude, capsys):
+def test_without_a_terminal_setup_leaves_the_hours_to_the_first_session(claude_code, launchd, claude, capsys):
     assert _claude_code_setup() == 0
     out = capsys.readouterr().out
 
-    assert "Quiet hours: no one has been asked yet." in out
-    assert "If you're an agent setting Mnemos up for someone, tell them now" in out
-    assert "they're on unless they say no" in out
-    assert f"    yes: {_command('daemon', 'install', '--hours', '--write')}\n" in out
-    assert f"    no: {_command('daemon', 'uninstall', '--hours', '--write')}\n" in out
-    assert "the agent asks in its first session in Claude Code" in out
-    assert not HOURS_LABELS & launchd.loaded, "nothing is scheduled before anyone says yes"
+    assert "Quiet hours: off. They're time between sessions that's the agent's own" in out
+    assert "it will tell you about them in its first session and set up only the ones you want" in out
+    assert "If you're an agent setting Mnemos up for someone: don't turn them on now." in out
+    assert "yes is the default" not in out and "on unless they say no" not in out
+    assert not HOURS_LABELS & launchd.loaded, "nothing is scheduled before anyone chooses it"
     assert state.hours_choice("nova") is None
 
 
@@ -302,26 +294,17 @@ def test_after_a_no_setup_does_not_hand_the_question_on_again(claude_code, launc
     assert "If you're an agent" not in out
 
 
-@pytest.mark.parametrize(("reply", "kept"), [("", "yes"), ("y", "yes"), ("n", "no")])
-def test_an_answer_at_the_terminal_is_kept(claude_code, launchd, claude, monkeypatch, capsys, reply, kept):
-    _answers(monkeypatch, reply)
-    assert _claude_code_setup() == 0
-    capsys.readouterr()
-
-    assert state.hours_choice("nova") == kept
-    assert HOURS_QUESTION not in _packet()
-
-
-def test_leaving_the_question_keeps_no_answer(claude_code, launchd, claude, monkeypatch, capsys):
+def test_at_a_terminal_setup_asks_nothing_and_keeps_nothing(claude_code, launchd, claude, monkeypatch, capsys):
     monkeypatch.setattr(cli, "_can_ask", lambda: True)
 
-    def closed(question: str = "") -> str:
-        raise EOFError
+    def never(question: str = "") -> str:
+        raise AssertionError(f"asked: {question}")
 
-    monkeypatch.setattr("builtins.input", closed)
+    monkeypatch.setattr("builtins.input", never)
     assert _claude_code_setup() == 0
     capsys.readouterr()
     assert state.hours_choice("nova") is None
+    assert not HOURS_LABELS & launchd.loaded
 
 
 def test_an_unreadable_choice_is_no_choice():

@@ -7,8 +7,9 @@ schedule them was OpenClaw's cron templates, which most users do not have.
 Setup schedules this upkeep by default (``JOBS``). With no model chosen for
 Mnemos it runs local passes only.
 
-The quiet hours (``HOUR_JOBS``, mnemos/life.py) are scheduled only when asked
-for: yes to setup's one question, or ``mnemos daemon install --hours``. They
+The quiet hours (``HOUR_JOBS``, mnemos/life.py) are scheduled only when the
+person chooses them, one by one (``mnemos hours``, or the page's Settings), or
+all three with ``mnemos daemon install --hours``. Setup schedules none. They
 run the person's own Claude Code on its own, on their Claude plan, so what
 the agent thinks over in them goes to Anthropic (docs/privacy-security.md,
 "Quiet Hours").
@@ -40,6 +41,8 @@ import sys
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from pathlib import Path
+
+from .state import DEFAULT_AT
 
 
 @dataclass(frozen=True)
@@ -101,27 +104,28 @@ JOBS: tuple[SchedulerJob, ...] = (
 # what in its memory needs a mind, which the runner skips when nothing waits.
 # Each runs the person's own Claude Code on its own (`claude -p`), on
 # their Claude plan, and what the agent thinks over in it goes to Anthropic,
-# so they are scheduled only when asked for: yes to setup's one question, or
-# `mnemos daemon install --hours` (an app that runs Mnemos for people may keep
-# them on).
+# so each is scheduled only when the person chooses it (`mnemos hours on`, the
+# page's Settings, or all three with `mnemos daemon install --hours`, which an
+# app that runs Mnemos for people may use). Their times and lengths when the
+# person hasn't said are in state.DEFAULT_AT and state.DEFAULT_MINUTES.
 HOUR_JOBS: tuple[SchedulerJob, ...] = (
     SchedulerJob(
         name="hour-mine",
         args=("life", "--hour", "mine"),
         description="The agent's own hour",
-        daily_at=(8, 0),
+        daily_at=DEFAULT_AT["mine"],
     ),
     SchedulerJob(
         name="hour-ours",
         args=("life", "--hour", "ours"),
         description="Half an hour for the day's work",
-        daily_at=(19, 0),
+        daily_at=DEFAULT_AT["ours"],
     ),
     SchedulerJob(
         name="hour-dream",
         args=("life", "--hour", "dream"),
         description="A short time each night to dream over its memory",
-        daily_at=(3, 30),
+        daily_at=DEFAULT_AT["dream"],
     ),
 )
 

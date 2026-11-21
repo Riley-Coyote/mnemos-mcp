@@ -43,15 +43,14 @@ import threading
 
 from .core.engram import _gen_ulid
 from .cue import local_day
-from .setup.state import hours_dir
+from .setup.state import DEFAULT_MINUTES, HOUR_KINDS, hours_dir
 from .simple_scope import named_in_the_environment, resolve_scope
 from .store.sqlite_store import EngramStore, ReadOnlyEngramStore
 
-HOUR_KINDS = ("mine", "ours", "dream")
 # The hour's model when the memory has no resident yet (``hour_model``).
 HOUR_MODEL = "claude-opus-5-5"
-# What an hour may spend when nothing sets it otherwise (``budget``).
-DEFAULT_MINUTES = {"mine": 60, "ours": 30, "dream": 20}
+# What an hour may spend when nothing sets it otherwise (``budget``); its
+# minutes are state.DEFAULT_MINUTES, the same table the person's settings use.
 DEFAULT_TOKEN_CEILING = {"mine": 400_000, "ours": 200_000, "dream": 200_000}
 # A host app's budget for the one hour it runs; each wins over the config.
 MINUTES_SETTING = "MNEMOS_HOUR_MINUTES"

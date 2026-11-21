@@ -22,9 +22,9 @@ MB), and `mnemos embeddings download` fetches the model once (about 90 MB).
 
 Then start Claude Code: it wakes with its memory, and the memory tools are there.
 Its first session starts by making sure the memory carries. If something isn't
-set up yet (its wake, when only the server was added, or quiet hours no one has
-told you about), it says so plainly and sets it up itself with your yes. Then it
-gets to know you.
+set up yet (its wake, when only the server was added), it says so plainly and
+sets it up itself with your yes. It tells you about its quiet hours, one by one,
+and sets up only the ones you want. Then it gets to know you.
 
 What setup turns on, and how to turn each thing off:
 
@@ -34,25 +34,26 @@ What setup turns on, and how to turn each thing off:
   messages Claude Code writes itself, such as a background task's notice, bring
   nothing. Off: `mnemos hooks install claude-code --no-prompt --write`. That
   runs setup again without the cue, so it schedules upkeep unless you add
-  `--no-upkeep`, and asks about quiet hours again if they're off.
+  `--no-upkeep`. It leaves the quiet hours as they are.
 - **Upkeep between sessions.** Every 4 hours memories fade a little with time
   and related ones are linked, and a deeper pass runs each night at 03:00.
   With no model chosen for Mnemos, all of it runs on your machine. Off:
   `mnemos daemon uninstall --write`, or leave it out with `--no-upkeep`.
-- **Quiet hours, unless you say no.** Up to an hour a day that's the agent's
-  own, half an hour for the day's work, and a short time each night to dream
-  over its memory. They run your own Claude Code on
-  its own, on your Claude plan, so what the agent thinks over in them goes to
+- **Not the quiet hours.** Up to an hour a day that's the agent's own, half an
+  hour for the day's work, and a short time each night to dream over its
+  memory. Setup turns none of them on and asks nothing: your agent tells you
+  about them in its first session, and sets up only the ones you want. Each
+  has its own switch, time and length, and its own hour and our hour stay
+  offline unless you let them go online. They run your own Claude Code on its
+  own, on your Claude plan, so what the agent thinks over in them goes to
   Anthropic: its words for the hour, short excerpts of its recent memory, its
   wake, and whatever it reads or recalls
-  ([what, and how](privacy-security.md#quiet-hours)). Nothing turns them
-  on before you've been told: setup asks once at a terminal, yes by default;
-  run by an agent, it has the agent tell you, and if no one has, your agent
-  does in its first session. They go on unless you say no. With no `claude`
-  command they stay off. Off: `mnemos daemon uninstall --hours --write`.
+  ([what, and how](privacy-security.md#quiet-hours)). `mnemos hours` shows
+  them and changes them, one at a time. With no `claude` command they stay
+  off.
 
 For Claude Desktop: `mnemos mcp install claude --write`, which also schedules
-the upkeep and asks about quiet hours. For Codex, Cursor or another client, see
+the upkeep and says whether the quiet hours are on. For Codex, Cursor or another client, see
 [Choose A Setup](#choose-a-setup).
 
 To take Mnemos out again: `mnemos uninstall` says what it would remove, and
@@ -94,7 +95,7 @@ macOS or Linux.
 | Hermes agent | Hermes Provider Mode, or the tools alone if another memory provider holds the slot | `mnemos connect hermes --write` |
 | Hermes agent installing Mnemos for itself | Hermes Sidecar Mode, leaving `memory.provider` alone | `mnemos hermes quickstart --agent-safe` |
 | Background memory maintenance | Scheduled upkeep (setup turns it on) | `mnemos daemon install --write` |
-| The agent's quiet hours, on your Claude plan | On unless you say no, once setup or your agent has told you; an app that runs Mnemos for you may keep them on | `mnemos daemon install --hours --write` |
+| The agent's quiet hours, on your Claude plan | Off until you choose them, one by one, after your agent has told you about them; an app that runs Mnemos for you may turn them on | `mnemos hours` |
 
 Start with **Simple MCP Mode**. It is the product: twelve tools, and the default.
 
@@ -291,7 +292,7 @@ only Claude Code can be run walled in to its memory's tools:
 
 | Agent | Quiet hours |
 |---|---|
-| Claude Code | Mnemos runs them, walled in; on unless you say no. Thoughts go to Anthropic, on your Claude plan |
+| Claude Code | Mnemos runs them, walled in; each off until you turn it on (`mnemos hours`). Thoughts go to Anthropic, on your Claude plan |
 | Codex | Handed over in a session; Mnemos runs none: its flags leave the shell (not tested). Goes to OpenAI |
 | Grok | Handed over in a session; Mnemos runs none: its flags did not wall a run in (saw it). Goes to xAI |
 | Gemini CLI | Handed over in a session; Mnemos runs none (not tested). Goes to Google |
@@ -417,8 +418,8 @@ remove the key, in the same place. Without the page, the switch is
 </picture>
 
 With `--write`, the hooks install also schedules upkeep between sessions
-(`--no-upkeep` leaves it out) and, for Claude Code, asks once about quiet
-hours; see [Between Sessions](#between-sessions).
+(`--no-upkeep` leaves it out) and, for Claude Code, says whether the quiet
+hours are on; it turns none on. See [Between Sessions](#between-sessions).
 
 ### See Your Agent's Days
 
@@ -774,19 +775,30 @@ note waiting for you. It skips a night when nothing waits, and stops at 20
 minutes or 200,000 tokens. Its words are the agent's own once it writes them
 (`~/.mnemos/studio/<agent>/words/dream.md`).
 
-Setup asks once, at the terminal, and yes is the default. Run without a
-terminal (by an agent setting Mnemos up for you), it schedules nothing and asks
-the agent to tell you, with the command for each answer; if no one has, the
-agent tells you in its first session in Claude Code. They go on unless you say
-no. Where no `claude` command is found, they stay off. By hand:
+They're off until you choose them, one by one. Setup asks nothing about them
+and turns none on; your agent tells you about each in its first session, and
+sets up only the ones you want. Each has its own switch, its own time and its
+own length, and its own hour and our hour stay offline unless you let them go
+online; a dream never goes online. Your choices are kept in
+`~/.mnemos/hours/<agent>/choice.json`. Where no `claude` command is found, they
+stay off. By hand:
 
 ```bash
-mnemos daemon install --hours --write          # the agent's hour at 08:00, ours at 19:00, the dream at 03:30
-mnemos daemon install --hours --mine-at 07:30 --ours-at 21:00 --dream-at 04:00 --write
-mnemos daemon uninstall --hours --write        # off; upkeep stays
+mnemos hours                                   # each hour: on or off, when, how long, online or not
+mnemos hours on mine --at 09:00 --write        # its own hour, each day at 09:00
+mnemos hours on ours --minutes 20 --write      # our hour, for up to 20 minutes
+mnemos hours on mine --online --write          # let its own hour search and read the web
+mnemos hours off dream --write                 # the dream off; the others stay as they are
+mnemos hours keep --write                      # keep them as they are
 mnemos life --hour mine --dry-run              # what an hour would see, running nothing
 mnemos life --hour dream --dry-run             # what tonight's dream would be given
 ```
+
+An hour is `mine`, `ours`, `dream` or `all`. Without `--write`, each says
+what it would change and changes nothing. `mnemos daemon install --hours
+--write` turns all three on at the times they had (`--mine-at`, `--ours-at`
+and `--dream-at` set others), and `mnemos daemon uninstall --hours --write`
+turns all three off; upkeep stays.
 
 An hour works in its studio (`~/.mnemos/studio/<agent>`) and is given no other
 folder unless Mnemos's config names it, in `life.read_dirs`: each folder
@@ -898,7 +910,7 @@ mnemos mcp install claude --write     # Merge Claude Desktop config
 mnemos connect                        # What each agent on this machine has of Mnemos, and what is missing
 mnemos connect grok --write           # Set Mnemos up for an agent: tools, wake, cue, upkeep
 mnemos hooks install claude-code      # Preview Claude Code's hooks: the wake and the cue
-mnemos hooks install claude-code --write  # Install them, schedule upkeep, ask about quiet hours
+mnemos hooks install claude-code --write  # Install them, schedule upkeep, say whether quiet hours are on
 mnemos hooks install claude-code --no-prompt --write  # The same without the cue
 mnemos hooks install codex            # Preview Codex startup + compaction hook
 mnemos hooks install codex --write    # Install, schedule upkeep, then review with /hooks
@@ -906,7 +918,8 @@ mnemos hook session-start             # Emit the packet the hook injects
 mnemos hook prompt                    # Emit the cue for a message (UserPromptSubmit)
 mnemos daemon install                 # Preview scheduled upkeep
 mnemos daemon install --write         # Schedule it (launchd/systemd/crontab)
-mnemos daemon install --hours --write # Schedule upkeep and the quiet hours
+mnemos daemon install --hours --write # Schedule upkeep and all three quiet hours
+mnemos hours                          # The quiet hours, each on or off; `hours on|off HOUR --write` changes one
 mnemos daemon status                  # What is scheduled right now
 mnemos daemon uninstall --hours --write  # Remove only the quiet hours
 mnemos daemon uninstall --write       # Remove all of it

@@ -8,13 +8,14 @@ Desktop. Unless told not to, it now:
 - installs the cue, for Claude Code (tests/test_the_cue.py);
 - schedules upkeep between sessions (`--no-upkeep` leaves it out), which with
   no model chosen for Mnemos runs local passes only;
-- asks once, at a terminal, whether to schedule the quiet hours, yes by
-  default. Without a terminal it schedules nothing and hands the question to
-  whoever ran it; without a claude command it says that, and schedules
-  nothing.
+- says, in one line, whether the quiet hours are on. It asks nothing about
+  them and schedules none (since QH-1, November 2026): the agent tells the
+  person about them in its first session and sets up only the ones they
+  want. Without a claude command it says that.
 
-`mnemos daemon install --hours` schedules the quiet hours by hand, and
-`mnemos daemon uninstall --hours` takes only them off.
+`mnemos hours` turns them on and off one by one
+(tests/test_hours_one_by_one.py); `mnemos daemon install --hours` schedules
+all three by hand, and `mnemos daemon uninstall --hours` takes only them off.
 
 Every scheduler here is the suite's fake (tests/conftest.py): nothing reaches
 the machine running the tests.
@@ -84,21 +85,6 @@ def _plist(label: str) -> dict:
 def _claude_code(tmp_path, *extra: str) -> int:
     return main(["hooks", "install", "claude-code", "--settings", str(tmp_path / "settings.json"),
                  *SCOPE, "--write", *extra])
-
-
-def _answers(monkeypatch, *replies: str) -> list[str]:
-    """Someone at the terminal, giving ``replies`` in turn. Returns the
-    questions asked."""
-    asked: list[str] = []
-    queue = list(replies)
-
-    def answer(question: str = "") -> str:
-        asked.append(question)
-        return queue.pop(0)
-
-    monkeypatch.setattr(cli, "_can_ask", lambda: True)
-    monkeypatch.setattr("builtins.input", answer)
-    return asked
 
 
 def _nobody_asked(monkeypatch) -> None:
@@ -310,79 +296,70 @@ def _scope_namespace(db: Path):
                               project_scope="demo")
 
 
-# ── Quiet hours: asked once, yes by default ──
+# ── Quiet hours: off until chosen, and setup asks nothing ──
 
 
-def test_at_a_terminal_setup_asks_once_and_yes_is_the_default(tmp_path, launchd, claude, monkeypatch, capsys):
-    asked = _answers(monkeypatch, "")
+OFF_LINE = (
+    "Quiet hours: off. They're time between sessions that's the agent's own; it will tell "
+    "you about them in its first session and set up only the ones you want. To see them "
+    "now: mnemos --agent-id nova hours"
+)
+AGENT_LINE = (
+    "  If you're an agent setting Mnemos up for someone: don't turn them on now. Your first "
+    "session with this memory walks them through each one."
+)
 
-    assert _claude_code(tmp_path) == 0
 
-    assert asked == [cli.QUIET_HOURS_QUESTION]
-    # In plain words, what they cost: up to an hour and a half a day of Claude,
-    # on the person's own plan.
-    assert ("up to an hour a day that's its own, half an hour for the day's work, and a short "
-            "time each night to dream over its memory") in asked[0]
-    assert "they run Claude on its own and use your Claude plan" in asked[0]
-    assert asked[0].endswith("[Y/n] ")
-    assert launchd.loaded == LABELS | HOURS
-
-    mnemos = cli._mnemos_command()
-    for name, kind, at in (("hour-mine", "mine", (8, 0)), ("hour-ours", "ours", (19, 0)),
-                           ("hour-dream", "dream", (3, 30))):
-        job = _plist(f"com.mnemos.nova.{name}")
-        assert job["ProgramArguments"] == [
-            mnemos, "--agent-id", "nova", "--person-id", "riley", "--project-scope", "demo",
-            "--db-path", str(Path.home() / ".mnemos" / "nova.db"), "life", "--hour", kind,
-        ]
-        assert job["StartCalendarInterval"] == {"Hour": at[0], "Minute": at[1]}
-        assert job["WorkingDirectory"] == str(Path.home() / ".mnemos")
-        env = job["EnvironmentVariables"]
-        assert env["MNEMOS_CLAUDE_BIN"] == str(claude)
-        assert env["MNEMOS_LIFE_MNEMOS_BIN"] == mnemos
-        assert env["PATH"].split(os.pathsep)[0] == str(claude.parent)
-    out = capsys.readouterr().out
-    assert ("Quiet hours are on: the agent's own hour daily at 08:00, the day's work at 19:00 "
-            "(skipped on a day with no work), and its dream at 03:30 (skipped when nothing waits).") in out
-    assert "Turn them off: mnemos daemon uninstall --hours --write" in out
-
-    # Setup again: they are on, and nobody is asked twice.
+def test_at_a_terminal_setup_asks_nothing_and_schedules_no_hour(tmp_path, launchd, claude, monkeypatch, capsys):
     _nobody_asked(monkeypatch)
-    assert _claude_code(tmp_path) == 0
-    assert "Quiet hours: on." in capsys.readouterr().out
-    assert launchd.loaded == LABELS | HOURS
 
-
-@pytest.mark.parametrize("reply", ["n", "no", "N", "nope"])
-def test_no_leaves_them_off_and_says_how_to_turn_them_on(tmp_path, launchd, claude, monkeypatch, capsys, reply):
-    asked = _answers(monkeypatch, reply)
     assert _claude_code(tmp_path) == 0
-    assert len(asked) == 1
+
     assert launchd.loaded == LABELS
-    assert "To turn them on later: mnemos daemon install --hours --write" in capsys.readouterr().out
+    assert _plists() == LABELS
+    out = capsys.readouterr().out
+    assert OFF_LINE in out
+    assert AGENT_LINE not in out, "a person at a terminal isn't an agent"
+    assert "[Y/n]" not in out
+    assert not hasattr(cli, "QUIET_HOURS_QUESTION")
+    from mnemos.setup import state
+    assert state.hours_choice("nova") is None, "nobody was asked, so nothing is kept"
 
 
-def test_closing_the_input_is_a_no(tmp_path, launchd, claude, monkeypatch, capsys):
-    monkeypatch.setattr(cli, "_can_ask", lambda: True)
-
-    def closed(question: str = "") -> str:
-        raise EOFError
-
-    monkeypatch.setattr("builtins.input", closed)
-    assert _claude_code(tmp_path) == 0
-    assert launchd.loaded == LABELS
-
-
-def test_without_a_terminal_nothing_is_asked_or_scheduled(tmp_path, launchd, claude, capsys):
+def test_without_a_terminal_setup_tells_the_agent_not_to_turn_them_on(tmp_path, launchd, claude, capsys):
     """An agent setting Mnemos up for someone runs without a terminal: the
-    hours are left for the person to choose, and the agent is asked to ask
-    them (tests/test_memory_carries_from_the_first_session.py)."""
+    hours are left for the agent's first session to walk the person through
+    (tests/test_memory_carries_from_the_first_session.py)."""
     assert _claude_code(tmp_path) == 0
 
     assert launchd.loaded == LABELS
     out = capsys.readouterr().out
-    assert "Quiet hours: no one has been asked yet. They give the agent up to an hour a day that's its own" in out
-    assert "daemon install --hours --write" in out
+    assert OFF_LINE + "\n" + AGENT_LINE + "\n" in out
+    assert "daemon install --hours" not in out, "setup offers no command that turns all three on"
+
+
+def test_setup_says_which_hours_are_on_and_leaves_them(tmp_path, launchd, claude, capsys):
+    assert main(["hours", "on", "mine", "--at", "07:30", *SCOPE, "--write"]) == 0
+    assert main(["hours", "on", "dream", *SCOPE, "--write"]) == 0
+    before = {label: (_agents() / f"{label}.plist").read_bytes() for label in HOURS - {"com.mnemos.nova.hour-ours"}}
+    capsys.readouterr()
+
+    assert _claude_code(tmp_path) == 0
+
+    out = capsys.readouterr().out
+    assert ("Quiet hours: on: its own hour at 07:30 and the dream at 03:30. To see or change "
+            "them: mnemos --agent-id nova hours") in out
+    assert launchd.loaded == LABELS | {"com.mnemos.nova.hour-mine", "com.mnemos.nova.hour-dream"}
+    assert {label: (_agents() / f"{label}.plist").read_bytes() for label in before} == before
+
+
+def test_after_a_no_setup_says_off_as_chosen(tmp_path, launchd, claude, capsys):
+    assert main(["hours", "off", "all", *SCOPE, "--write"]) == 0
+    capsys.readouterr()
+    assert _claude_code(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "Quiet hours: off, as chosen. To see or change them: mnemos --agent-id nova hours" in out
+    assert "If you're an agent" not in out
 
 
 def test_without_claude_setup_says_so_and_does_not_ask(tmp_path, launchd, no_claude, monkeypatch, capsys):
@@ -395,17 +372,17 @@ def test_without_claude_setup_says_so_and_does_not_ask(tmp_path, launchd, no_cla
 
 def test_the_claude_login_the_person_set_goes_with_the_hours(tmp_path, launchd, claude, monkeypatch, capsys):
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "second-login"))
-    _answers(monkeypatch, "y")
-    assert _claude_code(tmp_path) == 0
+    assert main(["hours", "on", "mine", *SCOPE, "--write"]) == 0
+    assert main(["daemon", "install", *SCOPE, "--write"]) == 0
     env = _plist("com.mnemos.nova.hour-mine")["EnvironmentVariables"]
     assert env["CLAUDE_CONFIG_DIR"] == str(tmp_path / "second-login")
     assert "CLAUDE_CONFIG_DIR" not in _plist("com.mnemos.nova.maintain").get("EnvironmentVariables", {})
 
 
-def test_no_upkeep_still_asks_about_the_hours_and_schedules_only_them(tmp_path, launchd, claude, monkeypatch):
-    _answers(monkeypatch, "")
+def test_no_upkeep_schedules_nothing_at_all(tmp_path, launchd, claude, monkeypatch):
+    _nobody_asked(monkeypatch)
     assert _claude_code(tmp_path, "--no-upkeep") == 0
-    assert launchd.loaded == HOURS
+    assert launchd.loaded == set()
 
 
 # ── mnemos daemon install --hours, by hand ──

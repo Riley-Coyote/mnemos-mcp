@@ -163,7 +163,6 @@ CLAUDE_CODE = Harness(
     markers=("CLAUDECODE",),
     wake_event="SessionStart",
     cue_event="UserPromptSubmit",
-    notes=("The only agent whose quiet hours run (they run Claude Code itself).",),
 )
 
 CODEX = Harness(
