@@ -1,19 +1,21 @@
-"""The first session of a catalog install offers the quiet hours, as Hermes jobs.
+"""Inside Hermes the first session walks the person through the quiet hours, as Hermes jobs.
 
-Where Hermes's plugin catalog installed Mnemos, the first session told the agent
-that quiet hours aren't offered: the jobs Mnemos made ran a ``mnemos`` command
-from a folder Hermes rebuilds at every update. Now the agent takes its hour with
-``mnemos_hour``, so the first session tells it to ask the person once, plainly,
-and with a yes to make three Hermes scheduled jobs with Hermes's own tool
-(``cronjob_manage``), or to give the person the three ``hermes cron create``
-lines. Each job names no path, no command and no version. Mnemos makes no job
-itself. A Mnemos that ``mnemos connect hermes`` connected is asked as before.
+The agent takes its hour with ``mnemos_hour``, so its first session ends (after
+the tour) with the hours one at a time: what each is and costs, and, for each
+one the person wants, a Hermes scheduled job the agent makes with Hermes's own
+tool (``cronjob_manage``), limited by Hermes to the memory's tools (and the web
+where chosen), or the ``hermes cron create`` lines when it can't reach that
+tool. Each job names no path, no command and no version. Mnemos makes no job
+itself. Since QH-3 a Mnemos that ``mnemos connect hermes`` connected is walked
+through the same way, and the person's answer is kept (``mnemos_hour`` with
+``chosen``), so the walk-through is offered until they answer.
 
 Temporary homes only.
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import sys
 import types
@@ -45,7 +47,7 @@ class FromCatalog(MnemosMemoryProviderCore):
 
 def _provider(tmp_path, cls=FromCatalog) -> MnemosMemoryProviderCore:
     home = tmp_path / "hermes"
-    home.mkdir(exist_ok=True)
+    home.mkdir(parents=True, exist_ok=True)
     provider = cls(HermesMnemosConfig(db_path=str(tmp_path / "a.db"), agent_id="a", person_id="user",
                                       project_scope="global", deep_maintenance=False))
     provider.initialize("20261110_080000_first", platform="cli", hermes_home=str(home), agent_context="primary")
@@ -61,39 +63,63 @@ def _setup_part(tmp_path, monkeypatch, cls=FromCatalog):
         provider.shutdown()
 
 
-def test_a_catalog_install_asks_once_and_says_what_the_hours_are(tmp_path, monkeypatch):
-    settle, _ = _setup_part(tmp_path, monkeypatch)
-    (offer,) = [item for item in settle if "Quiet hours" in item]
-    said = " ".join(offer.split())
-    assert "Tell them once, in plain words" in said
-    assert "go back over the day" in said and "write in your journal" in said
+def _wake(tmp_path, cls=FromCatalog) -> str:
+    provider = _provider(tmp_path, cls)
+    try:
+        return provider.system_prompt_block()
+    finally:
+        provider.shutdown()
+
+
+def _hours(wake: str) -> str:
+    """The quiet hours' step of the ritual, as one line of words."""
+    return " ".join(wake.split("7. Then the quiet hours", 1)[1].split("\n8. ", 1)[0].split())
+
+
+def test_the_first_session_says_what_the_hours_are_and_what_they_cost(tmp_path):
+    said = _hours(_wake(tmp_path))
+    assert "if you'd like the time, say so honestly (it would be your own), and make clear it's entirely their call" in said
+    assert "go back over your memory" in said and "write in your journal" in said
     assert "Hermes scheduled jobs" in said and "the model Hermes uses" in said
     assert "costs what a short conversation costs" in said
-    assert "what it reads of your memory goes to that model" in said
+    assert "what it reads of your memory goes to that model's provider" in said
     assert "only while Hermes's gateway is running" in said
-    assert "off unless they say yes" in said and "If they say no, don't ask again" in said
+    assert "It never goes online" in said
+    assert "If they say no, keep [] and don't ask again" in said
 
 
-def test_with_a_yes_it_makes_the_three_jobs_with_hermes_own_tool(tmp_path, monkeypatch):
-    settle, _ = _setup_part(tmp_path, monkeypatch)
-    (offer,) = [item for item in settle if "Quiet hours" in item]
+def test_each_hour_they_want_is_made_with_hermes_own_tool_limited_to_the_memory(tmp_path):
+    wake = _wake(tmp_path)
+    said = _hours(wake)
     # It looks first, so no job is made twice.
-    assert "cronjob_manage (action list)" in offer
-    assert "isn't there yet" in offer and "cronjob_manage (action create" in offer
+    assert "cronjob_manage. List the scheduled jobs first (action list)" in said
+    assert "make it (action create)" in said
+    assert "Hermes itself then limits each hour to your memory's tools" in said
+    tools = {
+        "mnemos-hour-mine": '["memory", "no_mcp"], or ["memory", "no_mcp", "web"] if they want it online',
+        "mnemos-hour-ours": ('["memory", "session_search", "no_mcp"], or '
+                             '["memory", "session_search", "no_mcp", "web"] if they want it online'),
+        "mnemos-hour-dream": '["memory", "no_mcp"]\n',
+    }
     for name, (schedule, prompt) in JOBS.items():
-        assert f"  - name {name}, schedule {schedule}, deliver local, prompt: {prompt}\n" in offer, offer
+        assert f"name {name}, schedule {schedule} for " in wake, wake
+        assert f"deliver local, prompt: {prompt}\n" in wake
+        assert f"enabled_toolsets {tools[name]}" in wake
+    # An hour turned off is removed; what they chose is kept.
+    assert "remove its job (action remove" in said
+    assert "mnemos_hour, passing chosen" in said
 
 
-def test_without_that_tool_the_person_gets_the_three_lines(tmp_path, monkeypatch):
-    settle, _ = _setup_part(tmp_path, monkeypatch)
-    (offer,) = [item for item in settle if "Quiet hours" in item]
+def test_without_that_tool_the_person_gets_the_lines_and_is_told_they_arent_limited(tmp_path):
+    wake = _wake(tmp_path)
+    said = _hours(wake)
     # Hermes 0.23.0 keeps it behind its tool search by default (the run in a real Hermes, W1).
-    behind = offer.index("Hermes may keep cronjob_manage behind its tool search")
-    assert "tool_search" in offer and "tool_describe" in offer and "tool_call" in offer
-    assert behind < offer.index("If you can't reach cronjob_manage at all")
-    assert "If you have no cronjob_manage tool" not in offer
+    behind = said.index("Hermes may keep cronjob_manage behind its tool search")
+    assert "tool_search" in said and "tool_describe" in said and "tool_call" in said
+    assert behind < said.index("If you can't reach cronjob_manage at all")
+    assert "jobs made that way aren't limited to your memory" in said
     for name, (schedule, prompt) in JOBS.items():
-        assert f"  hermes cron create --name {name} --deliver local '{schedule}' '{prompt}'" in offer, offer
+        assert f"    hermes cron create --name {name} --deliver local '{schedule}' '{prompt}'" in wake, wake
 
 
 def test_no_job_names_a_path_a_command_or_a_version():
@@ -109,12 +135,14 @@ def test_no_job_names_a_path_a_command_or_a_version():
 
 def test_nothing_offered_runs_mnemos_outside_hermes(tmp_path, monkeypatch):
     settle, lines = _setup_part(tmp_path, monkeypatch)
-    said = "\n".join(settle + [lines or ""])
+    said = "\n".join(settle + [lines or "", _wake(tmp_path / "wake")])
     assert "connect hermes" not in said and "--hours" not in said and "mnemos life" not in said
     assert "aren't offered" not in said
 
 
-def test_the_first_session_carries_it_and_a_later_one_doesnt(tmp_path):
+def test_a_later_session_carries_it_until_they_answer(tmp_path):
+    """A no is kept now (``mnemos_hour`` with ``chosen``), so the hours are
+    offered until the person answers, not only in the first session."""
     first = _provider(tmp_path)
     try:
         wake = first.system_prompt_block()
@@ -123,19 +151,24 @@ def test_the_first_session_carries_it_and_a_later_one_doesnt(tmp_path):
     finally:
         first.shutdown()
     assert "mnemos-hour-mine" in wake and "cronjob_manage" in wake, wake
-    later = _provider(tmp_path)
+    unanswered = _wake(tmp_path)
+    assert "QUIET HOURS - still to ask them" in unanswered and "cronjob_manage" in unanswered
+    answering = _provider(tmp_path)
     try:
-        again = later.system_prompt_block()
+        kept = json.loads(answering.handle_tool_call("mnemos_hour", {"chosen": []}))
     finally:
-        later.shutdown()
+        answering.shutdown()
+    assert kept["ok"], kept
+    again = _wake(tmp_path)
     assert "mnemos-hour-mine" not in again and "cronjob_manage" not in again
 
 
-def test_a_mnemos_connect_installed_is_asked_as_before(tmp_path, monkeypatch):
+def test_a_mnemos_connect_installed_is_walked_through_the_same_way(tmp_path, monkeypatch):
     settle, _ = _setup_part(tmp_path, monkeypatch, MnemosMemoryProviderCore)
-    (ask,) = [item for item in settle if "Quiet hours" in item]
-    assert "connect hermes --hours --write" in ask and "connect hermes --no-hours --write" in ask
-    assert "cronjob_manage" not in ask and "mnemos_hour" not in ask
+    assert not [item for item in settle if "Quiet hours" in item]
+    said = _hours(_wake(tmp_path, MnemosMemoryProviderCore))
+    assert "make it (action create)" in said and "enabled_toolsets" in said
+    assert "connect hermes --hours" not in said and "--no-hours" not in said
 
 
 def test_the_readme_gives_the_same_three_lines():
@@ -147,10 +180,9 @@ def test_the_readme_gives_the_same_three_lines():
 
 
 @pytest.mark.parametrize("done", ["mnemos_introduce", "mnemos_capture"])
-def test_it_is_asked_in_the_fresh_first_session_and_never_after(tmp_path, done):
-    """A no isn't kept anywhere, so the offer is made in the first session
-    only: in the "almost done" stage a later session reaches when the first
-    did half of its setup, it isn't made again (round seven, p05)."""
+def test_it_is_asked_while_the_first_session_is_unfinished(tmp_path, done):
+    """In the "almost done" stage a later session reaches when the first did
+    half of its setup, the hours are still offered while nobody answered."""
     first = _provider(tmp_path)
     try:
         assert "mnemos-hour-mine" in first.system_prompt_block()
@@ -160,13 +192,9 @@ def test_it_is_asked_in_the_fresh_first_session_and_never_after(tmp_path, done):
             first.handle_tool_call(done, {"content": "Leo keeps the ferry timetable.", "signed_as": OPUS})
     finally:
         first.shutdown()
-    second = _provider(tmp_path)
-    try:
-        again = second.system_prompt_block()
-    finally:
-        second.shutdown()
+    again = _wake(tmp_path)
     assert "ONBOARDING - almost done" in again, again
-    assert "mnemos-hour-mine" not in again and "cronjob_manage" not in again and "Quiet hours" not in again
+    assert "Then the quiet hours, one at a time" in again and "mnemos-hour-mine" in again
 
 
 def test_where_the_hour_cant_be_prepared_it_isnt_offered(tmp_path, monkeypatch):

@@ -388,8 +388,27 @@ def _first_session(agent_id: str, harness: str, db: Path) -> str:
     return "\n".join(settle + ([lines] if lines else []))
 
 
-def test_hermes_is_asked_in_its_own_true_words_and_off_unless_yes(agents, tmp_path):
+def test_inside_hermes_the_setup_part_leaves_the_hours_to_the_ritual(agents, tmp_path):
+    """Inside Hermes (its provider declares the harness) the hours come one at
+    a time at the ritual's end (tests/test_hermes_offers_its_quiet_hours.py):
+    nothing about them, and no connect line, in what is settled first."""
     text = _first_session("hermes", "hermes", tmp_path / "h.db")
+
+    assert "Quiet hours" not in text and "--hours" not in text
+
+
+def test_hermes_is_asked_in_its_own_true_words_and_off_unless_yes(agents, tmp_path, monkeypatch):
+    """Hermes reached another way (its MCP server, which connect marks with
+    MNEMOS_HARNESS) is asked as before: it has no mnemos_hour there."""
+    from mnemos.simple_runtime import MnemosRuntime
+
+    monkeypatch.setenv("MNEMOS_HARNESS", "hermes")
+    runtime = MnemosRuntime(db_path=str(tmp_path / "h.db"), agent_id="hermes")
+    try:
+        settle, lines = runtime._other_setup_part(hs.get("hermes"))
+    finally:
+        runtime.close()
+    text = "\n".join(settle + ([lines] if lines else []))
 
     assert "Quiet hours: no one has asked" in text
     assert "the model and provider Hermes is set to use" in text
@@ -419,9 +438,9 @@ def test_an_agent_that_cannot_schedule_says_who_sees_an_hour_and_offers_the_hand
 
 
 def test_once_asked_it_is_not_asked_again(agents, tmp_path):
-    state.record_hours_choice("hermes", "no")
+    state.record_hours_choice("openclaw", "no")
 
-    text = _first_session("hermes", "hermes", tmp_path / "h.db")
+    text = _first_session("openclaw", "openclaw", tmp_path / "o.db")
 
     assert "no one has asked" not in text
     assert "--hours --write" not in text

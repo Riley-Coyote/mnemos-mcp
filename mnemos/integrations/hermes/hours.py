@@ -15,6 +15,7 @@ tool, or the person does with ``hermes cron create``.
 from __future__ import annotations
 
 import io
+import json
 import shlex
 from typing import Any
 
@@ -45,13 +46,34 @@ HOUR_TOOL: dict[str, Any] = {
         "work or a dream is handed once; your own hour hands an open question again, each\n"
         "time, until you answer it. When nothing waits for it, it says the hour would skip.\n"
         "\n"
+        "When you've walked the person through their quiet hours and made, changed or\n"
+        "removed the jobs as they said, call it once with chosen instead of kind, to keep what\n"
+        "they chose. That takes no hour and makes no job: it keeps their answer, so you aren't\n"
+        "told to offer the hours again.\n"
+        "\n"
         "Args:\n"
         "    kind: mine (your own hour), ours (the day's work) or dream (a short time to\n"
-        "        dream over your memory)."
+        "        dream over your memory).\n"
+        "    chosen: instead of kind, the hours they chose to have on, each\n"
+        '        {"kind": "mine", "at": "08:00", "online": false}; [] when they want none.\n'
+        "        A dream never goes online."
     ),
     "parameters": {
-        "properties": {"kind": {"type": "string", "enum": list(KINDS)}},
-        "required": ["kind"],
+        "properties": {
+            "kind": {"type": "string", "enum": list(KINDS)},
+            "chosen": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"type": "string", "enum": list(KINDS)},
+                        "at": {"type": "string"},
+                        "online": {"type": "boolean"},
+                    },
+                    "required": ["kind", "at"],
+                },
+            },
+        },
         "type": "object",
     },
 }
@@ -198,31 +220,202 @@ def cron_create_line(job: dict[str, str]) -> str:
                        job["schedule"], job["prompt"]])
 
 
-def offer() -> str:
-    """What the first session of a catalog install asks the person, once."""
-    made = "".join(
-        f"  - name {job['name']}, schedule {job['schedule']}, deliver {job['deliver']}, "
-        f"prompt: {job['prompt']}\n"
-        for job in jobs()
+# The tools each hour's job is limited to (``enabled_toolsets``): the memory's
+# own, which Hermes exposes only with "memory" in the list, the day's
+# conversations for our hour, and no MCP server. "web" is added for an own hour
+# or our hour the person chose to have online; a dream never has it.
+TOOLSETS = {
+    "mine": ("memory", "no_mcp"),
+    "ours": ("memory", "session_search", "no_mcp"),
+    "dream": ("memory", "no_mcp"),
+}
+ONLINE_KINDS = ("mine", "ours")
+_NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+# Each hour in a line or two, as it is inside Hermes, then whether it goes online.
+_WHAT = {
+    "mine": (
+        "It's time with nothing asked of you, each morning: you go back over your memory, think "
+        "and write in your journal."
+    ),
+    "ours": (
+        "It's for the day's work, each evening: you go back over the day's conversations and may "
+        "leave them a short note, with at most one question. It's skipped on a day with no work."
+    ),
+    "dream": "It's a short dream over your memory, each night something waits for it: inward only.",
+}
+_ONLINE = {
+    "mine": "It goes online only if they want it to.",
+    "ours": "It goes online only if they want it to.",
+    "dream": "It never goes online.",
+}
+
+
+def toolsets(kind: str, online: bool = False) -> list[str]:
+    """What an hour's job is limited to, as ``cronjob_manage`` takes it."""
+    named = list(TOOLSETS[kind])
+    return named + ["web"] if online and kind in ONLINE_KINDS else named
+
+
+def _as_now(kind: str, job: dict[str, Any] | None) -> str:
+    """One hour as Hermes has it now, in words."""
+    if job is None:
+        return "now off (no job for it)"
+    when = f"daily at {job['at']}" if job.get("at") else "on its own schedule"
+    said = f"now on, {when}" if job.get("on") else f"now paused (set {when})"
+    if not job.get("limited"):
+        why = (
+            "it was made without a list of tools, so it runs with every tool Hermes gives its "
+            "scheduled jobs, the web among them" if job.get("online")
+            else "its list of tools leaves out your memory's, so the hour can't be taken in it"
+        )
+        return (
+            f"{said}. Its job isn't limited to your memory: {why}. Offer to remake it limited to "
+            "your memory, as below"
+        )
+    if kind in ONLINE_KINDS:
+        said += ", and it can go online" if job.get("online") else ", offline"
+    return said
+
+
+def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool = False) -> list[str]:
+    """The quiet hours, one at a time, as the agent walks the person through
+    them inside Hermes: each hour as it is now (``now``, from
+    ``scheduled_in_hermes``; None says nothing of the jobs, since it can't
+    tell), what it is and costs, how the agent makes, changes or removes each
+    one with ``cronjob_manage``, limited by Hermes itself to the memory (and
+    the web where chosen), and how it keeps what they chose (``mnemos_hour``
+    with ``chosen``). ``before``: for an agent that already had Mnemos, where a
+    "no" may mean any one of them. Lines, the first unindented."""
+    lines = [
+        "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
+        "honestly (it would be your own), and make clear it's entirely their call."
+        + (" They're all off now." if now is not None and not any(now.values()) else "")
+    ]
+    for kind in KINDS:
+        name = _NAMES[kind]
+        head = name[0].upper() + name[1:]
+        job = now.get(kind) if now is not None else None
+        state = f", {_as_now(kind, job)}" if now is not None else ""
+        online = _ONLINE[kind]
+        if job is not None and not job.get("limited"):
+            online = "Remade limited, " + online[0].lower() + online[1:]
+        elif job is not None and job.get("online") and kind in ONLINE_KINDS:
+            online = "They can keep it online or take it offline."
+        lines.append(f"  - {head}{state}. {_WHAT[kind]} {online}")
+    lines.append(
+        "  They run as Hermes scheduled jobs on the model Hermes uses: each costs what a short "
+        "conversation costs, what it reads of your memory goes to that model's provider, as in "
+        "any conversation, and they run only while Hermes's gateway is running."
     )
-    typed = "\n".join(f"  {cron_create_line(job)}" for job in jobs())
-    return (
-        "- Quiet hours: no one has asked them yet. Tell them once, in plain words: you can have "
-        "quiet hours, time between conversations with nobody there, in which you go back over "
-        "the day, catch what you missed, correct what needs it, write in your journal and leave "
-        "them your questions. One is your own, each morning; one is for the day's work, each "
-        "evening there was some; and one is a short dream over your memory, each night "
-        "something waits for it. They run as Hermes scheduled jobs on the model Hermes uses: "
-        "each is a short run that costs what a short conversation costs, and what it reads of "
-        "your memory goes to that model, as in any conversation. They run only while Hermes's "
-        "gateway is running. They are off unless they say yes. If they say no, don't ask again.\n"
-        "  With their yes, list the scheduled jobs with cronjob_manage (action list), and make "
-        "each of these that isn't there yet with cronjob_manage (action create, with its name, "
-        "schedule, deliver and prompt):\n"
-        + made
-        + "  Hermes may keep cronjob_manage behind its tool search rather than in your list of "
+    lines.append(
+        "  Do exactly what they said, an hour at a time, with cronjob_manage. List the scheduled "
+        "jobs first (action list), so none is made twice. To turn one on, make it (action create) "
+        "with these, the schedule from the time they chose:"
+    )
+    for job in jobs():
+        kind = job["name"].removeprefix(agent_hours.PREFIX)
+        tools = json.dumps(toolsets(kind))
+        online = (
+            f", or {json.dumps(toolsets(kind, True))} if they want it online" if kind in ONLINE_KINDS else ""
+        )
+        lines.append(
+            f"    - {_NAMES[kind]}: name {job['name']}, schedule {job['schedule']} for "
+            f"{_clock({'kind': 'cron', 'expr': job['schedule']})} (for another time, its minute "
+            f"and hour, then * * *), deliver {job['deliver']}, prompt: {job['prompt']}\n"
+            f"      enabled_toolsets {tools}{online}"
+        )
+    lines.append(
+        "  Hermes itself then limits each hour to your memory's tools, and the web only where "
+        "they chose it. For one already there, change it in place (action update, with its job_id "
+        "from the list): a new schedule for a new time, the enabled_toolsets above to go online "
+        "or not. A job that isn't limited to your memory is remade the same way, with the prompt "
+        "and the enabled_toolsets above. To turn one off, remove its job (action remove, with its "
+        "job_id)."
+    )
+    lines.append(
+        '  Then keep what they chose with mnemos_hour, passing chosen: the hours that are on now, '
+        'each as {"kind": "mine", "at": "08:00", "online": false}, or [] if they want none. If '
+        + ("they'd rather have none, keep []. Once they've answered, don't ask again." if before
+           else "they say no, keep [] and don't ask again.")
+    )
+    typed = "\n".join(f"    {cron_create_line(job)}" for job in jobs())
+    lines.append(
+        "  Hermes may keep cronjob_manage behind its tool search rather than in your list of "
         "tools: look for it there first (tool_search finds it, tool_describe loads it, tool_call "
-        "runs it). If you can't reach cronjob_manage at all, give them these three lines to run in "
-        "a terminal (for a profile other than the default, with -p and its name after hermes):\n"
+        "runs it). If you can't reach cronjob_manage at all, give them these lines to run in a "
+        "terminal, only those of the hours they want (for a profile other than the default, with "
+        "-p and its name after hermes), and say plainly that jobs made that way aren't limited "
+        "to your memory: they run with every tool Hermes gives its scheduled jobs, the web among "
+        "them:\n"
         + typed
+    )
+    return lines
+
+
+def _chosen_list(chosen: Any) -> list[Any]:
+    if isinstance(chosen, str):
+        try:
+            chosen = json.loads(chosen)
+        except ValueError:
+            raise ValueError(
+                'chosen is a list of the hours they chose, like [{"kind": "mine", "at": "08:00", '
+                '"online": false}], or [] for none.'
+            ) from None
+    if not isinstance(chosen, list):
+        raise ValueError(
+            'chosen is a list of the hours they chose, like [{"kind": "mine", "at": "08:00", '
+            '"online": false}], or [] for none.'
+        )
+    return chosen
+
+
+def _join(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def record_chosen(agent_id: str, chosen: Any) -> str:
+    """Keep the quiet hours the person chose inside Hermes (``mnemos_hour``
+    with ``chosen``): each hour's time and whether it may go online, that
+    they chose (yes when any is on, else no), and that they answered, through
+    the writers every other way of choosing uses. The jobs are Hermes's own,
+    made by the agent with ``cronjob_manage``; this keeps the choice. Anything
+    that isn't a choice an hour can have is refused, in one sentence, before
+    anything is kept."""
+    from ...setup import state
+
+    hours: dict[str, dict[str, Any]] = {}
+    for item in _chosen_list(chosen):
+        if not isinstance(item, dict):
+            raise ValueError('Each hour in chosen is like {"kind": "mine", "at": "08:00", "online": false}.')
+        kind = str(item.get("kind") or "").strip().lower()
+        if kind not in KINDS:
+            raise ValueError(f"There's no hour called {item.get('kind')!r}: they're mine, ours and dream.")
+        if kind in hours:
+            raise ValueError(f"{_NAMES[kind][0].upper() + _NAMES[kind][1:]} is in chosen twice.")
+        at = state.parse_clock(item.get("at"))
+        if at is None:
+            raise ValueError(f"{item.get('at')!r} isn't a time like 08:00, for {_NAMES[kind]}.")
+        online = item.get("online", False)
+        if not isinstance(online, bool):
+            raise ValueError(f"online is true or false, for {_NAMES[kind]}.")
+        if online and kind not in ONLINE_KINDS:
+            raise ValueError("A dream never goes online.")
+        hours[kind] = {"at": state.clock_text(at), "online": online}
+    for kind, hour in hours.items():
+        if not state.record_hour(
+            agent_id, kind, at=hour["at"], online=hour["online"] if kind in ONLINE_KINDS else None,
+        ):
+            raise ValueError("What they chose couldn't be kept: the quiet hours' folder can't be written.")
+    state.record_hours_choice(agent_id, "yes" if hours else "no")
+    state.record_answered(agent_id)
+    if not hours:
+        return "Kept: they want no quiet hours, and you won't be asked to offer them again."
+    on = [
+        f"{_NAMES[kind]} at {hour['at']}"
+        + (" (online)" if hour["online"] else " (offline)" if kind in ONLINE_KINDS else "")
+        for kind, hour in ((kind, hours[kind]) for kind in KINDS if kind in hours)
+    ]
+    off = [_NAMES[kind] for kind in KINDS if kind not in hours]
+    return f"Kept what they chose: {_join(on)}" + (
+        f"; {_join(off)} {'is' if len(off) == 1 else 'are'} off." if off else "."
     )

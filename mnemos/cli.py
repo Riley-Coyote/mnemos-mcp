@@ -1196,6 +1196,23 @@ def _cmd_hook(args: argparse.Namespace) -> int:
                 store.mark_lived(scope.agent_id)
             except Exception:
                 pass
+            # An agent that already had Mnemos, whose person hasn't answered
+            # about the quiet hours since each became theirs to choose: what's
+            # new, after the packet, as mnemos_context gives it. Only with a
+            # packet to follow (an empty wake sends the agent to mnemos_context,
+            # which carries it), and never at the packet's cost.
+            new_since = None
+            if (packet.get("prompt") or "").strip():
+                try:
+                    from .simple_runtime import hook_existing_agent_block
+
+                    new_since = hook_existing_agent_block(
+                        store, agent_id=scope.agent_id, person_id=scope.person_id,
+                        project_scope=scope.project_scope, db_path=scope.db_path,
+                        session=reader_session,
+                    )
+                except Exception:
+                    new_since = None
         finally:
             store.close()
         text = (packet.get("prompt") or "").strip()
@@ -1221,6 +1238,8 @@ def _cmd_hook(args: argparse.Namespace) -> int:
 
     if not text:
         return 0
+    if new_since:
+        text = f"{text}\n\n{new_since}"
 
     print(json.dumps({
         "hookSpecificOutput": {
@@ -2142,7 +2161,7 @@ def _hours_on_words(hours: dict[str, dict]) -> str:
 
 def _quiet_hours_setup(blueprint: dict, args: argparse.Namespace) -> None:
     """Setup's one line about the quiet hours. Setup asks nothing about them
-    and turns none on: the agent tells the person about them in its first
+    and turns none on: the agent tells the person about them in its next
     session and sets up only the ones they want. Hours already on are said,
     and stay as they are; so does a no the person gave."""
     agent_id = blueprint["agent_id"]
@@ -2158,14 +2177,14 @@ def _quiet_hours_setup(blueprint: dict, args: argparse.Namespace) -> None:
         print(f"Quiet hours: off, as chosen. To see or change them: {see}")
         return
     print(
-        "Quiet hours: off. They're time between sessions that's the agent's own; it will "
-        "tell you about them in its first session and set up only the ones you want. "
+        "Quiet hours: off. They're the agent's own time between sessions; in its next "
+        "session it will tell you about them and set up only the ones you want. "
         f"To see them now: {see}"
     )
     if not _can_ask():
         print(
             "  If you're an agent setting Mnemos up for someone: don't turn them on now. "
-            "Your first session with this memory walks them through each one."
+            "Your next session with this memory walks them through each one."
         )
 
 

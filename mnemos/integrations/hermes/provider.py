@@ -60,7 +60,7 @@ from .scope import (
     save_hermes_mnemos_config,
     settle_config_home,
 )
-from .hours import HOUR_TOOL, take_hour
+from .hours import HOUR_TOOL, record_chosen, take_hour
 from .tools import TOOL_SCHEMAS
 
 try:  # POSIX only: Windows has no such limit to raise.
@@ -1386,6 +1386,14 @@ class MnemosMemoryProviderCore:
         return _PAGE_LASTS_A_SESSION.sub(_PAGE_LASTS_HERE, said)
 
     def _tool_hour(self, args: dict[str, Any]) -> str:
+        """Take an hour (``kind``), or keep the hours the person chose
+        (``chosen``), never both."""
+        if args.get("chosen") is not None:
+            if _words(args, "kind").strip():
+                raise ValueError(
+                    "Give kind to take an hour, or chosen to keep what they chose, not both."
+                )
+            return record_chosen(self.scope.agent_id, args.get("chosen"))
         return take_hour(_words(args, "kind"), self.scope)
 
     def _page_shows_others(self) -> bool:

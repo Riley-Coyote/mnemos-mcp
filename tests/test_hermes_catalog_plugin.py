@@ -155,7 +155,9 @@ def test_a_catalog_install_offers_nothing_scheduled_outside_hermes(tmp_path, mon
     finally:
         provider.shutdown()
     said = "\n".join(settle + [lines or ""])
-    assert len(settle) == 1 and "cronjob_manage" in settle[0], said
+    # The hours come one at a time at the ritual's end now, as Hermes jobs
+    # (tests/test_hermes_offers_its_quiet_hours.py): nothing to settle first.
+    assert settle == [], said
     assert "connect hermes" not in said and "--hours" not in said and "mnemos life" not in said, said
 
     # Mnemos connected by `mnemos connect hermes` (its own install) is asked as before.
