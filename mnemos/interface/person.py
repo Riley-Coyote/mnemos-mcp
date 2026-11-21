@@ -714,10 +714,12 @@ class Interface:
         return _acted(read_notes(self.scope, request.get("note_ids")))
 
     def hours(self, request: Mapping[str, Any]) -> Any:
-        """Turn the agent's quiet hours on, at the times given, or off, as the
-        page's Settings does (``companion.server.quiet_hours``): what `mnemos
-        daemon install --hours --write` or `uninstall --hours --write` does
-        for this scope. Answers what it said."""
+        """Change the agent's quiet hours as the page's Settings does
+        (``companion.server.quiet_hours``): ``{"hours": {...}}`` changes each
+        hour named, by itself, as `mnemos hours on|off ... --write` does; the
+        older ``{"on", "mine", "ours", "dream"}`` does what `mnemos daemon
+        install --hours --write` or `uninstall --hours --write` does for this
+        scope. Answers what changed, in words."""
         from ..companion.server import quiet_hours
 
         return _acted(quiet_hours(self.scope, request))

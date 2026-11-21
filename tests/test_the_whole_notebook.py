@@ -181,10 +181,11 @@ def test_each_part_is_exactly_what_the_page_is_given(notebook):
     assert _without(memories["document"], "made") == _without(page_memories, "made")
     assert _without(pulse["document"], "now") == _without(page_pulse, "now")
     assert pulse["document"]["events"], "the captures came to mind"
-    # every part of the page is there: who, the hours and their schedule, the settings, the shared notebook, the
-    # journal, the notes, what it made, what its memory asks, its memory, beliefs, what it carries forward
-    assert set(life["document"]) == {"made", "identity", "hours", "schedule", "jev", "shared", "journal", "notes",
-                                     "studio", "questions", "memory", "beliefs", "handoffs"}
+    # every part of the page is there: who, the hours and their schedule, each hour as Settings shows it, the
+    # settings, the shared notebook, the journal, the notes, what it made, what its memory asks, its memory, beliefs,
+    # what it carries forward
+    assert set(life["document"]) == {"made", "identity", "hours", "schedule", "quietHours", "jev", "shared",
+                                     "journal", "notes", "studio", "questions", "memory", "beliefs", "handoffs"}
     assert life["document"]["hours"][0]["id"] == HOUR and life["document"]["handoffs"]
 
 
@@ -540,7 +541,7 @@ def test_hours_that_cant_be_scheduled_say_why_and_print_nothing(notebook, monkey
     assert capsys.readouterr() == ("", ""), "what the scheduler said stays off the host's line"
 
 
-def test_inside_hermes_the_hours_are_left_to_claude_code(notebook, monkeypatch):
+def test_inside_hermes_the_hours_are_hermess_own_jobs(notebook, monkeypatch):
     from mnemos import cli, llm
 
     asked = []
@@ -552,7 +553,7 @@ def test_inside_hermes_the_hours_are_left_to_claude_code(notebook, monkeypatch):
         answer = _ask(interface, "hours", on=False)
     finally:
         interface.close()
-    assert "Claude Code" in answer["error"] and asked == []
+    assert "Hermes's own scheduled jobs" in answer["error"] and asked == []
 
 
 def test_the_shared_notebook_is_added_to_corrected_and_let_go_as_the_person(notebook):

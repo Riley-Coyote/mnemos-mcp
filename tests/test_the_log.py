@@ -812,8 +812,9 @@ def test_inside_hermes_the_page_changes_nothing_that_is_claude_codes(mind, jev_u
     """Hermes's plugin rules: a plugin uses no other program's sign-in and keeps
     no key of its own outside Hermes. The quiet hours run `claude -p` on the
     person's own Claude account from the system's scheduler, and Jev's key is a
-    file, so the page an agent opens inside Hermes changes neither: both are
-    Claude Code's, and set there."""
+    file, so the page an agent opens inside Hermes changes neither: Jev is
+    Claude Code's, and set there, and inside Hermes the quiet hours are
+    Hermes's own scheduled jobs, changed by asking the agent (QH-4)."""
     from mnemos import cli, llm
 
     asked = []
@@ -825,7 +826,7 @@ def test_inside_hermes_the_page_changes_nothing_that_is_claude_codes(mind, jev_u
     with serving(Exporter.for_scope(agent_id=AGENT, person="Riley")) as server:
         for request in ({"command": "hours", "on": True, "mine": "07:15"}, {"command": "hours", "on": False}):
             status, answer = post(server, request)
-            assert status == 400 and "Claude Code" in answer["error"], (request, answer)
+            assert status == 400 and "Hermes's own scheduled jobs" in answer["error"], (request, answer)
         for request in ({"command": "jev", "key": "ts_other_key"}, {"command": "jev", "on": True},
                         {"command": "jev", "on": False}, {"command": "jev", "remove_key": True}):
             status, answer = post(server, request)

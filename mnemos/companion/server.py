@@ -209,21 +209,135 @@ def read_notes(scope: "MnemosScope", ids: object) -> dict:
 
 
 def quiet_hours(scope: "MnemosScope", request: dict, lock: "threading.Lock | None" = None) -> dict:
-    """Turn the agent's quiet hours on, at the times given (each HH:MM, or
-    its own default), or off: exactly what `mnemos daemon install --hours
-    --write` and `mnemos daemon uninstall --hours --write` do for this
-    scope, answered ``{"result": what it said}`` or ``{"error": ...}``. What
-    it prints is caught, never written to this process's own output; ``lock``
-    keeps it to one change to the schedule at a time."""
+    """Change the agent's quiet hours as the person set them, answered
+    ``{"result": what changed, in words}`` or ``{"error": one plain
+    sentence}``.
+
+    ``{"hours": {"mine": {"on", "at", "minutes", "online"}, ...}}`` names
+    the hours to change (any of the three) and, for each, only what changes:
+    on or off; when it starts (HH:MM); how long it may last (5 to 120
+    minutes); and for its own hour and our hour whether it may go online (a
+    dream never does). An hour not named is left exactly as it is. It goes
+    through the one way the hours change (``cli._hours_plan`` and
+    ``cli._hours_apply``), as `mnemos hours on|off ... --write` does, and
+    keeps that the person answered about their hours.
+
+    The older ``{"on", "mine", "ours", "dream"}`` (all three on at those
+    times, or all off) still does what `mnemos daemon install --hours
+    --write` and `mnemos daemon uninstall --hours --write` do for this scope.
+
+    What either prints is caught, never written to this process's own
+    output; ``lock`` keeps it to one change to the schedule at a time."""
+    if _inside_hermes():
+        return {"error": "Inside Hermes the quiet hours are Hermes's own scheduled jobs, so they're "
+                         "changed by asking the agent, not from this page."}
+    if "hours" in request:
+        return _hours_one_by_one(scope, request.get("hours"), lock)
+    return _hours_all_three(scope, request, lock)
+
+
+def _scope_args(scope: "MnemosScope", **more: object):
     import argparse
+
+    return argparse.Namespace(db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
+                              project_scope=scope.project_scope, **more)
+
+
+def _caught(change) -> tuple[bool, object, str, str]:
+    """Run ``change()``: whether it ended without raising, its answer, and
+    what it printed and printed as an error, each as one line. What it
+    prints is caught; anything it raises is one plain line, never a trace."""
     import contextlib
     import io
 
-    from .. import cli
+    said, failed = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(said), contextlib.redirect_stderr(failed):
+        try:
+            answer, ended = change(), True
+        except Exception as exc:
+            answer, ended = None, False
+            failed.write(f"{exc}")
+    return ended, answer, " ".join(said.getvalue().split()), " ".join(failed.getvalue().split())
 
-    if _inside_hermes():
-        return {"error": "The quiet hours run through Claude Code on your own account, so they're "
-                         "set from Claude Code, not from inside Hermes."}
+
+HOUR_SETTINGS = ("on", "at", "minutes", "online")
+
+
+def _hours_one_by_one(scope: "MnemosScope", hours: object, lock: "threading.Lock | None") -> dict:
+    """``quiet_hours`` for ``{"hours": {...}}``: each named hour, one by one."""
+    import contextlib
+
+    from .. import cli
+    from ..setup import state
+
+    names = ", ".join(state.HOUR_KINDS)
+    if not isinstance(hours, dict) or not hours:
+        return {"error": f'"hours" names the hours to change ({names}), each with what changes.'}
+    for kind, change in hours.items():
+        if kind not in state.HOUR_KINDS:
+            return {"error": f"There's no hour called {kind!r}: they're {names}."}
+        if not isinstance(change, dict) or not change or set(change) - set(HOUR_SETTINGS):
+            return {"error": f'Each hour takes "on", "at", "minutes" or "online", and nothing else ({kind}).'}
+        name = cli.HOUR_NAMES[kind]
+        if "on" in change and not isinstance(change["on"], bool):
+            return {"error": f'"on" says whether {name} runs: true or false.'}
+        if "at" in change and state.parse_clock(change["at"]) is None:
+            return {"error": f'"at" is the time {name} starts, like 08:00.'}
+        low, high = state.MINUTES_RANGE
+        length = change.get("minutes", low)
+        if isinstance(length, bool) or not isinstance(length, int) or not low <= length <= high:
+            return {"error": f'"minutes" is how long {name} may last: a whole number from {low} to {high}.'}
+        if "online" in change and not isinstance(change["online"], bool):
+            return {"error": f'"online" says whether {name} may go online: true or false.'}
+        if change.get("online") is True and kind not in state.ONLINE_KINDS:
+            return {"error": "A dream never goes online."}
+
+    with lock or contextlib.nullcontext():
+        args = _scope_args(scope)
+        ended, now, _, wrong = _caught(lambda: state.hours_now(args.agent_id))
+        if not ended:
+            return {"error": wrong[:400] or "The quiet hours couldn't be read just now."}
+        turn: dict[str, bool] = {}
+        at: dict[str, tuple[int, int]] = {}
+        minutes: dict[str, int] = {}
+        online: dict[str, bool] = {}
+        for kind in state.HOUR_KINDS:
+            if kind not in hours:
+                continue
+            change = hours[kind]
+            if "on" not in change and not now[kind]["on"]:
+                return {"error": f"{cli.HOUR_NAMES[kind].capitalize()} is off: turn it on to change it."}
+            turn[kind] = change.get("on", now[kind]["on"])
+            if not turn[kind]:
+                continue  # an hour turned off keeps what it had for when it's on again
+            if "at" in change:
+                at[kind] = state.parse_clock(change["at"])
+            if "minutes" in change:
+                minutes[kind] = change["minutes"]
+            if "online" in change and kind in state.ONLINE_KINDS:
+                online[kind] = change["online"]
+        ended, plan, _, wrong = _caught(lambda: cli._hours_plan(args, turn, at=at, minutes=minutes, online=online))
+        if not ended:
+            return {"error": wrong[:400] or "The quiet hours couldn't be changed."}
+        if "error" in plan:
+            return {"error": plan["error"]}
+        if plan["schedule"] and not plan["ready"]:
+            return {"error": f"No hour can be turned on here: {cli._NO_CLAUDE}."}
+        changes = cli._hours_changes(plan)
+        ended, failed, _, wrong = _caught(lambda: cli._hours_apply(plan, answered=True))
+        if not ended or failed:
+            return {"error": f"The quiet hours couldn't be changed: {failed or wrong}."[:400]}
+    said = " ".join(f"{line[0].upper()}{line[1:]}." for line in changes)
+    return {"result": said[:400] or "Nothing changed."}
+
+
+def _hours_all_three(scope: "MnemosScope", request: dict, lock: "threading.Lock | None") -> dict:
+    """``quiet_hours`` for the older ``{"on", "mine", "ours", "dream"}``."""
+    import contextlib
+
+    from .. import cli
+    from ..setup import state
+
     on = request.get("on")
     if not isinstance(on, bool):
         return {"error": '"on" says whether the quiet hours run: true or false.'}
@@ -237,22 +351,17 @@ def quiet_hours(scope: "MnemosScope", request: dict, lock: "threading.Lock | Non
         if not match:
             return {"error": f'"{key}" is a time of day, like 08:00.'}
         times[key] = (int(match.group(1)), int(match.group(2)))
-    args = argparse.Namespace(
-        daemon_command="install" if on else "uninstall", hours=True, write=True,
+    args = _scope_args(
+        scope, daemon_command="install" if on else "uninstall", hours=True, write=True,
         mine_at=times["mine"] if on else None, ours_at=times["ours"] if on else None,
-        dream_at=times["dream"] if on else None,
-        db_path=scope.db_path, agent_id=scope.agent_id, person_id=scope.person_id,
-        project_scope=scope.project_scope)
-    said, failed = io.StringIO(), io.StringIO()
-    with lock or contextlib.nullcontext(), contextlib.redirect_stdout(said), contextlib.redirect_stderr(failed):
-        try:
-            code = cli._cmd_daemon(args)
-        except Exception as exc:  # anything else is one plain line, never a trace
-            code, _ = 1, failed.write(f"{exc}")
-    if code != 0:
-        words = " ".join(failed.getvalue().split()) or " ".join(said.getvalue().split())
-        return {"error": words[:400] or "The quiet hours couldn't be changed."}
-    return {"result": " ".join(said.getvalue().split())[:400]}
+        dream_at=times["dream"] if on else None)
+    with lock or contextlib.nullcontext():
+        ended, code, said, failed = _caught(lambda: cli._cmd_daemon(args))
+        if ended and code == 0:
+            state.record_answered(scope.agent_id)  # the person set them, on the page or a host's
+    if not ended or code != 0:
+        return {"error": (failed or said)[:400] or "The quiet hours couldn't be changed."}
+    return {"result": said[:400]}
 
 
 class _Mind:
@@ -291,6 +400,16 @@ class LogServer(ThreadingHTTPServer):
         self._settings = threading.Lock()  # one change to the schedule at a time
         self._home = _Mind(exporter)
         self._others: tuple[float, dict[str, _Mind]] | None = None
+        # Inside Hermes, the profile it was opened for: the one Hermes told the
+        # provider then. Each request is answered on a thread of the page's
+        # own, where Hermes tells nothing, so what the page reads of Hermes's
+        # own (its scheduled jobs, for Settings) is that profile's, not the
+        # root's the environment may still name.
+        self.hermes_home = None
+        if _inside_hermes():
+            from ..integrations.hermes.scope import default_hermes_home
+
+            self.hermes_home = default_hermes_home()
         # When the page was last asked for anything, by its own address: an open
         # page asks every few seconds, so this says whether anyone has it open.
         self.last_asked = time.monotonic()
@@ -300,9 +419,16 @@ class LogServer(ThreadingHTTPServer):
         # Each request is answered on a thread of the page's own, which no
         # profile's keys are bound to inside a host: it reads none of them
         # (llm.outside_any_profile). The page searches and writes without one.
+        import contextlib
+
         from ..llm import outside_any_profile
 
-        with outside_any_profile():
+        home = contextlib.nullcontext()
+        if self.hermes_home is not None:
+            from ..integrations.hermes.scope import running_for_home
+
+            home = running_for_home(self.hermes_home)
+        with outside_any_profile(), home:
             super().process_request_thread(request, client_address)
 
     def server_bind(self) -> None:

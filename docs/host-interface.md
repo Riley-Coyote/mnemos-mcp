@@ -193,15 +193,15 @@ page's own code, with its limits and its sentences.
 | `reply` | `note_id`, `text` | the stored reply, as a `notes` item |
 | `note` | `text` | the stored note, as a `notes` item |
 | `read` | `note_ids`: a list of the agent's notes, 1 to 200 | the ids this marked read (one already read keeps its time) |
-| `hours` | `on` (true or false); with it on, `mine`, `ours`, `dream` (each `HH:MM`, or empty for its own default) | what the scheduler said |
+| `hours` | `hours`: the hours to change, any of `mine`, `ours` and `dream`, each with only what changes: `on` (true or false), `at` (`HH:MM`), `minutes` (5 to 120), `online` (true or false; never for `dream`) | what changed, in words |
 | `shared` | `action`: "add" (`text`), "correct" (`memory_id`, `text`) or "forget" (`memory_id`, `confirmed: true`) | what the shared notebook said |
 
 ```json
 {"id": 6, "command": "read", "note_ids": ["a3de9e13-18a5-4bce-a87d-79ecce639b5a"]}
 {"id": 6, "result": ["a3de9e13-18a5-4bce-a87d-79ecce639b5a"]}
 
-{"id": 7, "command": "hours", "on": true, "mine": "07:15", "ours": "", "dream": "03:05"}
-{"id": 7, "result": "..."}
+{"id": 7, "command": "hours", "hours": {"ours": {"on": true}, "dream": {"on": true, "at": "04:15", "minutes": 10}}}
+{"id": 7, "result": "Our hour: on, daily at 19:00, up to 30 minutes, offline. The dream: on, daily at 04:15, up to 10 minutes, never online."}
 
 {"id": 8, "command": "shared", "action": "add", "text": "Every agent: the kettle is new."}
 {"id": 8, "result": "Saved to shared memory. Every agent on this machine can read it.\nShared memory ID: shared_engram_..."}
@@ -209,10 +209,22 @@ page's own code, with its limits and its sentences.
 
 - A reply or a note is the person's own words, kept exactly as given, at most
   16,384 characters, and refused during one of the agent's quiet hours.
-- `hours` does what `mnemos daemon install --hours --write` (or `uninstall
-  --hours --write`) does for this scope: it writes and loads a real job in the
-  system's scheduler (launchd on a Mac). Inside Hermes it is refused, as on the
-  page.
+- `hours` changes each hour it names by itself, as `mnemos hours on|off ...
+  --write` does for this scope: turning one on writes and loads a real job in
+  the system's scheduler (launchd on a Mac), turning one off removes only its
+  job, and the other hours are left exactly as they are. An hour that's off
+  takes `on` first: changing its time alone is refused. It keeps that the
+  person answered about their hours. `life.quietHours` says each hour as it
+  is now (`on`, `at`, `minutes`, `online`), and `cant` why none can be turned
+  on here, when none can.
+- The older request, `on` (true or false) with `mine`, `ours` and `dream`
+  (each `HH:MM`, or empty for its own time), still does what `mnemos daemon
+  install --hours --write` (or `uninstall --hours --write`) does: all three
+  at once.
+- Inside Hermes the hours are Hermes's own scheduled jobs: `hours` is refused,
+  and `life.quietHours` is `{"where": "hermes", "hours": ...}`, each hour as
+  Hermes has it (`at`, `on`, `online`, `limited`, `made_by`, or null for one
+  with no job), or `"hours": null` when its jobs can't be read.
 - Letting a shared memory go is asked twice: without `"confirmed": true` it is
   refused. The shared notebook is the machine's, one for every agent, and its
   writes here are always the person's. It is always the one under `HOME`

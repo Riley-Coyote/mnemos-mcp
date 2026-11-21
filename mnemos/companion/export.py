@@ -770,6 +770,42 @@ class Exporter:
             found.append({"label": "crontab", "when": at, "kind": kind, "loaded": True})
         return found
 
+    def quiet_hours(self) -> dict:
+        """Each quiet hour as Settings shows it, one by one.
+
+        Here: ``{"where": "here", "hours": {kind: {"on", "at", "minutes",
+        "online"}}, "cant": sentence or None}``, each hour as it is on this
+        machine now (``state.hours_now``), and ``cant`` saying why none can be
+        turned on here, when none can.
+
+        Served from inside Hermes: ``{"where": "hermes", "hours": {kind: {"at",
+        "on", "online", "limited", "made_by"} or None}}``, each hour as
+        Hermes has it scheduled (``scheduled_in_hermes``: a kind with no job is
+        None), and ``"hours": None`` when its jobs can't be read, so the page
+        says it can't tell rather than "off". Reads only; never fails."""
+        if _served_from_a_host():
+            try:
+                from ..integrations.hermes.hours import scheduled_in_hermes
+
+                return {"where": "hermes", "hours": scheduled_in_hermes()}
+            except Exception:
+                logger.debug("could not read Hermes's scheduled jobs", exc_info=True)
+                return {"where": "hermes", "hours": None}
+        try:
+            from .. import cli
+            from ..setup import scheduler, state
+
+            hours = state.hours_now(self.scope.agent_id)
+            cant = None
+            if scheduler.detect_backend() == "unsupported":
+                cant = cli._NO_SCHEDULER
+            elif not scheduler.find_claude():
+                cant = f"None can be turned on here: {cli._NO_CLAUDE}."
+        except Exception:
+            logger.debug("could not read the quiet hours", exc_info=True)
+            return {"where": "here", "hours": None, "cant": None}
+        return {"where": "here", "hours": hours, "cant": cant}
+
     def export(self, now: datetime | None = None) -> tuple[dict, dict]:
         """The page's two documents, ``(life, memories)``. Writes nothing."""
         from ..shared_memory import notebook
@@ -808,6 +844,7 @@ class Exporter:
             "identity": who,
             "hours": hours,
             "schedule": self.schedule(),
+            "quietHours": self.quiet_hours(),
             "jev": self.jev(),
             "shared": shared,
             "journal": journal,
