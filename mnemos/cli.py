@@ -2021,12 +2021,12 @@ def _hours_in_hermes(args: argparse.Namespace, home: Path) -> int:
             job = jobs[kind]
             at = str(job.get("at") or "")
             when = f"daily at {at}" if _state.parse_clock(at) else f"on the schedule {at}"
-            # As the job is: a job made in a terminal has every Hermes tool,
-            # the web among them, a dream's too.
+            # As the job is: a job made in a terminal runs with the tools Hermes
+            # gives every scheduled job, the web among them, a dream's too.
             said = f"{'on' if job.get('on') else 'off':<5}{when}, "
             said += "online" if job.get("online") else "offline"
             if not job.get("limited"):
-                said += ", with every Hermes tool"
+                said += ", not limited to its memory"
             if not job.get("on"):
                 said += " (its job is paused)"
         print(f"  {HOUR_NAMES[kind]:<14}{said}")

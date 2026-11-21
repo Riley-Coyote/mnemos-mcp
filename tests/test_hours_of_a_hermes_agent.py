@@ -98,7 +98,7 @@ def test_a_hermes_agents_hours_are_shown_as_hermes_has_them(leo, capsys):
         f"Quiet hours for hermes-leo, as Hermes has them ({home}):\n"
         "  its own hour  on   daily at 07:15, online\n"
         "  our hour      off  (no job for it)\n"
-        "  the dream     off  daily at 03:30, online, with every Hermes tool (its job is paused)\n"
+        "  the dream     off  daily at 03:30, online, not limited to its memory (its job is paused)\n"
         "\n"
         "Hermes runs these as its own scheduled jobs. To change them, ask the agent in Hermes.\n"
     )
