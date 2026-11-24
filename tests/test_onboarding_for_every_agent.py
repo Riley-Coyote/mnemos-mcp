@@ -330,6 +330,36 @@ def test_a_no_from_before_this_release_is_not_asked_again(claude_code, monkeypat
     assert choice.read_bytes() == before
 
 
+def test_a_no_from_before_counts_in_a_first_session_too(claude_code, monkeypatch):
+    """Someone who said no in an older setup (0.6.7 and before kept only
+    ``{"choice": "no"}``) and has their first session only after updating
+    isn't walked through the hours: the ritual tells them in a line that the
+    page shows them, as for anyone who answered, and reading writes nothing."""
+    choice = state.hours_dir("nova") / state.CHOICE_FILE
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-10-01T08:00:00+00:00"}) + "\n")
+    before = choice.read_bytes()
+
+    packet = _context(monkeypatch, S1)
+
+    assert TOUR in packet
+    assert HOURS not in packet and UNANSWERED not in packet
+    assert "skip the tour." in packet and "skip the tour or the quiet hours" not in packet
+    assert "\n7. Their quiet hours are already chosen" in packet
+    assert "\n8. Then open your page for them and show them its Settings" in packet
+    assert choice.read_bytes() == before
+
+
+def test_a_no_from_before_counts_in_a_first_session_inside_hermes_too():
+    choice = state.hours_dir("leo") / state.CHOICE_FILE
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-10-01T08:00:00+00:00"}) + "\n")
+    wake = _system_prompt()
+    assert TOUR in wake and HOURS not in wake
+    assert "\n7. Their quiet hours are already chosen" in wake
+    assert json.loads(choice.read_text()) == {"choice": "no", "at": "2026-10-01T08:00:00+00:00"}
+
+
 def test_a_no_from_before_is_not_asked_inside_hermes_either():
     _hermes_from_before([])
     choice = state.hours_dir("leo") / state.CHOICE_FILE

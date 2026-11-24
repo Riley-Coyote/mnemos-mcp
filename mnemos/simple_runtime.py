@@ -1136,20 +1136,13 @@ def _hours_told(get_meta, set_meta, session: str, *, at_most: int | None) -> boo
     return True
 
 
-def _hours_unanswered(agent_id: str) -> bool:
-    try:
-        from .setup import state
-
-        return state.answered_at(agent_id) is None
-    except Exception:
-        return False
-
-
 def _hours_still_open(agent_id: str) -> bool:
-    """Whether an agent that already had Mnemos is still to be told about its
-    quiet hours: its person hasn't answered since each became theirs to
-    choose, and didn't say no before that either (the old onboarding promised
-    a no wouldn't be asked again). Reads only."""
+    """Whether this agent's person is still to be asked about its quiet
+    hours, in the first session's ritual or, for an agent that already had
+    Mnemos, in the sessions after: they haven't answered since each became
+    theirs to choose, and didn't say no before that either (the old
+    onboarding promised a no wouldn't be asked again, and a no kept by a
+    setup before 0.7.0 has no answer kept with it). Reads only."""
     try:
         from .setup import state
 
@@ -3530,7 +3523,7 @@ class MnemosRuntime:
         tour, the hours one at a time while they haven't answered (and they
         can run here), then the page. Each step is its lines."""
         walk = None
-        answered = not _hours_unanswered(self.scope.agent_id)
+        answered = not _hours_still_open(self.scope.agent_id)
         if not answered:
             walk = self._hours_walk(place, before=False)
         hermes = place == "hermes"
