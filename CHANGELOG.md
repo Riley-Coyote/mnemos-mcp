@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **An hour you don't answer about is asked once.** When the agent walks you through the quiet
+  hours, in the first session or a reminder after it, it asks about each hour once. If you go on
+  to something else, it changes nothing, says once, lightly, that the choice waits for you in the
+  page's Settings (inside Hermes, that the page shows them and you can ask it), and doesn't ask
+  again that session. Through 0.7.0 nothing said what to do then, and an agent asked again in its
+  very next reply. The reminders still stop after three sessions.
+- **A no from before 0.7.0 counts in a first session too.** Someone who said no to the quiet hours
+  in an older setup, and had their first session only after updating, was walked through all
+  three anyway. Now that session's tour says in a line that their hours are chosen, as 0.7.0
+  already did for an agent that had Mnemos before.
+
 ## 0.7.0 (2026-11-24)
 
 Quiet hours are off until you choose them, one at a time, and an hour goes online only if you
