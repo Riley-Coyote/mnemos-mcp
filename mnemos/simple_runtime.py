@@ -965,6 +965,14 @@ _HOURS_TOLD_META = "hours_told_sessions"
 _HOURS_TOLD_IN_RITUAL = "hours_told_in_ritual"
 _HOURS_TOLD_AT_MOST = 3
 _HOUR_NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+# What the agent does when the person goes on to something else instead of
+# answering about an hour: it asked once, so it leaves the hours as they are
+# and doesn't ask again in that session (the next sessions may still remind
+# them, at most three in all: ``_HOURS_TOLD_AT_MOST``).
+_UNANSWERED = (
+    "If they don't answer and go on to something else, run nothing, say once, lightly, that the "
+    "choice waits for them in your page's Settings, and don't ask again this session."
+)
 
 
 def hours_walked_through(harness: str | None, *, inside_hermes: bool = False) -> bool:
@@ -1079,8 +1087,10 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
             lines.append(f"    all as they are: {run('keep', '--write')}")
         lines.append(f"    none of them: {run('off', 'all', '--write')}")
         lines.append(
-            "  If they'd rather have none, run the line for none. Once they've answered, don't ask again."
-            if before else "  If they say no, run the line for none, and don't ask again."
+            "  Ask about each hour once. "
+            + ("If they'd rather have none, run the line for none. Once they've answered, don't ask again."
+               if before else "If they say no, run the line for none, and don't ask again.")
+            + f" {_UNANSWERED}"
         )
         return lines
     except Exception:

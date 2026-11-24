@@ -231,6 +231,14 @@ TOOLSETS = {
 }
 ONLINE_KINDS = ("mine", "ours")
 _NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+# What the agent does when the person goes on to something else instead of
+# answering about an hour (as in Claude Code, ``simple_runtime._UNANSWERED``):
+# it asked once, so it changes nothing and doesn't ask again in that session.
+UNANSWERED = (
+    "Ask about each hour once. If they don't answer and go on to something else, change no job "
+    "and keep nothing, say once, lightly, that your page's Settings shows them and they can ask "
+    "you whenever they like, and don't ask again this session."
+)
 # Each hour in a line or two, as it is inside Hermes, then whether it goes online.
 _WHAT = {
     "mine": (
@@ -337,6 +345,7 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
         'each as {"kind": "mine", "at": "08:00", "online": false}, or [] if they want none. If '
         + ("they'd rather have none, keep []. Once they've answered, don't ask again." if before
            else "they say no, keep [] and don't ask again.")
+        + f" {UNANSWERED}"
     )
     typed = "\n".join(f"    {cron_create_line(job)}" for job in jobs())
     lines.append(

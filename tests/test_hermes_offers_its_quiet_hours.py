@@ -86,6 +86,9 @@ def test_the_first_session_says_what_the_hours_are_and_what_they_cost(tmp_path):
     assert "only while Hermes's gateway is running" in said
     assert "It never goes online" in said
     assert "If they say no, keep [] and don't ask again" in said
+    assert ("Ask about each hour once. If they don't answer and go on to something else, change "
+            "no job and keep nothing, say once, lightly, that your page's Settings shows them and "
+            "they can ask you whenever they like, and don't ask again this session.") in said
 
 
 def test_each_hour_they_want_is_made_with_hermes_own_tool_limited_to_the_memory(tmp_path):
