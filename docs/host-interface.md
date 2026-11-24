@@ -43,7 +43,7 @@ Ask it once, when the process starts, to learn what this Mnemos can do.
 ```
 ```json
 {"id": 1, "result": {
-  "protocol": 1, "mnemos": "0.6.7", "schema": 19,
+  "protocol": 1, "mnemos": "0.7.0", "schema": 19,
   "commands": ["memories", "search", "correct", "forget", "journal", "notes", "reply", "note",
                "hello", "notebook", "summary", "read", "hours", "shared"],
   "parts": ["life", "memories", "pulse"],

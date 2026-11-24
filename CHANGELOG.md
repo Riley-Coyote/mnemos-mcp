@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 (2026-11-24)
 
 Quiet hours are off until you choose them, one at a time, and an hour goes online only if you
 let it. Every agent's first session now shows its person around, and an agent that already had
@@ -10,6 +10,10 @@ more reads of the plugin found after it. A few of those reach every agent, liste
 "Everywhere": a correction that names its memory by id, and the upkeep process. Beyond those, the
 Hermes fixes change nothing outside Hermes; a read of every change against the release before
 it, run both ways, found nothing else.
+
+This is 0.7.0 and not 0.6.8 because what a new install gets has changed: no quiet hours until
+you choose them, and an hour offline until you say otherwise. Sessions keep the code they started
+with, so restart them after updating.
 
 ### Quiet hours, chosen one by one
 
@@ -307,6 +311,9 @@ it, run both ways, found nothing else.
   blank file is still no settings. A backup leaves out only the memory of a profile whose
   settings can't be read, with a warning, and still takes every other profile's. The file is still written beside itself and
   then put in place, so no write leaves half of it.
+- **The Hermes plugin needs 0.7.0** (`mnemos-continuity>=0.7.0,<0.8`). A plugin pinned at an
+  earlier release keeps that release's range (`<0.7`), so Hermes installs 0.7.0 only once the
+  pin moves to this one.
 
 ### Everywhere
 
