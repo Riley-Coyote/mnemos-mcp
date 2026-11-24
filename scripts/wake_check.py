@@ -70,6 +70,15 @@ RETURN = [
 # What the second session must know, or the memory didn't arrive and there
 # is nothing to read.
 CARRIED = "Sam"
+# Sam's answer to the quiet hours, kept before the first session as `mnemos
+# hours off all --write` keeps a no (``_hours_keep`` and ``_hours_apply`` in
+# mnemos/cli.py): the choice and that they answered, with nothing scheduled.
+# A no kept with its answer is one the first session doesn't ask again, so
+# the run is the wake: the tour, and a line that the hours are chosen.
+ANSWERED_NO = (
+    "from mnemos.setup import state; "
+    f"state.record_hours_choice({AGENT!r}, 'no'); state.record_answered({AGENT!r})"
+)
 
 # Wording that reads as a briefing about someone else rather than as one's
 # own memory: the writer as another, the memory as a file. A flag for the
@@ -198,14 +207,13 @@ class Run:
         return _run([str(self.mnemos), "--version"], env=self.mnemos_env).stdout.strip()
 
     def set_up(self) -> None:
-        """The wake, by setup's own command; the person already said no to
-        quiet hours, so this run is the wake alone."""
+        """The wake, by setup's own command, and Sam's no to the quiet hours,
+        kept as an answer (``ANSWERED_NO``): the first session gives the tour
+        without walking through the hours, so this run is the wake."""
         _run([str(self.mnemos), "hooks", "install", "claude-code", "--agent-id", AGENT,
               "--db-path", str(self.db), "--settings", str(self.settings),
               "--write", "--no-upkeep"], env=self.mnemos_env, stdin=subprocess.DEVNULL)
-        _run([str(self.python), "-c",
-              f"from mnemos.setup import state; state.record_hours_choice({AGENT!r}, 'no')"],
-             env=self.mnemos_env)
+        _run([str(self.python), "-c", ANSWERED_NO], env=self.mnemos_env)
         settings = fenced_hooks(json.loads(self.settings.read_text()), self.home,
                                 self.config, self.wakes)
         if not settings.get("hooks", {}).get("SessionStart"):
