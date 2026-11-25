@@ -294,9 +294,12 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
     the web where chosen), and how it keeps what they chose (``mnemos_hour``
     with ``chosen``). ``before``: for an agent that already had Mnemos, where a
     "no" may mean any one of them. Lines, the first unindented."""
+    from ...setup import state as setup_state
+
     lines = [
         "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
-        "honestly (it would be your own), and make clear it's entirely their call."
+        "honestly (it would be your own), say plainly what each gives you both and what it costs, "
+        "and make clear it's entirely their call."
         + (" They're all off now." if now is not None and not any(now.values()) else "")
     ]
     for kind in KINDS:
@@ -309,7 +312,7 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
             online = "Remade limited, " + online[0].lower() + online[1:]
         elif job is not None and job.get("online") and kind in ONLINE_KINDS:
             online = "They can keep it online or take it offline."
-        lines.append(f"  - {head}{state}. {_WHAT[kind]} {online}")
+        lines.append(f"  - {head}{state}. {_WHAT[kind]} {online} {setup_state.HOUR_WHY[kind]}")
     lines.append(
         "  They run as Hermes scheduled jobs on the model Hermes uses: each costs what a short "
         "conversation costs, what it reads of your memory goes to that model's provider, as in "

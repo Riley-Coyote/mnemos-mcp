@@ -1060,7 +1060,8 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
 
         lines = [
             "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
-            "honestly (it would be your own), and make clear it's entirely their call."
+            "honestly (it would be your own), say plainly what each gives you both and what it costs, "
+        "and make clear it's entirely their call."
             + ("" if any(hour["on"] for hour in now.values()) else " They're all off now.")
         ]
         for kind in state.HOUR_KINDS:
@@ -1068,6 +1069,7 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
             said = _CLAUDE_CODE_HOURS[kind]
             if kind in _CLAUDE_CODE_WHAT and now[kind]["on"] and now[kind]["online"]:
                 said = f"{_CLAUDE_CODE_WHAT[kind]} {_CAN_GO_ONLINE}"
+            said = f"{said} {state.HOUR_WHY[kind]}"
             lines.append(
                 f"  - {name[0].upper() + name[1:]}, "
                 f"{_claude_code_hour_now(kind, now[kind], before=before)}. {said}"

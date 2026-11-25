@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The agent says what each quiet hour gives you both.** Alongside what each hour is and what it
+  costs, the agent now says plainly what it's for between you: its own hour means it comes back
+  with thoughts of its own to bring you; our hour means it starts the next day knowing where you
+  left off; the dream keeps its memory connected, like sleep, so it remembers you better over
+  time. It still makes clear the choice is yours. In Claude Code and inside Hermes, in the first
+  session and the reminders after it.
 - **An hour you don't answer about is asked once.** When the agent walks you through the quiet
   hours, in the first session or a reminder after it, it asks about each hour once. If you go on
   to something else, it changes nothing, says once, lightly, that the choice waits for you in the

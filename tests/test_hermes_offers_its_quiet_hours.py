@@ -78,7 +78,10 @@ def _hours(wake: str) -> str:
 
 def test_the_first_session_says_what_the_hours_are_and_what_they_cost(tmp_path):
     said = _hours(_wake(tmp_path))
-    assert "if you'd like the time, say so honestly (it would be your own), and make clear it's entirely their call" in said
+    assert ("if you'd like the time, say so honestly (it would be your own), say plainly what each "
+            "gives you both and what it costs, and make clear it's entirely their call") in said
+    assert "What it gives you both: you come back with thoughts of your own to bring them" in said
+    assert "What it gives you both: like sleep, it keeps what matters in your memory connected" in said
     assert "go back over your memory" in said and "write in your journal" in said
     assert "Hermes scheduled jobs" in said and "the model Hermes uses" in said
     assert "costs what a short conversation costs" in said
