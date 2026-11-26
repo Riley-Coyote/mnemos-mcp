@@ -9,7 +9,7 @@ keeps what it decides to keep, in its own words: what it learned about you, what
 decided together, what it got wrong. Every session it wakes with that before you say
 anything, and with each message the few memories that bear on it come back to it.
 
-Nothing is written from your conversations on its own. If something matters, the agent
+No memory is written from your conversations on its own. If something matters, the agent
 keeps it, and when it was wrong, the agent corrects it. The memory is a file on this
 machine, and it's the agent's: removing the plugin leaves it where it is.
 
@@ -37,8 +37,9 @@ agent keeps its memory and its settings.
 - **What comes to mind.** With each message, up to four memories that came up by
   themselves, by the words they share with the message (searching by meaning is a
   choice, below). A long message is looked up by its start and its end. When some came
-  up, Hermes says so in a line of its own. Mnemos notes which ones came up, by their ids and
-  none of the message's words, so the page's mind lights with each message.
+  up, Hermes says so in a line of its own. The ones that came up are strengthened, as any
+  memory that's used is, and Mnemos notes them by their ids and none of the message's words,
+  so the page's mind lights with each message.
 - **Twelve tools** to keep the memory itself: `mnemos_capture`, `mnemos_recall`,
   `mnemos_correct`, `mnemos_handoff`, `mnemos_journal`, `mnemos_note`, `mnemos_reflect`,
   `mnemos_introduce`, `mnemos_maintain`, `mnemos_health`, `mnemos_page`, and
@@ -56,13 +57,15 @@ command line a conversation is one `hermes` session, through its compressions. R
 in a new `hermes` after Hermes compressed it, it counts as a new conversation: the note it
 left is still there at the wake, as one from another session.
 
-In a scheduled job (cron) nobody is there, so Mnemos writes nothing by itself. The agent
-gets a short read of its memory that records nothing, what comes with the job's prompt
-leaves no trace, and upkeep and the copy of MEMORY.md wait for a conversation. Its own
-tools still work, so a job can keep something when that's what you asked of it: that one
+In a scheduled job (cron) nobody is there, so Mnemos itself changes nothing in the memory.
+The agent gets a short read of its memory that records nothing, what comes with the job's
+prompt leaves no trace, and upkeep and the copy of MEMORY.md wait for a conversation. Its
+own tools still work, so a job can keep something when that's what you asked of it: that one
 thing is kept, and the upkeep that follows a save in a conversation waits too. A job can be
-the agent's quiet hour (below), where what it keeps is the point. Subagents have no memory:
-Hermes gives them none.
+the agent's quiet hour (below), where what it keeps is the point. Every other run Hermes
+doesn't mark as the main one is treated the same way: a memory flush, and a subagent's.
+Hermes gives a subagent no memory, except, from Hermes 0.23.1, when
+`compression.checkpoint_required` is on: then it hands the subagent the agent's memory.
 
 ## Quiet hours
 
@@ -79,8 +82,8 @@ scheduled jobs with Hermes's own scheduling tool, and lists the tools the job ma
 its memory's (and, for our hour, the day's conversations), the web only where you chose it,
 and no MCP server. Hermes itself holds the job to that list. Each job wakes the agent and
 asks it to call `mnemos_hour`, which hands it the hour. Nothing is scheduled outside Hermes,
-and no job names a path. The agent keeps your answer, so it doesn't ask again; to change
-an hour later, ask it. Jobs it finds already there it describes as they are, and offers to
+and no job names a path. The agent keeps your answer, so it doesn't ask again (left
+unanswered, it asks in three sessions at most); to change an hour later, ask it. Jobs it finds already there it describes as they are, and offers to
 remake one that isn't limited to its memory.
 
 If the agent can't reach that tool, these lines make the jobs in a terminal. Jobs made this
@@ -157,10 +160,10 @@ In `$HERMES_HOME/mnemos.json`, with their defaults:
 - `maintenance_interval` (24): upkeep every this many turns in a long session; 0 turns
   that off.
 - `deep_maintenance` (false): let upkeep use a model, below.
-- `page_shows_other_agents` (true): in Hermes's classic terminal, the page also lets you read
+- `page_shows_other_agents` (true): in Hermes's classic CLI, the page also lets you read
   the other agents Mnemos keeps a memory for on this machine (below). Turn it off when other
-  people reach this profile through the terminal's own entry, as a third-party integration
-  started with `hermes chat --source tool` does: Hermes gives that the terminal's platform
+  people reach this profile through the classic CLI's own entry, as a third-party integration
+  started with `hermes chat --source tool` does: Hermes gives that the classic CLI's platform
   too, and doesn't tell Mnemos. Off, the page is this agent's alone everywhere. It stays on
   only for true, 1, or the word true, yes or on; any other value turns it off, and one that
   isn't a yes or a no is named in Hermes's log.
@@ -215,13 +218,16 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   It reads no `.env` file itself and no other tool's credentials, and inside Hermes it
   takes no notice of another agent's marks in the environment (Claude Code's, when Hermes
   was started from there).
-- **Its own files.** It keeps the memory in `~/.mnemos/` and its settings in
+- **Its own files.** It keeps the memory in `~/.mnemos/`, your answer about each quiet hour
+  and a record of each hour it hands over in `~/.mnemos/hours/`, and its settings in
   `$HERMES_HOME/mnemos.json`, and reads `~/.mnemos/config.json` if you have one (a new
   profile takes its person and project from there). It reads Hermes's `config.yaml` for
   three things: whether it is the memory provider, which model the agent runs (to sign what
   it writes), and whether Mnemos was connected there before as an MCP server (it then keeps
   that memory). Hermes 0.23.0 doesn't tell the plugin a model named for one run (`-m`), so
-  that run is signed with the model in `config.yaml`.
+  that run is signed with the model in `config.yaml`. And it reads the profile's
+  `cron/jobs.json`, Hermes's list of scheduled jobs, to tell the agent and the page's
+  Settings how the quiet hours stand there.
 - **The machine's shared memory.** What the agent marks as shared goes to
   `~/.mnemos/shared-memory.db`, which every Mnemos agent on this machine can read; nothing
   goes there unless the agent marks it so. `mnemos_recall` searches it too, so what another
@@ -246,16 +252,18 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   the system picks and a path made fresh each time, and answers only this machine. It
   stays while the conversation that opened it goes on and while you're using it, and
   closes about ten minutes after both end. It writes only in this agent's memory. Opened
-  in Hermes's classic terminal, it also lets you switch to the other agents Mnemos keeps a
+  in Hermes's classic CLI, it also lets you switch to the other agents Mnemos keeps a
   memory for on this machine and read each one: it reads their memory files in `~/.mnemos`,
   beside this one's, so that nothing in them changes, and shows them without the places to
   write. `page_shows_other_agents` (above) turns that off; turn it off when other people
-  reach this profile through the terminal's own entry, as a third-party integration started
-  with `hermes chat --source tool` does. Opened anywhere else (in Telegram, say, where the
+  reach this profile through the classic CLI's own entry, as a third-party integration
+  started with `hermes chat --source tool` does. Opened anywhere else (in Telegram, say, where the
   agent may be a bot other people talk to, or in the TUI, which Hermes's web dashboard also
-  runs for a browser), it shows this agent's memory alone. It never shows what agents
-  share, it looks at nothing else on the machine, and a scheduled job can't open it.
-  Outside Hermes's classic terminal, the first session tells the agent the page opens on
+  runs for a browser), it shows this agent's memory alone. Its Settings show each quiet hour
+  as Hermes has it, only to read, from the profile's `cron/jobs.json`; to change one, ask
+  the agent. It never shows what agents share, it looks at nothing else on the machine, and
+  a scheduled job can't open it.
+  Outside Hermes's classic CLI, the first session tells the agent the page opens on
   the computer Hermes runs on, and not to offer it unless you ask.
 - **Backups.** The memories are outside Hermes's folder, so Mnemos names them to
   `hermes backup`, which takes them along: this profile's and each other profile's, since
@@ -275,7 +283,7 @@ wrong with it, once, as a warning. It never writes over it, and starts no other 
   4,096 if it's lower, since every conversation holds a few files open on the memory. It
   never lowers it.
 
-## Upgrading from 0.6.6
+## Upgrading from 0.6.6 or 0.6.7
 
 Settings are now read for each profile, through Hermes: from the profile's own `.env`, or
 from its `mnemos.json`. A run of one profile also hears what's set in the shell or service
