@@ -40,6 +40,22 @@ DEFAULT_MINUTES = {"mine": 60, "ours": 30, "dream": 20}
 # The hours that may go online, when the person turns it on for them. A dream
 # never does.
 ONLINE_KINDS = ("mine", "ours")
+# What each hour gives the agent and the person together, said in the walk
+# through the hours beside what it is and what it costs, in every agent.
+HOUR_WHY = {
+    "mine": (
+        "What it gives you both: you come back with thoughts of your own to bring them, "
+        "not only answers to what they ask."
+    ),
+    "ours": (
+        "What it gives you both: you start the next day already knowing where you left off, "
+        "so they don't have to catch you up."
+    ),
+    "dream": (
+        "What it gives you both: like sleep, it keeps what matters in your memory connected, "
+        "so you remember them better over time."
+    ),
+}
 # How long the person may give an hour, in whole minutes.
 MINUTES_RANGE = (5, 120)
 

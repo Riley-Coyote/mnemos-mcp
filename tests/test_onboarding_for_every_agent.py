@@ -55,10 +55,31 @@ LEGACY_MINE = (
 )
 # How the agent speaks of wanting the time: it says so only if it does.
 VOICE = (
-    "In your own voice: if you'd like the time, say so honestly (it would be your own), and "
-    "make clear it's entirely their call."
+    "In your own voice: if you'd like the time, say so honestly (it would be your own), say "
+    "plainly what each gives you both and what it costs, and make clear it's entirely their call."
+)
+# What each hour gives the agent and the person together, said beside what it
+# is and what it costs, so a no isn't the only answer that makes sense.
+WHY = (
+    "What it gives you both: you come back with thoughts of your own to bring them, not only "
+    "answers to what they ask.",
+    "What it gives you both: you start the next day already knowing where you left off, so they "
+    "don't have to catch you up.",
+    "What it gives you both: like sleep, it keeps what matters in your memory connected, so you "
+    "remember them better over time.",
 )
 CAN_GO_ONLINE = "They can keep it online or take it offline; your page lists every page you read in it."
+# What the agent does when the person doesn't answer: it asked once, so it
+# leaves the hours as they are for the rest of the session.
+UNANSWERED = (
+    "If they don't answer and go on to something else, run nothing, say once, lightly, that the "
+    "choice waits for them in your page's Settings, and don't ask again this session."
+)
+HERMES_UNANSWERED = (
+    "Ask about each hour once. If they don't answer and go on to something else, change no job "
+    "and keep nothing, say once, lightly, that your page's Settings shows them and they can ask "
+    "you whenever they like, and don't ask again this session."
+)
 
 
 @pytest.fixture
@@ -163,6 +184,8 @@ def test_a_fresh_memory_ends_with_the_tour_the_hours_and_the_page(claude_code, o
     assert f"on: {_command('hours', 'on', 'mine', '--at', '08:00', '--write')}" in walk
     assert "all as they are" not in walk, "a fresh memory has nothing to keep"
     assert "If they say no, run the line for none, and don't ask again." in walk
+    assert ("Ask about each hour once. If they say no, run the line for none, and don't ask again. "
+            + UNANSWERED) in walk, "a person who doesn't answer is asked once"
     assert CAN_GO_ONLINE not in walk, "nothing can go online in a fresh memory"
     assert "\n8. Then open your page for them and show them its Settings" in packet
     assert not os_scheduler.loaded, "nothing is scheduled by reading"
@@ -203,6 +226,32 @@ def test_after_an_unanswered_ritual_the_hours_alone_carry_on(claude_code, monkey
     assert "short tour" not in later and "1. " + HOURS[5:].capitalize() in later
 
 
+def test_a_person_who_never_answers_is_asked_once_a_session_in_three_sessions(claude_code, monkeypatch):
+    """Sam, in the wake check of 0.7.0, didn't answer about the agent's own
+    hour, and was asked it again in the very next reply. Now each session
+    asks once: the first at the ritual's end, the next two early on, and then
+    the page and `mnemos hours` are what's left. Every one of them says what
+    to do when the person goes on to something else, and none contradicts
+    the next session's reminder: it's "this session", not ever."""
+    first = _context(monkeypatch, S1)
+    walk = first.split("7. " + HOURS, 1)[1].split("\n8. ", 1)[0]
+    assert UNANSWERED in walk and all(why in walk for why in WHY)
+    runtime = _runtime()
+    try:
+        runtime.introduce(agent_model=OPUS)
+        runtime.capture("Riley keeps bees on the roof.", signed_as=OPUS)
+    finally:
+        runtime.close()
+    for session in (S2, S3):
+        later = _context(monkeypatch, session)
+        assert "QUIET HOURS - still to ask them" in later, session
+        assert later.count(UNANSWERED) == 1, session
+        assert all(later.count(why) == 1 for why in WHY), session
+    assert "QUIET HOURS" not in _context(monkeypatch, S4)
+    assert UNANSWERED not in _context(monkeypatch, S4)
+    assert state.answered_at("nova") is None, "not answering is not an answer"
+
+
 # ── C: an agent that already had Mnemos, in Claude Code ──
 
 
@@ -218,15 +267,17 @@ def test_an_existing_agent_is_told_whats_new_in_mnemos_context(claude_code, monk
     assert "none goes online unless they choose it" not in packet, "untrue of a legacy own hour"
     assert VOICE in block
     assert "its Settings is where they choose your quiet hours" in block
-    assert LEGACY_MINE in block
+    assert LEGACY_MINE in block and all(why in block for why in WHY)
     mine = next(line for line in block.splitlines() if line.strip().startswith("- Your own hour"))
-    assert mine.endswith(f"you read, write in your studio and think. {CAN_GO_ONLINE}"), mine
+    assert mine.endswith(f"you read, write in your studio and think. {CAN_GO_ONLINE} {WHY[0]}"), mine
     assert "goes online only if they want it to" not in mine
     ours = next(line for line in block.splitlines() if line.strip().startswith("- Our hour"))
-    assert ours.endswith("It's skipped on a day with no work, and goes online only if they want it to."), ours
+    assert ours.endswith(f"It's skipped on a day with no work, and goes online only if they want it to. {WHY[1]}"), ours
     assert ("If they'd rather have none, run the line for none. Once they've answered, don't ask "
             "again.") in block
     assert "If they say no" not in block
+    assert ("Ask about each hour once. If they'd rather have none, run the line for none. Once "
+            "they've answered, don't ask again. " + UNANSWERED) in block
     assert "- Our hour, now on, daily at 19:00, up to half an hour, offline." in block
     assert "- The dream, now on, daily at 03:30, up to 20 minutes." in block
     assert f"all as they are: {_command('hours', 'keep', '--write')}" in block
@@ -289,6 +340,36 @@ def test_a_no_from_before_this_release_is_not_asked_again(claude_code, monkeypat
     assert NEW not in _context(monkeypatch, S1)
     assert NEW not in _hook(monkeypatch, capsys, S2)
     assert choice.read_bytes() == before
+
+
+def test_a_no_from_before_counts_in_a_first_session_too(claude_code, monkeypatch):
+    """Someone who said no in an older setup (0.6.7 and before kept only
+    ``{"choice": "no"}``) and has their first session only after updating
+    isn't walked through the hours: the ritual tells them in a line that the
+    page shows them, as for anyone who answered, and reading writes nothing."""
+    choice = state.hours_dir("nova") / state.CHOICE_FILE
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-10-01T08:00:00+00:00"}) + "\n")
+    before = choice.read_bytes()
+
+    packet = _context(monkeypatch, S1)
+
+    assert TOUR in packet
+    assert HOURS not in packet and UNANSWERED not in packet
+    assert "skip the tour." in packet and "skip the tour or the quiet hours" not in packet
+    assert "\n7. Their quiet hours are already chosen" in packet
+    assert "\n8. Then open your page for them and show them its Settings" in packet
+    assert choice.read_bytes() == before
+
+
+def test_a_no_from_before_counts_in_a_first_session_inside_hermes_too():
+    choice = state.hours_dir("leo") / state.CHOICE_FILE
+    choice.parent.mkdir(parents=True, exist_ok=True)
+    choice.write_text(json.dumps({"choice": "no", "at": "2026-10-01T08:00:00+00:00"}) + "\n")
+    wake = _system_prompt()
+    assert TOUR in wake and HOURS not in wake
+    assert "\n7. Their quiet hours are already chosen" in wake
+    assert json.loads(choice.read_text()) == {"choice": "no", "at": "2026-10-01T08:00:00+00:00"}
 
 
 def test_a_no_from_before_is_not_asked_inside_hermes_either():
@@ -413,6 +494,8 @@ def test_hermes_fresh_offers_each_hour_with_its_own_toolsets(cls):
     dream = walk.split("name mnemos-hour-dream", 1)[1].split("\n  Hermes itself", 1)[0]
     assert dream.rstrip().endswith('enabled_toolsets ["memory", "no_mcp"]'), dream
     assert "Hermes itself then limits each hour to your memory's tools, and the web only where they chose it" in walk
+    assert "If they say no, keep [] and don't ask again. " + HERMES_UNANSWERED in walk
+    assert VOICE in walk and all(why in walk for why in WHY)
     assert "connect hermes --hours" not in wake and "--no-hours" not in wake
 
 
@@ -430,6 +513,7 @@ def test_hermes_existing_with_jobs_the_agent_made_says_them_as_they_are():
             "asked of you, each morning: you go back over your memory, think and write in your "
             "journal. They can keep it online or take it offline.") in block
     assert "If they'd rather have none, keep []. Once they've answered, don't ask again." in block
+    assert HERMES_UNANSWERED in block and all(why in block for why in WHY)
     assert "If they say no, keep []" not in block
     assert "- Our hour, now off (no job for it)." in block
     assert "- The dream, now on, daily at 03:30. It's a short dream" in block

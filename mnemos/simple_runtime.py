@@ -965,6 +965,14 @@ _HOURS_TOLD_META = "hours_told_sessions"
 _HOURS_TOLD_IN_RITUAL = "hours_told_in_ritual"
 _HOURS_TOLD_AT_MOST = 3
 _HOUR_NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+# What the agent does when the person goes on to something else instead of
+# answering about an hour: it asked once, so it leaves the hours as they are
+# and doesn't ask again in that session (the next sessions may still remind
+# them, at most three in all: ``_HOURS_TOLD_AT_MOST``).
+_UNANSWERED = (
+    "If they don't answer and go on to something else, run nothing, say once, lightly, that the "
+    "choice waits for them in your page's Settings, and don't ask again this session."
+)
 
 
 def hours_walked_through(harness: str | None, *, inside_hermes: bool = False) -> bool:
@@ -1052,7 +1060,8 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
 
         lines = [
             "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
-            "honestly (it would be your own), and make clear it's entirely their call."
+            "honestly (it would be your own), say plainly what each gives you both and what it costs, "
+        "and make clear it's entirely their call."
             + ("" if any(hour["on"] for hour in now.values()) else " They're all off now.")
         ]
         for kind in state.HOUR_KINDS:
@@ -1060,6 +1069,7 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
             said = _CLAUDE_CODE_HOURS[kind]
             if kind in _CLAUDE_CODE_WHAT and now[kind]["on"] and now[kind]["online"]:
                 said = f"{_CLAUDE_CODE_WHAT[kind]} {_CAN_GO_ONLINE}"
+            said = f"{said} {state.HOUR_WHY[kind]}"
             lines.append(
                 f"  - {name[0].upper() + name[1:]}, "
                 f"{_claude_code_hour_now(kind, now[kind], before=before)}. {said}"
@@ -1079,8 +1089,10 @@ def _claude_code_hours_walk(agent_id: str, db_path, *, before: bool) -> list[str
             lines.append(f"    all as they are: {run('keep', '--write')}")
         lines.append(f"    none of them: {run('off', 'all', '--write')}")
         lines.append(
-            "  If they'd rather have none, run the line for none. Once they've answered, don't ask again."
-            if before else "  If they say no, run the line for none, and don't ask again."
+            "  Ask about each hour once. "
+            + ("If they'd rather have none, run the line for none. Once they've answered, don't ask again."
+               if before else "If they say no, run the line for none, and don't ask again.")
+            + f" {_UNANSWERED}"
         )
         return lines
     except Exception:
@@ -1126,20 +1138,13 @@ def _hours_told(get_meta, set_meta, session: str, *, at_most: int | None) -> boo
     return True
 
 
-def _hours_unanswered(agent_id: str) -> bool:
-    try:
-        from .setup import state
-
-        return state.answered_at(agent_id) is None
-    except Exception:
-        return False
-
-
 def _hours_still_open(agent_id: str) -> bool:
-    """Whether an agent that already had Mnemos is still to be told about its
-    quiet hours: its person hasn't answered since each became theirs to
-    choose, and didn't say no before that either (the old onboarding promised
-    a no wouldn't be asked again). Reads only."""
+    """Whether this agent's person is still to be asked about its quiet
+    hours, in the first session's ritual or, for an agent that already had
+    Mnemos, in the sessions after: they haven't answered since each became
+    theirs to choose, and didn't say no before that either (the old
+    onboarding promised a no wouldn't be asked again, and a no kept by a
+    setup before 0.7.0 has no answer kept with it). Reads only."""
     try:
         from .setup import state
 
@@ -3520,7 +3525,7 @@ class MnemosRuntime:
         tour, the hours one at a time while they haven't answered (and they
         can run here), then the page. Each step is its lines."""
         walk = None
-        answered = not _hours_unanswered(self.scope.agent_id)
+        answered = not _hours_still_open(self.scope.agent_id)
         if not answered:
             walk = self._hours_walk(place, before=False)
         hermes = place == "hermes"

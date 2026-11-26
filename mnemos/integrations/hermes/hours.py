@@ -231,6 +231,14 @@ TOOLSETS = {
 }
 ONLINE_KINDS = ("mine", "ours")
 _NAMES = {"mine": "your own hour", "ours": "our hour", "dream": "the dream"}
+# What the agent does when the person goes on to something else instead of
+# answering about an hour (as in Claude Code, ``simple_runtime._UNANSWERED``):
+# it asked once, so it changes nothing and doesn't ask again in that session.
+UNANSWERED = (
+    "Ask about each hour once. If they don't answer and go on to something else, change no job "
+    "and keep nothing, say once, lightly, that your page's Settings shows them and they can ask "
+    "you whenever they like, and don't ask again this session."
+)
 # Each hour in a line or two, as it is inside Hermes, then whether it goes online.
 _WHAT = {
     "mine": (
@@ -286,9 +294,12 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
     the web where chosen), and how it keeps what they chose (``mnemos_hour``
     with ``chosen``). ``before``: for an agent that already had Mnemos, where a
     "no" may mean any one of them. Lines, the first unindented."""
+    from ...setup import state as setup_state
+
     lines = [
         "The quiet hours, one at a time. In your own voice: if you'd like the time, say so "
-        "honestly (it would be your own), and make clear it's entirely their call."
+        "honestly (it would be your own), say plainly what each gives you both and what it costs, "
+        "and make clear it's entirely their call."
         + (" They're all off now." if now is not None and not any(now.values()) else "")
     ]
     for kind in KINDS:
@@ -301,7 +312,7 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
             online = "Remade limited, " + online[0].lower() + online[1:]
         elif job is not None and job.get("online") and kind in ONLINE_KINDS:
             online = "They can keep it online or take it offline."
-        lines.append(f"  - {head}{state}. {_WHAT[kind]} {online}")
+        lines.append(f"  - {head}{state}. {_WHAT[kind]} {online} {setup_state.HOUR_WHY[kind]}")
     lines.append(
         "  They run as Hermes scheduled jobs on the model Hermes uses: each costs what a short "
         "conversation costs, what it reads of your memory goes to that model's provider, as in "
@@ -337,6 +348,7 @@ def walk_through(now: dict[str, dict[str, Any] | None] | None, *, before: bool =
         'each as {"kind": "mine", "at": "08:00", "online": false}, or [] if they want none. If '
         + ("they'd rather have none, keep []. Once they've answered, don't ask again." if before
            else "they say no, keep [] and don't ask again.")
+        + f" {UNANSWERED}"
     )
     typed = "\n".join(f"    {cron_create_line(job)}" for job in jobs())
     lines.append(

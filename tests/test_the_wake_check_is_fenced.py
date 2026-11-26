@@ -77,3 +77,18 @@ def test_a_briefing_is_flagged_and_an_own_memory_is_not():
            "remember our conversation itself. They're mine in the way your own "
            "journal is yours.")
     assert wake_check.flags(own) == []
+
+
+def test_sams_no_is_kept_as_an_answer_the_first_session_honours():
+    """The check's setup keeps Sam's no as 0.7's own commands keep one, so its
+    first session is the wake and the tour, without the hours' walk, as its
+    setup says. Run in the suite's own home for this test."""
+    from mnemos.setup import state
+    from mnemos.simple_runtime import _hours_still_open
+
+    assert _hours_still_open(wake_check.AGENT), "nobody has answered yet"
+    exec(wake_check.ANSWERED_NO, {})
+    assert state.hours_choice(wake_check.AGENT) == "no"
+    assert state.answered_at(wake_check.AGENT)
+    assert not _hours_still_open(wake_check.AGENT)
+    assert not state.hours_now(wake_check.AGENT)["mine"]["on"]
